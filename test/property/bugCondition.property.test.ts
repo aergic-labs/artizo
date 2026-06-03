@@ -36,11 +36,12 @@ vi.mock("vscode", () => ({
   Uri: {
     parse: (str: string) => ({ toString: () => str }),
   },
-  EventEmitter: vi.fn().mockImplementation(() => ({
-    event: vi.fn(),
-    fire: vi.fn(),
-    dispose: vi.fn(),
-  })),
+  EventEmitter: vi.fn(function () {
+    return {
+      event: vi.fn(),
+      fire: vi.fn(),
+    };
+  }),
   ProgressLocation: { Notification: 15 },
 }));
 

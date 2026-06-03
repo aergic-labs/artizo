@@ -1,8 +1,8 @@
 {
   "name": "artizo",
-  "displayName": "Artizo",
-  "description": "Artizo Dev Containers for Kiro: Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
-  "version": "0.0.1",
+  "displayName": "Artizo Dev Containers",
+  "description": "Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
+  "version": "0.0.2",
   "publisher": "aergic",
   "productName": "Artizo",
   "license": "AGPL-3.0-only",
@@ -371,7 +371,7 @@
     "build": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit && knip && node -e \"const fs=require('fs'); ['tools/setup.sh','tools/relay.js'].forEach(f=>{const c=fs.readFileSync(f,'utf8'); if(c.includes('\\r')){console.error(f+' has CRLF');process.exit(1)}})\"",
+    "lint": "tsc --noEmit && knip && node scripts/guard-pkg.mjs && node -e \"const fs=require('fs'); ['tools/setup.sh','tools/relay.js'].forEach(f=>{const c=fs.readFileSync(f,'utf8'); if(c.includes('\\r')){console.error(f+' has CRLF');process.exit(1)}})\"",
     "test": "vitest run --exclude 'test/integration/**'",
     "test:coverage": "vitest run --exclude 'test/integration/**' --coverage",
     "test:integration": "vitest run test/integration/ --testTimeout=60000",
@@ -388,14 +388,14 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.85.0",
-    "@vitest/coverage-v8": "^3.1.0",
+    "@vitest/coverage-v8": "^4.1.8",
     "@vscode/vsce": "^3.9.1",
     "esbuild": "^0.25.0",
     "fast-check": "^3.23.0",
     "knip": "^6.15.0",
     "ovsx": "^0.10.0",
     "typescript": "^5.8.0",
-    "vitest": "^3.1.0"
+    "vitest": "^4.1.8"
   },
   "platform": {
     "name": "Kiro",

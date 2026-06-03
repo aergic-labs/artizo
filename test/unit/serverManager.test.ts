@@ -23,11 +23,13 @@ vi.mock("../../src/remote/bootstrap", () => {
   const mockDeployTools = vi.fn().mockResolvedValue(undefined);
   const mockRunSetup = vi.fn().mockResolvedValue({ home: "/root" });
   return {
-    ContainerBootstrap: vi.fn().mockImplementation(() => ({
-      bootstrapBusybox: mockBootstrapBusybox,
-      deployTools: mockDeployTools,
-      runSetup: mockRunSetup,
-    })),
+    ContainerBootstrap: vi.fn(function () {
+      return {
+        bootstrapBusybox: mockBootstrapBusybox,
+        deployTools: mockDeployTools,
+        runSetup: mockRunSetup,
+      };
+    }),
     __mockBootstrapBusybox: mockBootstrapBusybox,
     __mockDeployTools: mockDeployTools,
     __mockRunSetup: mockRunSetup,

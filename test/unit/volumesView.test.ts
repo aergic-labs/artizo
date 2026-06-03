@@ -7,11 +7,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock vscode module
 vi.mock("vscode", () => {
-  const EventEmitter = vi.fn().mockImplementation(() => ({
-    event: vi.fn(),
-    fire: vi.fn(),
-    dispose: vi.fn(),
-  }));
+  const EventEmitter = vi.fn(function () {
+    return {
+      event: vi.fn(),
+      fire: vi.fn(),
+      dispose: vi.fn(),
+    };
+  });
 
   return {
     TreeItem: class {

@@ -72,7 +72,8 @@ describe("TraeAdapter", () => {
       expect(url).toMatch(/Trae-linux-x64/);
     });
 
-    it("uses buildId in version when provided", async () => {
+    it("fetches version from CDN, falls back to commit", async () => {
+      // fetch is stubbed to reject, so fetchRemoteVersion falls back to commit
       const url = await adapter.getServerDownloadUrl(
         "abc",
         "stable",
@@ -80,29 +81,30 @@ describe("TraeAdapter", () => {
         "x64",
         "12345",
       );
-      expect(url).toContain("12345_1");
+      // With fetch stubbed, version falls back to commit (not buildId)
+      expect(url).toContain("Trae-linux-x64-abc.tar.gz");
     });
 
-    it("falls back to 0_1 when no buildId and no version file", async () => {
+    it("falls back to commit when version fetch fails", async () => {
       const url = await adapter.getServerDownloadUrl(
         "abc",
         "stable",
         "linux",
         "arm64",
       );
-      expect(url).toMatch(/Trae-linux-arm64-\d+_\d+/);
+      expect(url).toContain("Trae-linux-arm64-abc.tar.gz");
     });
 
-    it("produces a valid URL structure", async () => {
+    it("produces a valid URL structure with fetched version", async () => {
+      // fetch is stubbed, version falls back to commit
       const url = await adapter.getServerDownloadUrl(
         "commit123",
         "stable",
         "linux",
         "x64",
-        "42",
       );
       expect(url).toMatch(
-        /^https:\/\/.+\/releases\/stable\/commit123\/linux-debian10\/Trae-linux-x64-42_1\.tar\.gz$/,
+        /^https:\/\/.+\/pkg\/server\/releases\/stable\/commit123\/linux-debian10\/Trae-linux-x64-commit123\.tar\.gz$/,
       );
     });
   });

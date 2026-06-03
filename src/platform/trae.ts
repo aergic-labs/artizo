@@ -59,34 +59,26 @@ function getCachedCdnBase(): Promise<string> {
   return _cachedCdnBase;
 }
 
-/** Format: "{buildId}_{revision}" (e.g., "1154394023426_1"). */
-let _cachedVersion: string | undefined;
-function getServerVersion(): string {
-  if (_cachedVersion !== undefined) return _cachedVersion;
+/**
+ * Fetch the remote server version from the CDN's version file.
+ * Falls back to using the commit as version if the fetch fails.
+ */
+async function fetchRemoteVersion(
+  versionUrl: string,
+  commit: string,
+): Promise<string> {
   try {
-    const extPath = path.join(os.homedir(), ".trae", "extensions");
-    if (fs.existsSync(extPath)) {
-      for (const dir of fs.readdirSync(extPath)) {
-        if (dir.startsWith("cloudide.icube-remote-ssh")) {
-          const versionPath = path.join(
-            extPath,
-            dir,
-            "out",
-            "scripts",
-            "version",
-          );
-          if (fs.existsSync(versionPath)) {
-            _cachedVersion = fs.readFileSync(versionPath, "utf-8").trim();
-            return _cachedVersion;
-          }
-        }
-      }
+    const response = await fetch(versionUrl, {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (response.ok) {
+      const version = (await response.text()).trim();
+      if (version) return version;
     }
   } catch {
-    /* fall through */
+    /* fall through to commit fallback */
   }
-  _cachedVersion = "";
-  return _cachedVersion;
+  return commit;
 }
 
 export class TraeAdapter implements IPlatformAdapter {
@@ -107,13 +99,17 @@ export class TraeAdapter implements IPlatformAdapter {
     _quality: string,
     _targetPlatform: string,
     targetArch: string,
-    buildId?: string,
+    _buildId?: string,
   ): Promise<string> {
     const cdnBase = await getCachedCdnBase();
-    const version = buildId ? `${buildId}_1` : getServerVersion() || "0_1";
     // Trae CDN directory uses 'linux-debian10' but the tarball filename uses 'linux'.
     const dirPlatform = "linux-debian10";
     const filePlatform = "linux";
+
+    // Fetch the remote version from CDN (replaces stale local version file).
+    const versionUrl = `${cdnBase}/pkg/server/releases/stable/${commit}/${dirPlatform}/version`;
+    const version = await fetchRemoteVersion(versionUrl, commit);
+
     const packageName = `Trae-${filePlatform}-${targetArch}-${version}.tar.gz`;
     return `${cdnBase}/pkg/server/releases/stable/${commit}/${dirPlatform}/${packageName}`;
   }

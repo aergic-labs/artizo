@@ -8,3 +8,5 @@ coverage
 Thumbs.db
 nul
 package.json.bak
+plans/
+vendor/devcontainers-cli/package-lock.json
