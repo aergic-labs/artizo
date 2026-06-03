@@ -6,7 +6,7 @@
 /**
  * Platform adapter interface.
  *
- * Each supported IDE (Kiro, Trae, Windsurf) provides an implementation.
+ * Each supported IDE (Kiro, Trae, Windsurf, Devin) provides an implementation.
  * Vendor-specific configuration is sourced from vendor/<target>/package.json
  * so each adapter file contains only its own platform's logic.
  */
@@ -22,6 +22,8 @@ export interface PlatformConfig {
   additionalDockerRunArgs: string[];
   serverInstallRoot?: string;
   needsHomeSymlink?: boolean;
+  /** Host data folder for argv.json. Defaults to dataFolderName. */
+  hostDataFolderName?: string;
 }
 
 /**

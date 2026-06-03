@@ -86,6 +86,7 @@ build: $(NODE_MODULES) $(VENDOR_CLI)
 	npm run package:kiro
 	npm run package:trae
 	npm run package:windsurf
+	npm run package:devin
 
 # ── Release ────────────────────────────────────────────────────
 
@@ -108,6 +109,7 @@ publish:
 	npx ovsx publish artizo-kiro-*.vsix
 	npx ovsx publish artizo-trae-*.vsix
 	npx ovsx publish artizo-windsurf-*.vsix
+	npx ovsx publish artizo-devin-*.vsix
 
 # ── Clean ──────────────────────────────────────────────────────
 # clean:     removes build artifacts only (dist/, coverage/).

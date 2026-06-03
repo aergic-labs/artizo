@@ -7,9 +7,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { IPlatformAdapter, PlatformConfig } from "./types";
 
-const WINDSURF_CDN_BASE = "https://windsurf-stable.codeiumdata.com";
+const DEVIN_CDN_BASE = "https://windsurf-stable.codeiumdata.com";
 
-export class WindsurfAdapter implements IPlatformAdapter {
+export class DevinAdapter implements IPlatformAdapter {
   readonly name: string;
   readonly dataFolderName: string;
   readonly serverApplicationName: string;
@@ -29,9 +29,9 @@ export class WindsurfAdapter implements IPlatformAdapter {
     targetArch: string,
     buildId?: string,
   ): string {
-    // Windsurf uses codeiumdata.com CDN, not the standard VS Code update API.
+    // Devin uses the same codeiumdata.com CDN as Windsurf.
     const version = buildId || this.readWindsurfVersion() || "0.0.0";
-    return `${WINDSURF_CDN_BASE}/linux-reh-${targetArch}/${quality}/${commit}/windsurf-reh-linux-${targetArch}-${version}.tar.gz`;
+    return `${DEVIN_CDN_BASE}/linux-reh-${targetArch}/${quality}/${commit}/devin-reh-linux-${targetArch}-${version}.tar.gz`;
   }
 
   private readWindsurfVersion(): string | undefined {
@@ -81,7 +81,7 @@ export class WindsurfAdapter implements IPlatformAdapter {
       const productPath = path.join(vscode.env.appRoot, "product.json");
       const product = JSON.parse(fs.readFileSync(productPath, "utf-8"));
       const appName: string = (product?.applicationName ?? "").toLowerCase();
-      return appName.includes("windsurf");
+      return appName.includes("devin") || appName.includes("windsurf");
     } catch {
       return true;
     }

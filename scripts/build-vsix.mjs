@@ -21,10 +21,13 @@ const target = process.argv
   ?.split("=")[1];
 if (
   !target ||
-  (target !== "kiro" && target !== "trae" && target !== "windsurf")
+  (target !== "kiro" &&
+    target !== "trae" &&
+    target !== "windsurf" &&
+    target !== "devin")
 ) {
   console.error(
-    "Usage: node scripts/build-vsix.mjs --target=kiro|trae|windsurf",
+    "Usage: node scripts/build-vsix.mjs --target=kiro|trae|windsurf|devin",
   );
   process.exit(1);
 }

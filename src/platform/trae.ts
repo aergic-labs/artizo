@@ -115,7 +115,11 @@ export class TraeAdapter implements IPlatformAdapter {
   }
 
   getArgvPath(): string {
-    return path.join(os.homedir(), this.dataFolderName, "argv.json");
+    return path.join(
+      os.homedir(),
+      this.config.hostDataFolderName ?? this.dataFolderName,
+      "argv.json",
+    );
   }
 
   needsArgvPatch(): boolean {

@@ -1,0 +1,27 @@
+{
+  "name": "artizo-devin",
+  "displayName": "Artizo Dev Containers for Devin",
+  "description": "Artizo Dev Containers for Devin: Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
+  "keywords": [
+    "devin",
+    "windsurf",
+    "dev container",
+    "dev containers",
+    "devcontainers",
+    "devcontainer",
+    "docker",
+    "remote",
+    "remote development",
+    "containers"
+  ],
+  "license": "AGPL-3.0-only",
+  "platform": {
+    "name": "Devin",
+    "dataFolderName": ".devin-server",
+    "serverApplicationName": "devin-server",
+    "needsArgvPatch": true,
+    "additionalDockerRunArgs": [],
+    "serverInstallRoot": "/tmp",
+    "needsHomeSymlink": true
+  }
+}

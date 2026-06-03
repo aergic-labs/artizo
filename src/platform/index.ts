@@ -19,6 +19,7 @@ let _adapter: IPlatformAdapter | undefined;
 declare const HAS_KIRO_ADAPTER: boolean;
 declare const HAS_TRAE_ADAPTER: boolean;
 declare const HAS_WINDSURF_ADAPTER: boolean;
+declare const HAS_DEVIN_ADAPTER: boolean;
 
 /**
  * Returns the platform adapter for the current build target.
@@ -35,6 +36,18 @@ export async function getPlatformAdapter(): Promise<IPlatformAdapter> {
         needsArgvPatch: false,
         additionalDockerRunArgs: ["--security-opt", "seccomp=unconfined"],
       });
+    } else if (HAS_DEVIN_ADAPTER) {
+      const { DevinAdapter } = await import("./devin.js");
+      _adapter = new DevinAdapter({
+        name: "Devin",
+        dataFolderName: ".devin-server",
+        serverApplicationName: "devin-server",
+        needsArgvPatch: true,
+        additionalDockerRunArgs: [],
+        serverInstallRoot: "/tmp",
+        needsHomeSymlink: true,
+        hostDataFolderName: ".devin",
+      });
     } else if (HAS_WINDSURF_ADAPTER) {
       const { WindsurfAdapter } = await import("./windsurf.js");
       _adapter = new WindsurfAdapter({
@@ -45,6 +58,7 @@ export async function getPlatformAdapter(): Promise<IPlatformAdapter> {
         additionalDockerRunArgs: [],
         serverInstallRoot: "/tmp",
         needsHomeSymlink: true,
+        hostDataFolderName: ".windsurf",
       });
     } else {
       const { KiroAdapter } = await import("./kiro.js");

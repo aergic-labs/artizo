@@ -31,6 +31,7 @@ import { getPlatformAdapter } from "../platform";
 
 declare const HAS_TRAE_ADAPTER: boolean;
 declare const HAS_KIRO_ADAPTER: boolean;
+declare const HAS_DEVIN_ADAPTER: boolean;
 import { ConfigWatcher } from "../config/configWatcher";
 import { ContainerLifecycle } from "../lifecycle/containerLifecycle";
 import { SidebarProvider } from "../sidebar/provider";
@@ -73,7 +74,9 @@ async function ensureArgvProposedApi(
     ? "aergic.artizo-kiro"
     : HAS_TRAE_ADAPTER
       ? "aergic.artizo-trae"
-      : "aergic.artizo-windsurf";
+      : HAS_DEVIN_ADAPTER
+        ? "aergic.artizo-devin"
+        : "aergic.artizo-windsurf";
 
   let content: string;
   try {

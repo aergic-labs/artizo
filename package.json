@@ -378,7 +378,8 @@
     "test:all": "vitest run",
     "package:kiro": "node scripts/build-vsix.mjs --target=kiro",
     "package:trae": "node scripts/build-vsix.mjs --target=trae",
-    "package:windsurf": "node scripts/build-vsix.mjs --target=windsurf"
+    "package:windsurf": "node scripts/build-vsix.mjs --target=windsurf",
+    "package:devin": "node scripts/build-vsix.mjs --target=devin"
   },
   "dependencies": {
     "ajv": "^8.17.0",
