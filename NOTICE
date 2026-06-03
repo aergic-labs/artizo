@@ -1,0 +1,81 @@
+Artizo Dev Containers
+Copyright 2026 Aergic Labs, LLC
+
+Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+This product includes software developed by third parties.
+
+================================================================================
+THIRD-PARTY DEPENDENCIES (Production)
+================================================================================
+
+The following third-party packages are included in the distributed extension:
+
+--------------------------------------------------------------------------------
+@devcontainers/cli
+  Version: 0.87.0
+  License: MIT
+  Author: Microsoft Corporation
+  Repository: https://github.com/devcontainers/cli
+  Note: Open-source CLI for building and running dev containers.
+        Used under the MIT license for container build/run operations.
+
+--------------------------------------------------------------------------------
+ajv
+  Version: 8.20.0
+  License: MIT
+  Author: Evgeny Poberezkin
+  Homepage: https://ajv.js.org
+  Note: JSON Schema validator used for devcontainer.json validation.
+
+  Transitive dependencies of ajv:
+
+    fast-deep-equal (3.1.3) - MIT - Evgeny Poberezkin
+    fast-uri (3.1.2) - BSD-3-Clause - Vincent Le Goff
+    json-schema-traverse (1.0.0) - MIT - Evgeny Poberezkin
+    require-from-string (2.0.2) - MIT - Vsevolod Strukchinsky
+
+--------------------------------------------------------------------------------
+jsonc-parser
+  Version: 3.3.1
+  License: MIT
+  Author: Microsoft Corporation
+  Repository: https://github.com/microsoft/node-jsonc-parser
+  Note: JSONC (JSON with Comments) parser for devcontainer.json files.
+
+--------------------------------------------------------------------------------
+vscode-uri
+  Version: 3.1.0
+  License: MIT
+  Author: Microsoft
+  Repository: https://github.com/microsoft/vscode-uri
+  Note: URI handling utilities for VS Code extension development.
+
+--------------------------------------------------------------------------------
+ws
+  Version: 8.20.1
+  License: MIT
+  Author: Einar Otto Stangvik
+  Repository: https://github.com/websockets/ws
+  Note: WebSocket client/server library for container communication.
+
+================================================================================
+LICENSE SUMMARY
+================================================================================
+
+This project uses open source software under the following licenses:
+
+  - MIT: @devcontainers/cli, ajv, jsonc-parser, vscode-uri, ws,
+         fast-deep-equal, json-schema-traverse, require-from-string
+  - BSD-3-Clause: fast-uri
+
+================================================================================
+COMPLIANCE NOTES
+================================================================================
+
+1. The @devcontainers/cli package is the open-source MIT-licensed CLI from the
+   devcontainers organization (https://github.com/devcontainers/cli), not a
+   proprietary Microsoft component.
+
+2. Development dependencies (vitest, typescript, esbuild, fast-check, etc.) are
+   NOT included in the distributed extension and are not listed here.

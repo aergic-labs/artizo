@@ -1,0 +1,26 @@
+{
+  "name": "artizo-windsurf",
+  "displayName": "Artizo Dev Containers for Windsurf",
+  "description": "Artizo Dev Containers for Windsurf: Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
+  "keywords": [
+    "windsurf",
+    "dev container",
+    "dev containers",
+    "devcontainers",
+    "devcontainer",
+    "docker",
+    "remote",
+    "remote development",
+    "containers"
+  ],
+  "license": "AGPL-3.0-only",
+  "platform": {
+    "name": "Windsurf",
+    "dataFolderName": ".windsurf-server",
+    "serverApplicationName": "windsurf-server",
+    "needsArgvPatch": true,
+    "additionalDockerRunArgs": [],
+    "serverInstallRoot": "/tmp",
+    "needsHomeSymlink": true
+  }
+}

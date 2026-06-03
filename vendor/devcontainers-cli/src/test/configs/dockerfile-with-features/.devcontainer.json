@@ -1,0 +1,19 @@
+{
+	"build": {
+		"dockerfile": "Dockerfile",
+		"args": { 
+			"VARIANT": "18-bookworm"
+		}
+	},
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
+		"ghcr.io/devcontainers/feature-starter/hello:1": {
+			"greeting": "howdy"
+		}
+	},
+	"postCreateCommand": "echo \"Val: $TEST\" | sudo tee /postCreateCommand.txt",
+	"remoteEnv": {
+		"TEST": "ENV",
+		"TEST_ESCAPING": "{\n  \"fo$o\": \"ba'r\"\n}"
+	}
+}

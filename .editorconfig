@@ -1,0 +1,10 @@
+root = true
+
+[*]
+end_of_line = crlf
+
+[*.{sh,py}]
+end_of_line = lf
+
+[tools/*.js]
+end_of_line = lf

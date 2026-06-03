@@ -1,0 +1,19 @@
+{
+	"build": {
+		"dockerfile": "Dockerfile",
+		"target": "desired-image",
+		"args": { 
+			"VARIANT": "18-bookworm"
+		},
+		"options": [ "--label", "test_build_options=success" ]
+	},
+	"postCreateCommand": "touch /tmp/postCreateCommand.testmarker",
+	"postStartCommand": "touch /tmp/postStartCommand.testmarker",
+	"postAttachCommand": "touch /tmp/postAttachCommand.testmarker",
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
+		"codspace/myfeatures/helloworld": {
+			"greeting": "howdy"
+		}
+	}
+}

@@ -1,0 +1,24 @@
+{
+	"custom_options": {
+		"image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+		"features" : {
+			"hello": {
+				"greeting": "Ciao"
+			},
+			"color": {
+				"favorite": "Magenta"
+			}
+		}
+	},
+	"with_external_feature": {
+		"image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+		"features": {
+			"hello": {
+				"greeting": "How ya doing"
+			},
+			"ghcr.io/devcontainers/feature-starter/color:1": {
+				"favorite": "Silver"
+			}
+		}
+	}
+}

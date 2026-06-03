@@ -1,0 +1,28 @@
+{
+    "id": "localFeatureA",
+    "version": "1.0.0",
+    "init": true,
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "extensionA",
+                "extensionB"
+            ]
+        }
+    },
+    "updateContentCommand": [
+        "one",
+        "two"
+    ],
+    "onCreateCommand": {
+        "command": "three",
+        "commandWithArgs": [
+            "four",
+            "arg1",
+            "arg2"
+        ]
+    },
+    "postCreateCommand": "five",
+    "postStartCommand": "six",
+    "postAttachCommand": "seven"
+}

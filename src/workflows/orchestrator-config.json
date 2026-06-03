@@ -1,0 +1,42 @@
+{
+  "states": [
+    "idle",
+    "parsing-config",
+    "building-container",
+    "installing-server",
+    "connecting",
+    "connected",
+    "disconnecting",
+    "error"
+  ],
+  "transitions": {
+    "idle":                  ["parsing-config", "connecting", "installing-server", "error"],
+    "parsing-config":        ["building-container", "installing-server", "error", "idle"],
+    "building-container":    ["installing-server", "error", "idle"],
+    "installing-server":     ["connecting", "error", "building-container", "parsing-config"],
+    "connecting":            ["connected", "error"],
+    "connected":             ["disconnecting", "idle", "parsing-config", "error"],
+    "disconnecting":         ["idle", "error"],
+    "error":                 ["idle", "parsing-config", "connecting", "installing-server"]
+  },
+  "why": {
+    "WORKFLOW_IN_PROGRESS":       "workflow already in progress",
+    "CONFIG_MUST_BE_PARSED":      "config must be parsed first",
+    "BUILD_NOT_IN_PROGRESS":      "build not in progress",
+    "SERVER_NOT_INSTALLED":       "server not yet installed",
+    "NOT_CURRENTLY_CONNECTING":   "not currently connecting",
+    "NOT_CONNECTED":              "not connected",
+    "DISCONNECT_NOT_IN_PROGRESS": "disconnect not in progress"
+  },
+  "methods": {
+    "beginConfigPhase":      { "from": ["idle", "error", "connected"],           "to": "parsing-config",     "why": "WORKFLOW_IN_PROGRESS" },
+    "beginAttachPhase":      { "from": ["idle", "error"],                        "to": "installing-server",  "why": "WORKFLOW_IN_PROGRESS" },
+    "beginBuildPhase":       { "from": ["parsing-config"],                       "to": "building-container", "why": "CONFIG_MUST_BE_PARSED" },
+    "skipBuildPhase":        { "from": ["parsing-config"],                       "to": "installing-server",  "why": "CONFIG_MUST_BE_PARSED" },
+    "buildPhaseComplete":    { "from": ["building-container"],                   "to": "installing-server",  "why": "BUILD_NOT_IN_PROGRESS" },
+    "beginConnectionPhase":  { "from": ["installing-server"],                    "to": "connecting",         "why": "SERVER_NOT_INSTALLED" },
+    "connectionEstablished": { "from": ["connecting"],                           "to": "connected",          "why": "NOT_CURRENTLY_CONNECTING" },
+    "beginDisconnect":       { "from": ["connected"],                            "to": "disconnecting",      "why": "NOT_CONNECTED" },
+    "disconnectComplete":    { "from": ["disconnecting"],                        "to": "idle",               "why": "DISCONNECT_NOT_IN_PROGRESS" }
+  }
+}

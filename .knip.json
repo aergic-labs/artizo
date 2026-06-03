@@ -1,0 +1,17 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "ignore": [
+    "vendor/**",
+    "stubs/**",
+    "tools/**",
+    "test-project/**",
+    "scripts/**"
+  ],
+  "ignoreDependencies": ["ovsx", "@vscode/vsce"],
+  "ignoreExportsUsedInFile": {
+    "interface": true,
+    "type": true,
+    "function": true
+  },
+  "ignoreFiles": ["src/remote/relay.js", "src/webview/app.js"]
+}

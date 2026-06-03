@@ -1,0 +1,407 @@
+{
+  "name": "artizo",
+  "displayName": "Artizo",
+  "description": "Artizo Dev Containers for Kiro: Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
+  "version": "0.0.1",
+  "publisher": "aergic",
+  "productName": "Artizo",
+  "license": "AGPL-3.0-only",
+  "homepage": "https://github.com/aergic-labs/artizo",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aergic-labs/artizo"
+  },
+  "bugs": {
+    "url": "https://github.com/aergic-labs/artizo/issues"
+  },
+  "icon": "resources/icon.png",
+  "galleryBanner": {
+    "color": "#1e1e2e",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "enabledApiProposals": [
+    "resolvers",
+    "contribViewsRemote"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "devcontainer",
+    "dev container",
+    "docker",
+    "remote",
+    "container",
+    "artizo",
+    "aergic-labs",
+    "reproducible",
+    "kiro",
+    "windsurf",
+    "wsl",
+    "containers",
+    "trae"
+  ],
+  "activationEvents": [
+    "onResolveRemoteAuthority:artizo-container",
+    "onResolveRemoteAuthority:attached-container",
+    "onStartupFinished",
+    "workspaceContains:.devcontainer/devcontainer.json",
+    "workspaceContains:.devcontainer.json"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "artizo.reopenInContainer",
+        "title": "Artizo: Reopen in Container",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.reopenLocally",
+        "title": "Artizo: Reopen Folder Locally",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.openDevContainerFile",
+        "title": "Artizo: Open Container Configuration File",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.rebuildContainer",
+        "title": "Artizo: Rebuild Container",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.rebuildContainerMenu",
+        "title": "Artizo: Rebuild Container",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.rebuildContainerNoCache",
+        "title": "Artizo: Rebuild Container Without Cache",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.rebuildAndReopenInContainer",
+        "title": "Artizo: Rebuild and Reopen in Container",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.revealLogTerminal",
+        "title": "Artizo: Show Dev Container Log",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.configureDevContainer",
+        "title": "Artizo: Configure Dev Container",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.openFolderInContainer",
+        "title": "Artizo: Open Folder in Container",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.cloneInVolume",
+        "title": "Artizo: Clone Repository in Container Volume",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.attachToRunningContainer",
+        "title": "Artizo: Attach to Running Container",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.addConfiguration",
+        "title": "Artizo: Add Dev Container Configuration Files",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.cleanUpContainers",
+        "title": "Artizo: Clean Up Dev Containers",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.explorer.refresh",
+        "title": "Artizo: Refresh",
+        "category": "Dev Containers (Artizo)",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "artizo.explorer.connectCurrentWindow",
+        "title": "Artizo: Connect in Current Window",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.explorer.connectNewWindow",
+        "title": "Artizo: Connect in New Window",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.ports.add",
+        "title": "Artizo: Forward a Port",
+        "category": "Dev Containers (Artizo)",
+        "icon": "$(add)"
+      },
+      {
+        "command": "artizo.ports.remove",
+        "title": "Artizo: Stop Forwarding Port",
+        "category": "Dev Containers (Artizo)",
+        "icon": "$(close)"
+      },
+      {
+        "command": "artizo.ports.setLabel",
+        "title": "Artizo: Set Port Label",
+        "category": "Dev Containers (Artizo)",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "artizo.volumes.refresh",
+        "title": "Artizo: Refresh Volumes",
+        "category": "Dev Containers (Artizo)",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "artizo.volumes.inspect",
+        "title": "Artizo: Inspect Volume",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.volumes.remove",
+        "title": "Artizo: Remove Volume",
+        "category": "Dev Containers (Artizo)",
+        "icon": "$(trash)"
+      }
+    ],
+    "views": {
+      "artizo-sidebar": [
+        {
+          "type": "webview",
+          "id": "artizo.sidebar",
+          "name": "",
+          "when": "!remoteName || remoteName =~ /^artizo-container|attached-container/",
+          "remoteName": [
+            "artizo-container",
+            "attached-container"
+          ]
+        }
+      ],
+      "remote": [
+        {
+          "id": "artizo.detailsView",
+          "name": "Container Details",
+          "when": "artizo.connected"
+        },
+        {
+          "id": "artizo.portsView",
+          "name": "Ports",
+          "when": "artizo.connected"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "artizo-sidebar",
+          "title": "Artizo Dev Containers",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "menus": {
+      "statusBar/remoteIndicator": [
+        {
+          "command": "artizo.reopenInContainer",
+          "when": "workspaceFolderCount != 0 && !remoteName && artizo.hasDevcontainerConfig",
+          "group": "remote_30_artizo-container_2_actions@0"
+        },
+        {
+          "command": "artizo.rebuildContainerMenu",
+          "when": "workspaceFolderCount != 0 && !remoteName && artizo.hasDevcontainerConfig",
+          "group": "remote_30_artizo-container_2_actions@1"
+        },
+        {
+          "command": "artizo.openFolderInContainer",
+          "when": "workspaceFolderCount == 0 && !remoteName",
+          "group": "remote_30_artizo-container_2_actions@2"
+        },
+        {
+          "command": "artizo.cloneInVolume",
+          "when": "!remoteName",
+          "group": "remote_30_artizo-container_2_actions@3"
+        },
+        {
+          "command": "artizo.attachToRunningContainer",
+          "when": "!remoteName",
+          "group": "remote_30_artizo-container_2_actions@4"
+        },
+        {
+          "command": "artizo.cleanUpContainers",
+          "when": "!remoteName",
+          "group": "remote_30_artizo-container_2_actions@5"
+        },
+        {
+          "command": "artizo.openDevContainerFile",
+          "when": "!remoteName && artizo.hasDevcontainerConfig",
+          "group": "remote_30_artizo-container_2_actions@6"
+        },
+        {
+          "command": "artizo.addConfiguration",
+          "when": "workspaceFolderCount != 0 && !remoteName && !artizo.hasDevcontainerConfig",
+          "group": "remote_30_artizo-container_2_actions@7"
+        },
+        {
+          "command": "artizo.configureDevContainer",
+          "when": "workspaceFolderCount != 0 && !remoteName && artizo.hasDevcontainerConfig",
+          "group": "remote_30_artizo-container_2_actions@8"
+        },
+        {
+          "command": "artizo.reopenLocally",
+          "when": "remoteName =~ /^artizo-container|attached-container/",
+          "group": "remote_30_artizo-container_2_actions@9"
+        },
+        {
+          "command": "artizo.revealLogTerminal",
+          "group": "remote_30_artizo-container_2_actions@10"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "artizo.ports.add",
+          "when": "view == artizo.portsView",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "artizo.ports.remove",
+          "when": "view == artizo.portsView && viewItem == forwardedPort",
+          "group": "inline"
+        },
+        {
+          "command": "artizo.ports.setLabel",
+          "when": "view == artizo.portsView && viewItem == forwardedPort",
+          "group": "navigation"
+        }
+      ]
+    },
+    "resourceLabelFormatters": [
+      {
+        "scheme": "vscode-remote",
+        "authority": "artizo-container+*",
+        "formatting": {
+          "label": "${path}",
+          "separator": "/",
+          "tildify": true,
+          "workspaceSuffix": "Dev Container"
+        }
+      },
+      {
+        "scheme": "vscode-remote",
+        "authority": "attached-container+*",
+        "formatting": {
+          "label": "${path}",
+          "separator": "/",
+          "tildify": true,
+          "workspaceSuffix": "Container"
+        }
+      }
+    ],
+    "configuration": {
+      "title": "Artizo DevContainers",
+      "properties": {
+        "artizo.copyGitConfig": {
+          "type": "boolean",
+          "default": true,
+          "description": "Copy host .gitconfig into dev containers. Can be disabled per-container by setting \"disableCopyGitConfig\": true in devcontainer.json."
+        },
+        "artizo.dotfiles.repository": {
+          "type": "string",
+          "default": "",
+          "description": "Dotfiles repository URL to clone into containers."
+        },
+        "artizo.dotfiles.installCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Command to run after cloning dotfiles."
+        },
+        "artizo.dotfiles.targetPath": {
+          "type": "string",
+          "default": "~/dotfiles",
+          "description": "Target path for dotfiles inside the container."
+        },
+        "artizo.defaultExtensions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extensions to install in every dev container."
+        },
+        "artizo.dockerPath": {
+          "type": "string",
+          "default": "docker",
+          "description": "Path to the Docker executable."
+        },
+        "artizo.logLevel": {
+          "type": "string",
+          "enum": [
+            "info",
+            "debug",
+            "trace"
+          ],
+          "enumDescriptions": [
+            "Standard logging (default)",
+            "Detailed diagnostic output",
+            "Maximum verbosity"
+          ],
+          "default": "info",
+          "description": "Logging verbosity level for the Dev Containers extension."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit && knip && node -e \"const fs=require('fs'); ['tools/setup.sh','tools/relay.js'].forEach(f=>{const c=fs.readFileSync(f,'utf8'); if(c.includes('\\r')){console.error(f+' has CRLF');process.exit(1)}})\"",
+    "test": "vitest run --exclude 'test/integration/**'",
+    "test:coverage": "vitest run --exclude 'test/integration/**' --coverage",
+    "test:integration": "vitest run test/integration/ --testTimeout=60000",
+    "test:all": "vitest run",
+    "package:kiro": "node scripts/build-vsix.mjs --target=kiro",
+    "package:trae": "node scripts/build-vsix.mjs --target=trae",
+    "package:windsurf": "node scripts/build-vsix.mjs --target=windsurf"
+  },
+  "dependencies": {
+    "ajv": "^8.17.0",
+    "jsonc-parser": "^3.3.1",
+    "vscode-uri": "^3.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vitest/coverage-v8": "^3.1.0",
+    "@vscode/vsce": "^3.9.1",
+    "esbuild": "^0.25.0",
+    "fast-check": "^3.23.0",
+    "knip": "^6.15.0",
+    "ovsx": "^0.10.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0"
+  },
+  "platform": {
+    "name": "Kiro",
+    "dataFolderName": ".kiro",
+    "serverApplicationName": "kiro-server",
+    "needsArgvPatch": true,
+    "additionalDockerRunArgs": []
+  }
+}

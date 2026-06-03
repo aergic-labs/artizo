@@ -1,0 +1,5 @@
+{
+  "name": "Integration Test - Minimal",
+  "image": "alpine:3.19",
+  "overrideCommand": true
+}

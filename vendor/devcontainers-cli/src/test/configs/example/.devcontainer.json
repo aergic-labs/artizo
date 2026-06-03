@@ -1,0 +1,10 @@
+// Example devcontainer.json configuration, 
+// wired into the vscode launch task (.vscode/launch.json)
+{
+	"image": "mcr.microsoft.com/devcontainers/base:latest",
+	"features": {
+		"ghcr.io/devcontainers/features/github-cli:1": {
+			"version": "latest"
+		}
+	}
+}

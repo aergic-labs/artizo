@@ -1,0 +1,20 @@
+{
+	"some_scenario": {
+		"image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+		"features": {
+			"util": {}
+		}
+	},
+	"some_scenario_2": {
+		"image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+		"features": {
+			"util": {}
+		}
+	},
+	"random_scenario": {
+		"image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+		"features": {
+			"util": {}
+		}
+	}
+}

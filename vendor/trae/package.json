@@ -1,0 +1,26 @@
+{
+  "name": "artizo-trae",
+  "displayName": "Artizo Dev Containers for Trae",
+  "description": "Artizo Dev Containers for Trae: Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
+  "keywords": [
+    "trae",
+    "dev container",
+    "dev containers",
+    "devcontainers",
+    "devcontainer",
+    "docker",
+    "remote",
+    "remote development",
+    "containers"
+  ],
+  "platform": {
+    "name": "Trae",
+    "dataFolderName": ".trae",
+    "serverApplicationName": "trae-server",
+    "needsArgvPatch": false,
+    "additionalDockerRunArgs": [
+      "--security-opt",
+      "seccomp=unconfined"
+    ]
+  }
+}

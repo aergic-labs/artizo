@@ -1,0 +1,21 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"resolveJsonModule": true,
+		"types": [
+			"node",
+			"mocha"
+		]
+	},
+	"references": [
+		{
+			"path": "../spec-configuration"
+		},
+		{
+			"path": "../spec-utils"
+		},
+		{
+			"path": "../spec-node"
+		}
+	]
+}

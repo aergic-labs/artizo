@@ -1,0 +1,10 @@
+{
+	"dockerComposeFile": "docker-compose.yml",
+	"service": "app",
+	"workspaceFolder": "/workspace",
+	"postCreateCommand": "echo \"Val: $TEST\" > /postCreateCommand.txt",
+	"remoteEnv": {
+		"TEST": "ENV",
+		"TEST_ESCAPING": "{\n  \"fo$o\": \"ba'r\"\n}"
+	}
+}

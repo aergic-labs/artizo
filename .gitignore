@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+*.vsix
+*.log
+.env
+.DS_Store
+Thumbs.db
+nul
+package.json.bak

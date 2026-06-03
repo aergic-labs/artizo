@@ -1,0 +1,42 @@
+# Root README is supplied via --readme-path in build script; exclude the file
+README.md
+
+# Source files (bundled into dist/extension.js)
+src/**
+!src/webview/**
+test/**
+test-project/**
+
+# Analysis/reference docs (not for distribution)
+docs/**
+tools/**
+!tools/busybox/**
+!tools/relay.js
+!tools/setup.sh
+
+# Build configuration
+tsconfig.json
+vitest.config.ts
+esbuild.config.mjs
+
+# Development files
+coverage/**
+.git/**
+.gitignore
+resources/.gitkeep
+
+# Node modules (CLI is copied to dist/ during build)
+node_modules/**
+
+# Build-only (not for distribution)
+vendor/**
+plans/**
+scripts/**
+Makefile
+package.json.bak
+
+# Misc
+dist/meta.json
+dist/**/*.map
+*.vsix
+.gitmodules

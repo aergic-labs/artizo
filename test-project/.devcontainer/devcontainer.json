@@ -1,0 +1,24 @@
+{
+  "name": "Artizo Dev Containers Test",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "forwardPorts": [],
+  "portsAttributes": {
+    "3000": {
+      "label": "Web App",
+      "onAutoForward": "notify"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  },
+"postCreateCommand": "echo 'Container ready!'",
+"mounts": [
+],
+"runArgs": []
+}
