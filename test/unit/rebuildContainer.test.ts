@@ -24,13 +24,38 @@ vi.mock("vscode", () => ({
   Uri: { parse: (s: string) => ({ toString: () => s }) },
 }));
 
-vi.mock("../../src/devcontainer/api", () => ({
-  launch: vi.fn(),
-  withDefaults: vi.fn().mockImplementation((o: Record<string, unknown>) => o),
-  ContainerError: class extends Error {
-    description = "mock error";
-  },
-}));
+vi.mock("../../src/devcontainer/api", async () => {
+  const { ProvisionFailedError } = await import(
+    "../../src/devcontainer/provisionError"
+  );
+  const launch = vi.fn();
+  const launchProvision = vi.fn(
+    async (
+      options: unknown,
+      configPath: string | null | undefined,
+      failureMessage = "Build failed",
+    ) => {
+      try {
+        return await launch(options, undefined, []);
+      } catch (err: unknown) {
+        const desc = (err as { description?: string })?.description;
+        const msg = desc ?? (err instanceof Error ? err.message : String(err));
+        throw new ProvisionFailedError(
+          `${failureMessage}: ${msg}`,
+          configPath ?? undefined,
+        );
+      }
+    },
+  );
+  return {
+    launch,
+    launchProvision,
+    withDefaults: vi.fn().mockImplementation((o: Record<string, unknown>) => o),
+    ContainerError: class extends Error {
+      description = "mock error";
+    },
+  };
+});
 
 import { launch, withDefaults } from "../../src/devcontainer/api";
 import { rebuildContainer } from "../../src/workflows/rebuildContainer";
@@ -307,17 +332,23 @@ describe("rebuildContainer", () => {
     expect(orchestrator.state).toBe("error");
   });
 
-  it("offers recovery mode when launch fails", async () => {
+  it("propagates build failures without offering recovery (reported at command layer)", async () => {
     (launch as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error("Build failed: Dockerfile error at line 5"),
     );
-    ui = createMockUI({ showError: vi.fn().mockResolvedValue("Open Locally") });
+    const showErrorMock = vi.fn().mockResolvedValue("Open Locally");
+    ui = createMockUI({ showError: showErrorMock });
 
-    await rebuildContainer(deps, ui, {
-      workspaceFolder: "/workspace",
-      reconnect: false,
-    });
+    await expect(
+      rebuildContainer(deps, ui, {
+        workspaceFolder: "/workspace",
+        reconnect: false,
+      }),
+    ).rejects.toThrow("Dockerfile error at line 5");
 
+    // Provision failures are reported at the command layer now, so the
+    // workflow neither shows its own toast nor offers the recovery prompt.
+    expect(showErrorMock).not.toHaveBeenCalled();
     expect(orchestrator.state).toBe("error");
   });
 

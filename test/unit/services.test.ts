@@ -6,7 +6,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { mockInitLogger, mockGetLogger, mockLogger } = vi.hoisted(() => ({
-  mockInitLogger: vi.fn(),
+  mockInitLogger: vi.fn(() => ({
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+    trace: vi.fn(),
+  })),
   mockGetLogger: vi.fn(),
   mockLogger: {
     info: vi.fn(),
@@ -135,6 +141,7 @@ import {
   loadProductInfo,
   autoDetectDevcontainer,
   createServices,
+  initializeLogger,
   type ExtensionSettings,
 } from "../../src/host/services";
 import { getProductInfo } from "../../src/remote/productInfo";
@@ -287,6 +294,62 @@ describe("services", () => {
       createServices(context, settings, resolver, productInfo, pty);
 
       expect(resolver.setServerManager).toHaveBeenCalled();
+    });
+  });
+
+  describe("initializeLogger", () => {
+    it("creates terminal with branded name", () => {
+      const ctx = {
+        subscriptions: [],
+        logPath: "/logs",
+        extensionPath: "/ext",
+      } as any;
+      const result = initializeLogger(ctx);
+
+      expect(vscode.window.createTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "Dev Containers (Artizo)" }),
+      );
+      expect(result.buildLogPty).toBeDefined();
+      expect(result.buildLogTerminal).toBeDefined();
+      expect(mockInitLogger).toHaveBeenCalled();
+    });
+
+    it("registers revealLogTerminal command", () => {
+      const ctx = {
+        subscriptions: [],
+        logPath: "/logs",
+        extensionPath: "/ext",
+      } as any;
+      initializeLogger(ctx);
+
+      expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
+        "artizo.revealLogTerminal",
+        expect.any(Function),
+      );
+    });
+
+    it("recreates terminal when show fails", () => {
+      const ctx = {
+        subscriptions: [],
+        logPath: "/logs",
+        extensionPath: "/ext",
+      } as any;
+
+      // First terminal.show() throws
+      let callCount = 0;
+      vi.mocked(vscode.window.createTerminal).mockImplementation(() => ({
+        show: () => {
+          callCount++;
+          if (callCount === 1) throw new Error("closed");
+        },
+        dispose: vi.fn(),
+      }));
+
+      const result = initializeLogger(ctx);
+      result.buildLogTerminal.show();
+
+      // Should have created a second terminal
+      expect(vscode.window.createTerminal).toHaveBeenCalledTimes(2);
     });
   });
 });

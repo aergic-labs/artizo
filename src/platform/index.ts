@@ -18,7 +18,6 @@ let _adapter: IPlatformAdapter | undefined;
 
 declare const HAS_KIRO_ADAPTER: boolean;
 declare const HAS_TRAE_ADAPTER: boolean;
-declare const HAS_WINDSURF_ADAPTER: boolean;
 declare const HAS_DEVIN_ADAPTER: boolean;
 
 /**
@@ -47,18 +46,6 @@ export async function getPlatformAdapter(): Promise<IPlatformAdapter> {
         serverInstallRoot: "/tmp",
         needsHomeSymlink: true,
         hostDataFolderName: ".devin",
-      });
-    } else if (HAS_WINDSURF_ADAPTER) {
-      const { WindsurfAdapter } = await import("./windsurf.js");
-      _adapter = new WindsurfAdapter({
-        name: "Windsurf",
-        dataFolderName: ".windsurf-server",
-        serverApplicationName: "windsurf-server",
-        needsArgvPatch: true,
-        additionalDockerRunArgs: [],
-        serverInstallRoot: "/tmp",
-        needsHomeSymlink: true,
-        hostDataFolderName: ".windsurf",
       });
     } else {
       const { KiroAdapter } = await import("./kiro.js");

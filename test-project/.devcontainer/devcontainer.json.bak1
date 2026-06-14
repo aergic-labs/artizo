@@ -6,7 +6,7 @@
       "version": "20"
     }
   },
-  "forwardPorts": [3000],
+  "forwardPorts": [],
   "customizations": {
     "vscode": {
       "extensions": []
@@ -15,5 +15,5 @@
   "runArgs": [
     "--privileged"
   ],
-  "mounts": []
+  "mounts": [],,[
 }

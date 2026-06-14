@@ -9,7 +9,8 @@ import { encodeAuthority } from "../utils/uriUtils";
 import { BRAND, BRAND_PREFIX } from "../utils/constants";
 import { getLogger } from "../utils/logger";
 import type { WorkflowDependencies, WorkflowUI } from "./types";
-import { launch, withDefaults, ContainerError } from "../devcontainer/api";
+import { launchProvision, withDefaults } from "../devcontainer/api";
+import { ProvisionFailedError } from "../devcontainer/provisionError";
 import { getPlatformAdapter } from "../platform";
 import { connectToContainer, writeOverrideConfig } from "./postLaunch";
 import type { ReadConfigResult } from "../config/configManager";
@@ -92,15 +93,10 @@ export async function rebuildContainer(
                 log: (text: string) => ui.showBuildLog(text),
               });
 
-              try {
-                result = await launch(options, undefined, []);
-              } catch (err: unknown) {
-                const containerErr = err as InstanceType<typeof ContainerError>;
-                if (containerErr?.description) {
-                  throw new Error(`Build failed: ${containerErr.description}`);
-                }
-                throw err;
-              }
+              result = await launchProvision(
+                options,
+                configResult!.configPath,
+              );
             },
           );
 
@@ -179,17 +175,11 @@ export async function rebuildContainer(
             log: (text: string) => ui.showBuildLog(text),
           });
 
-          try {
-            relaunchResult = await launch(upOptions, undefined, []);
-          } catch (err: unknown) {
-            const containerErr = err as InstanceType<typeof ContainerError>;
-            if (containerErr?.description) {
-              throw new Error(
-                `Container start failed: ${containerErr.description}`,
-              );
-            }
-            throw err;
-          }
+          relaunchResult = await launchProvision(
+            upOptions,
+            configResult!.configPath,
+            "Container start failed",
+          );
         },
       );
 
@@ -228,6 +218,10 @@ export async function rebuildContainer(
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
     orchestrator.fail(error);
+
+    if (error instanceof ProvisionFailedError) {
+      throw error;
+    }
 
     const action = await ui.showError(
       `${BRAND_PREFIX} Container rebuild failed: ${error.message}`,

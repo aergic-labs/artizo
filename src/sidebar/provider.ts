@@ -14,8 +14,14 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import * as path from "node:path";
 import { getLogger } from "../utils/logger";
-import type { WebviewMessage, HostMessage, MountEntry } from "./messages";
+import type {
+  WebviewMessage,
+  HostMessage,
+  MountEntry,
+  ConfigParseError,
+} from "./messages";
 import { computeCommands } from "./commandRegistry";
 import { ContainerService } from "./containerService";
 import { VolumeService } from "./volumeService";
@@ -25,12 +31,16 @@ import {
   computeMountsToggle,
 } from "./configToggles";
 import { extractSoftware } from "./configToggles";
+import { getAiAssist, type AiAssist } from "../ai";
+
+declare const HAS_KIRO_ADAPTER: boolean;
 
 export class SidebarProvider
   implements vscode.WebviewViewProvider, vscode.Disposable
 {
   private _view?: vscode.WebviewView;
   private _pendingMessages: HostMessage[] = [];
+  private _disposables: vscode.Disposable[] = [];
   private readonly containerService: ContainerService;
   private readonly volumeService: VolumeService;
 
@@ -73,10 +83,23 @@ export class SidebarProvider
     }
     this._pendingMessages = [];
 
-    this.loadConfig();
+    this.loadConfig(true);
     this.refreshContainers();
     this.refreshVolumes();
     this.refreshCommands();
+
+    // Reload config whenever devcontainer.json is saved to disk.
+    // Catches manual user edits, AI writes, and git changes — not just
+    // the explicit loadConfig() calls after our own edits.
+    this._disposables.push(
+      vscode.workspace.onDidSaveTextDocument((doc) => {
+        const wsPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+        const configPath = this.configManager.getConfigPath(wsPath);
+        if (configPath && doc.uri.fsPath === configPath) {
+          this.loadConfig(true);
+        }
+      }),
+    );
   }
 
   /** Push a message to the webview. */
@@ -96,6 +119,8 @@ export class SidebarProvider
   dispose(): void {
     this._pendingMessages = [];
     this._view = undefined;
+    for (const d of this._disposables) d.dispose();
+    this._disposables = [];
   }
 
   // ── Public refresh (called by commands.ts) ──────────────────
@@ -140,8 +165,10 @@ export class SidebarProvider
     }
   }
 
-  /** Load config from the current workspace, open it in editor, and send to webview. */
-  async loadConfig(): Promise<void> {
+  /** Load config from the current workspace, open it in editor, and send to webview.
+   * @param checkErrors If true, parse errors are sent to the webview banner.
+   *                     Only pass true for initial load, explicit opens, and saves. */
+  async loadConfig(checkErrors = false): Promise<void> {
     if (vscode.env.remoteName) {
       this.postMessage({ type: "configMissing", remote: true });
       return;
@@ -172,17 +199,41 @@ export class SidebarProvider
       });
     }
 
-    let raw: Record<string, unknown> = {};
-    try {
-      const { parse } = await import("jsonc-parser");
-      raw = parse(doc.getText()) as Record<string, unknown>;
-      getLogger().info(
-        `loadConfig: parsed runArgs=${JSON.stringify(raw.runArgs || [])}`,
-      );
-    } catch {
-      getLogger().error("loadConfig: JSON.parse failed");
+    const content = doc.getText();
+    const { parse } = await import("jsonc-parser");
+    const errors: import("jsonc-parser").ParseError[] = [];
+    const raw = parse(content, errors, {
+      allowTrailingComma: true,
+    }) as Record<string, unknown> | undefined;
+
+    if (!raw) {
+      getLogger().error("loadConfig: unparseable JSONC");
       return;
     }
+
+    let parseErrors: ConfigParseError[] | undefined;
+    if (checkErrors) {
+      parseErrors = [];
+      if (errors.length > 0) {
+        parseErrors = errors.map((err) => {
+          const { line, column } = this.getLineColumn(content, err.offset);
+          return {
+            message: this.friendlyError(err.error),
+            offset: err.offset,
+            length: err.length,
+            line,
+            column,
+          };
+        });
+        getLogger().warn(
+          `loadConfig: ${errors.length} parse error(s) in devcontainer.json`,
+        );
+      }
+    }
+
+    getLogger().info(
+      `loadConfig: parsed runArgs=${JSON.stringify(raw.runArgs || [])}`,
+    );
 
     const toggles = extractToggles(raw);
     getLogger().info(
@@ -193,6 +244,8 @@ export class SidebarProvider
       path: configPath,
       toggles,
       software: extractSoftware(raw),
+      errors: parseErrors,
+      aiAvailable: await this.isAiAvailable(),
     });
     this.sendInstalledExtensions(raw);
     this.refreshCommands();
@@ -298,6 +351,59 @@ export class SidebarProvider
       case "generateConfig":
         this.generateConfig(message.image);
         break;
+      case "aiGenerateConfig":
+        this.aiGenerateConfig();
+        break;
+      case "aiUpdateConfig":
+        this.aiUpdateConfig();
+        break;
+      case "aiFixConfig":
+        this.aiFixConfig();
+        break;
+      case "openConfigFile":
+        this.loadConfig(true);
+        break;
+      case "repairConfig":
+        this.repairConfig();
+        break;
+    }
+  }
+
+  // ── AI prompt dispatch ─────────────────────────────────────
+
+  /**
+   * Hand a prompt to the platform's AI assist and report status to the webview.
+   * When the platform supports progress tracking, polls for completion or
+   * pending questions; otherwise reports that the prompt was submitted.
+   *
+   * Prompt-building stays at the call site; this method only dispatches.
+   */
+  private async dispatchAi(
+    prompt: string,
+    files: string[],
+    title: string,
+    target: string,
+  ): Promise<void> {
+    this.postMessage({ type: "aiStatus", status: "generating", target });
+
+    const ai = await getAiAssist();
+    try {
+      await ai.submit(prompt, { files, title });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.postMessage({
+        type: "aiStatus",
+        status: "error",
+        target,
+        message: msg,
+      });
+      return;
+    }
+
+    if (ai.pollPendingQuestions) {
+      this.watchAiProgress(target, ai);
+    } else {
+      this.postMessage({ type: "aiStatus", status: "submitted", target });
     }
   }
 
@@ -336,6 +442,251 @@ export class SidebarProvider
       this.postMessage({ type: "configMissing" });
       vscode.window.showErrorMessage(`Failed to create config: ${msg}`);
     }
+  }
+
+  private async aiGenerateConfig(): Promise<void> {
+    const wsFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!wsFolder) {
+      vscode.window.showErrorMessage(
+        "No workspace folder open. Open a folder first.",
+      );
+      return;
+    }
+
+    const files: string[] = [];
+    const makefilePath = vscode.Uri.joinPath(wsFolder.uri, "Makefile");
+    const configPath = this.configManager.getConfigPath(wsFolder.uri.fsPath);
+
+    try {
+      await vscode.workspace.fs.stat(makefilePath);
+      files.push("Makefile");
+    } catch {
+      // Makefile doesn't exist, skip
+    }
+
+    if (configPath) {
+      files.push(".devcontainer/devcontainer.json");
+    }
+
+    // Build the prompt with installed extensions context
+    const installedExts = vscode.extensions.all
+      .filter(
+        (e) =>
+          !e.id.startsWith("vscode.") &&
+          !e.extensionPath.startsWith(vscode.env.appRoot) &&
+          !/^aergic\.artizo-/.test(e.id),
+      )
+      .map((e) => e.id)
+      .join(", ");
+
+    const promptPath = vscode.Uri.joinPath(
+      this.extensionUri,
+      "src",
+      "ai",
+      "prompts",
+      "devcontainer",
+      "generate.md",
+    );
+    const basePrompt = fs.readFileSync(promptPath.fsPath, "utf-8");
+    const prompt = `${basePrompt}\n\nINSTALLED EXTENSIONS: ${installedExts}\n\nWhen adding extensions to customizations.vscode.extensions, prefer ones from this list if relevant to the project. Add ones not in the list only if the project clearly needs them.`;
+
+    await this.dispatchAi(prompt, files, "Set up Dev Container", "wizard");
+  }
+
+  private async aiUpdateConfig(): Promise<void> {
+    const wsFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!wsFolder) {
+      vscode.window.showErrorMessage("No workspace folder open.");
+      return;
+    }
+
+    const configPath = this.configManager.getConfigPath(wsFolder.uri.fsPath);
+    if (!configPath) {
+      vscode.window.showErrorMessage("No devcontainer.json found.");
+      return;
+    }
+
+    const files: string[] = [".devcontainer/devcontainer.json"];
+    const makefilePath = vscode.Uri.joinPath(wsFolder.uri, "Makefile");
+    try {
+      await vscode.workspace.fs.stat(makefilePath);
+      files.push("Makefile");
+    } catch {
+      // Makefile doesn't exist, skip
+    }
+
+    const promptPath = vscode.Uri.joinPath(
+      this.extensionUri,
+      "src",
+      "ai",
+      "prompts",
+      "devcontainer",
+      "update.md",
+    );
+    const prompt = fs.readFileSync(promptPath.fsPath, "utf-8");
+
+    await this.dispatchAi(
+      prompt,
+      files,
+      "Review Dev Container Config",
+      "config",
+    );
+  }
+
+  /** AI-assisted syntax error fix for a broken devcontainer.json. */
+  private async aiFixConfig(): Promise<void> {
+    const wsFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!wsFolder) {
+      vscode.window.showErrorMessage("No workspace folder open.");
+      return;
+    }
+
+    const configPath = this.configManager.getConfigPath(wsFolder.uri.fsPath);
+    if (!configPath) {
+      vscode.window.showErrorMessage("No devcontainer.json found.");
+      return;
+    }
+
+    const promptPath = vscode.Uri.joinPath(
+      this.extensionUri,
+      "src",
+      "ai",
+      "prompts",
+      "devcontainer",
+      "fix.md",
+    );
+    const prompt = fs.readFileSync(promptPath.fsPath, "utf-8");
+
+    await this.dispatchAi(
+      prompt,
+      [".devcontainer/devcontainer.json"],
+      "Fix Dev Container Syntax",
+      "config",
+    );
+  }
+
+  /** Repair a corrupted devcontainer.json. */
+  private async repairConfig(): Promise<void> {
+    const wsFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!wsFolder) return;
+
+    const configPath = this.configManager.getConfigPath(wsFolder.uri.fsPath);
+    if (!configPath) return;
+
+    // Save backup: devcontainer.json.bak1, .bak2, ...
+    let bakPath: string;
+    let n = 1;
+    do {
+      bakPath = configPath + ".bak" + n;
+      n++;
+    } while (fs.existsSync(bakPath));
+
+    const { repairDevcontainerJson } = await import("./jsonRepair.js");
+
+    // Read from editor buffer if available (preserves unsaved fixes),
+    // fall back to disk content
+    const doc = await this.getEditorDoc();
+    const content = doc ? doc.getText() : fs.readFileSync(configPath, "utf-8");
+
+    // Always save backup before attempting repair
+    fs.writeFileSync(bakPath, content, "utf-8");
+    getLogger().info(`repairConfig: saved backup to ${path.basename(bakPath)}`);
+
+    try {
+      const repaired = repairDevcontainerJson(content);
+
+      // Write repaired content via editor or direct file write
+      if (doc) {
+        const fullRange = new vscode.Range(
+          doc.positionAt(0),
+          doc.positionAt(content.length),
+        );
+        const wsEdit = new vscode.WorkspaceEdit();
+        wsEdit.replace(doc.uri, fullRange, repaired);
+        await vscode.workspace.applyEdit(wsEdit);
+        await doc.save();
+
+        // Trigger built-in JSON formatting
+        try {
+          await vscode.commands.executeCommand("editor.action.formatDocument");
+          await doc.save();
+        } catch {
+          // Format not available — repaired content is still valid
+        }
+      } else {
+        fs.writeFileSync(configPath, repaired, "utf-8");
+      }
+
+      vscode.window.showInformationMessage(
+        `devcontainer.json repaired. Backup saved to ${path.basename(bakPath)}.`,
+      );
+      this.loadConfig(true);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      vscode.window
+        .showErrorMessage(
+          `Could not auto-repair. Original saved to ${path.basename(bakPath)}. ${msg}`,
+          "Open Backup",
+        )
+        .then((choice) => {
+          if (choice === "Open Backup") {
+            vscode.window.showTextDocument(vscode.Uri.file(bakPath));
+          }
+        });
+    }
+  }
+
+  private async watchAiProgress(target: string, ai: AiAssist): Promise<void> {
+    const maxPolls = 120; // 2 minutes at 1s intervals
+    for (let i = 0; i < maxPolls; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      try {
+        const pending = (await ai.pollPendingQuestions?.()) ?? 0;
+        if (pending > 0) {
+          this.postMessage({
+            type: "aiStatus",
+            target,
+            status: "questions",
+            message: `${pending} question${pending > 1 ? "s" : ""} pending — check the AI chat panel.`,
+          });
+          return; // Stop polling; user needs to interact
+        }
+      } catch {
+        // Command may not be available yet, keep polling
+      }
+
+      // Check if config was created/modified
+      const wsFolder = vscode.workspace.workspaceFolders?.[0];
+      if (wsFolder) {
+        const configPath = this.configManager.getConfigPath(
+          wsFolder.uri.fsPath,
+        );
+        if (configPath) {
+          try {
+            await vscode.workspace.fs.stat(vscode.Uri.file(configPath));
+            this.postMessage({ type: "aiStatus", target, status: "done" });
+            await this.loadConfig();
+            this.postMessage({ type: "expandSection", section: "config" });
+            // Switch to manual tab so user sees the updated fields
+            if (target === "config") {
+              this.postMessage({ type: "switchTab", tab: "config-manual" });
+            }
+            return;
+          } catch {
+            // Config doesn't exist yet
+          }
+        }
+      }
+    }
+
+    // Timed out
+    this.postMessage({
+      type: "aiStatus",
+      target,
+      status: "timeout",
+      message: "Still waiting. Check the AI chat panel.",
+    });
   }
 
   // ── Container actions ────────────────────────────────────────
@@ -396,7 +747,9 @@ export class SidebarProvider
       }
     }
     try {
-      return await vscode.workspace.openTextDocument(configPath);
+      return await vscode.workspace.openTextDocument(
+        vscode.Uri.file(configPath),
+      );
     } catch {
       return undefined;
     }
@@ -487,9 +840,15 @@ export class SidebarProvider
       path: configPath,
       toggles,
       software: extractSoftware(raw),
+      aiAvailable: await this.isAiAvailable(),
     });
     this.sendInstalledExtensions(raw);
     this.refreshCommands();
+  }
+
+  /** Whether AI assist can be offered in the current runtime. */
+  private async isAiAvailable(): Promise<boolean> {
+    return (await getAiAssist()).isAvailable();
   }
 
   private async toggleSoftware(
@@ -745,129 +1104,63 @@ export class SidebarProvider
       vscode.Uri.joinPath(this.extensionUri, "src", "webview", "styles.css"),
     );
 
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="${styleUri}">
-  <title>Artizo</title>
-</head>
-<body>
-  <div id="root">
-    <div class="panel active" id="panel-config">
-      <div id="status-bar"></div>
-      <div class="section">
-        <h3>Commands</h3>
-        <div id="command-list"></div>
-      </div>
-      <div class="section">
-        <div class="accordion-header">
-          <span class="chevron"></span>
-          <h3>Containers</h3>
-          <button class="refresh-btn" data-section="containers">&#x21bb;</button>
-        </div>
-        <div class="accordion-body">
-          <div id="container-list"></div>
-          <p id="container-empty" class="empty-state hidden">No dev containers found.</p>
-        </div>
-      </div>
-      <div class="section">
-        <div class="accordion-header">
-          <span class="chevron"></span>
-          <h3>Volumes</h3>
-          <button class="refresh-btn" data-section="volumes">&#x21bb;</button>
-        </div>
-        <div class="accordion-body">
-          <div id="volume-list"></div>
-          <p id="volume-empty" class="empty-state hidden">No managed volumes found.</p>
-        </div>
-      </div>
-      <div id="config-section" class="section hidden">
-        <div class="accordion-header" data-section="config">
-          <span class="chevron"></span>
-          <h3>devcontainer.json</h3>
-        </div>
-        <div class="accordion-body">
-          <p class="empty-state">
-            <button id="open-config-btn" class="btn">Open File</button>
-          </p>
-          <div class="section">
-            <div class="list-row command-parent" onclick="this.nextElementSibling.classList.toggle('hidden');this.querySelector('.chevron-btn').textContent=this.nextElementSibling.classList.contains('hidden')?'▶':'▼'">
-              <span>Options</span>
-              <button class="btn small chevron-btn">▶</button>
-            </div>
-            <div class="command-children hidden">
-              <div id="toggle-list"></div>
-            </div>
-          </div>
-          <div class="section">
-            <div class="list-row command-parent" onclick="this.nextElementSibling.classList.toggle('hidden');this.querySelector('.chevron-btn').textContent=this.nextElementSibling.classList.contains('hidden')?'▶':'▼'">
-              <span>Software</span>
-              <button class="btn small chevron-btn">▶</button>
-            </div>
-            <div class="command-children hidden">
-              <div id="software-list"></div>
-              <div class="freeform-row">
-                <input type="text" id="software-input" placeholder="ghcr.io/devcontainers/features/terraform:1">
-                <button id="add-software-btn" class="btn small">Add</button>
-              </div>
-              <small><a href="https://containers.dev/features" target="_blank">Browse catalog</a></small>
-            </div>
-          </div>
-          <div class="section">
-            <div class="list-row command-parent" onclick="this.nextElementSibling.classList.toggle('hidden');this.querySelector('.chevron-btn').textContent=this.nextElementSibling.classList.contains('hidden')?'▶':'▼'">
-              <span>Ports</span>
-              <button class="btn small chevron-btn">▶</button>
-            </div>
-            <div class="command-children hidden">
-              <div id="port-list"></div>
-              <div class="add-row">
-                <input type="number" id="port-input" placeholder="Port" min="1" max="65535">
-                <input type="text" id="port-label-input" placeholder="Label">
-                <button id="add-port-btn" class="btn">Add</button>
-              </div>
-            </div>
-          </div>
-          <div class="section">
-            <div class="list-row command-parent" onclick="this.nextElementSibling.classList.toggle('hidden');this.querySelector('.chevron-btn').textContent=this.nextElementSibling.classList.contains('hidden')?'▶':'▼'">
-              <span>VS Code Extensions</span>
-              <button class="btn small chevron-btn">▶</button>
-            </div>
-            <div class="command-children hidden">
-              <input type="text" id="extension-filter" placeholder="Filter or type a publisher.extension to add">
-              <div id="extension-checklist"></div>
-              <div id="extension-list"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div id="empty-config" class="section hidden">
-        <div class="accordion-header" data-section="wizard">
-          <span class="chevron"></span>
-          <h3>New devcontainer.json</h3>
-        </div>
-        <div class="accordion-body">
-          <p id="empty-config-msg" class="empty-state">No devcontainer.json found in this workspace. Create one below:</p>
-          <div id="wizard-section">
-            <div class="section">
-              <h4>Common Images</h4>
-              <div id="wizard-images"></div>
-            </div>
-            <div class="section">
-              <h4>Custom Image</h4>
-              <div class="add-row">
-                <input type="text" id="wizard-image-input" placeholder="e.g. alpine, ubuntu:22.04">
-                <button id="wizard-generate-btn" class="btn primary">Generate</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <script src="${appUri}"></script>
-</body>
-</html>`;
+    const htmlPath = vscode.Uri.joinPath(
+      this.extensionUri,
+      "src",
+      "webview",
+      "index.html",
+    );
+    let html = fs.readFileSync(htmlPath.fsPath, "utf-8");
+
+    // Substitute URIs
+    html = html.replace("${SCRIPT_URI}", appUri.toString());
+    html = html.replace("${STYLE_URI}", styleUri.toString());
+
+    // Remove the AI-assist markers, keeping their content. AI availability is
+    // gated at runtime via aiAvailable (ai.isAvailable()), not at build time.
+    html = html.replace(/\$\{AI_ASSIST:(start|end)\}\n?/g, "");
+
+    // Platform-specific UI adjustments (AI-native tab layout)
+    if (HAS_KIRO_ADAPTER) {
+      html = html.replace(
+        '<div id="wizard-section">',
+        '<div id="wizard-section" class="hidden">',
+      );
+      html = html.replace(
+        '<div id="config-manual-content">',
+        '<div id="config-manual-content" class="hidden">',
+      );
+      html = html.replace(
+        '<div id="config-no-ai">',
+        '<div id="config-no-ai" class="hidden">',
+      );
+    }
+
+    return html;
+  }
+
+  /** Compute line and column from an offset in a string. */
+  private getLineColumn(
+    text: string,
+    offset: number,
+  ): { line: number; column: number } {
+    let line = 1;
+    let column = 1;
+    for (let i = 0; i < offset && i < text.length; i++) {
+      if (text[i] === "\n") {
+        line++;
+        column = 1;
+      } else {
+        column++;
+      }
+    }
+    return { line, column };
+  }
+
+  /** Convert a jsonc-parser error code to a human-readable message. */
+  private friendlyError(code: number): string {
+    const { printParseErrorCode } =
+      require("jsonc-parser") as typeof import("jsonc-parser");
+    return printParseErrorCode(code);
   }
 }

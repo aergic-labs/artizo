@@ -6,7 +6,7 @@
 /**
  * Platform adapter interface.
  *
- * Each supported IDE (Kiro, Trae, Windsurf, Devin) provides an implementation.
+ * Each supported IDE (Kiro, Trae, Devin) provides an implementation.
  * Vendor-specific configuration is sourced from vendor/<target>/package.json
  * so each adapter file contains only its own platform's logic.
  */
@@ -75,7 +75,7 @@ export interface IPlatformAdapter {
   /**
    * Validate that this extension is running on the expected IDE platform.
    * Returns false if the extension is installed on the wrong IDE
-   * (e.g., Kiro extension running in Windsurf).
+   * (e.g., an extension built for one IDE running in another).
    */
   isValidRuntime(): boolean;
 }

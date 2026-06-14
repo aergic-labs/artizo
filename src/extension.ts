@@ -55,7 +55,7 @@ export async function activate(
 async function activateInternal(
   context: vscode.ExtensionContext,
   buildLogPty: LogOutputTerminal,
-  buildLogTerminal: vscode.Terminal,
+  buildLogTerminal: { show(preserveFocus?: boolean): void },
 ): Promise<void> {
   // 2. Validate platform
   if (!(await validatePlatformRuntime(context))) {
@@ -104,6 +104,7 @@ async function activateInternal(
     buildLogPty,
     dockerPath: settings.dockerPath,
     sidebarProvider: services.sidebarProvider,
+    extensionUri: context.extensionUri,
   };
   registerCoreCommands(context, cmdCtx);
 

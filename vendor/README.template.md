@@ -1,14 +1,12 @@
-# Artizo Dev Containers
+# Artizo Dev Containers for {{NAME}}
 
 Open any folder inside a Docker container with a full development environment
 powered by [devcontainer.json](https://containers.dev).
 
-Reduces friction when developing for linux-centric targets on Windows or macOS.
-
 ## Features
 
 - **Container provisioning** — image, Dockerfile, or Docker Compose
-- **AI-assisted setup** — create, update, or repair devcontainer.json
+- **AI-assisted setup** — create, update, or repair devcontainer.json with integrated {{NAME}} assist
 - **JSON repair** — auto-fix syntax errors in broken config files
 - **Sidebar panel** — toggle GPU, privileged mode, mounts, ports, extensions
 - **Container lifecycle** — start, stop, rebuild, remove
@@ -17,32 +15,16 @@ Reduces friction when developing for linux-centric targets on Windows or macOS.
 - **SSH agent forwarding** — use host SSH keys inside the container
 - **Git config copy** — mirror host `.gitconfig` into the container
 
-## Supported editors
-
-- [Kiro](https://kiro.dev)
-- [Trae](https://trae.ai)
-- [Devin](https://devin.ai)
-
-## Why
-
-Microsoft's Dev Containers extension is terrific, but closed-source and locked to
-the official VS Code IDE.
-
-Artizo Dev Containers provides the same functionality for Kiro, Trae, and Devin
-by leveraging the open-source `@devcontainers/cli` and reimplementing the IDE
-integration layer from scratch.
-
 ## Requirements
 
-- A supported editor (see above)
+- [{{NAME}}]({{URL}})
 - Docker Desktop (or Podman)
 
 Everything else is bundled with the extension.
 
 ## License
 
-GNU Affero General Public License v3.0 (AGPL-3.0). See [LICENSE](LICENSE) for
-the full text.
+GNU Affero General Public License v3.0 (AGPL-3.0). See [LICENSE](LICENSE) for the full text.
 
 Commercial licensing: contact@aergic.com
 

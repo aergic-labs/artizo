@@ -9,7 +9,8 @@ import { encodeAuthority } from "../utils/uriUtils";
 import { BRAND, BRAND_PREFIX } from "../utils/constants";
 import { getLogger } from "../utils/logger";
 import type { WorkflowDependencies, WorkflowUI } from "./types";
-import { launch, withDefaults, ContainerError } from "../devcontainer/api";
+import { launchProvision, withDefaults } from "../devcontainer/api";
+import { ProvisionFailedError } from "../devcontainer/provisionError";
 import { getPlatformAdapter } from "../platform";
 import { connectToContainer, writeOverrideConfig } from "./postLaunch";
 import type { ReadConfigResult } from "../config/configManager";
@@ -160,15 +161,10 @@ export async function reopenInContainer(
                 log: (text: string) => ui.showBuildLog(text),
               });
 
-              try {
-                result = await launch(options, undefined, []);
-              } catch (err: unknown) {
-                const containerErr = err as InstanceType<typeof ContainerError>;
-                if (containerErr?.description) {
-                  throw new Error(`Build failed: ${containerErr.description}`);
-                }
-                throw err;
-              }
+              result = await launchProvision(
+                options,
+                configResult.configPath,
+              );
             },
           );
 
@@ -229,6 +225,11 @@ export async function reopenInContainer(
     }
 
     orchestrator.fail(error);
+
+    if (error instanceof ProvisionFailedError) {
+      // Reported once at the command layer (with Diagnose with AI).
+      throw error;
+    }
 
     await ui.showError(
       `${BRAND_PREFIX} Failed to reopen in container: ${error.message}`,

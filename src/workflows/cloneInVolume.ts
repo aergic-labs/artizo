@@ -8,7 +8,8 @@ import { encodeAuthority } from "../utils/uriUtils";
 import { dockerVolumeCreate, dockerRun } from "../utils/dockerUtils";
 import { BRAND, BRAND_PREFIX } from "../utils/constants";
 import type { WorkflowDependencies, WorkflowUI } from "./types";
-import { launch, withDefaults, ContainerError } from "../devcontainer/api";
+import { launchProvision, withDefaults } from "../devcontainer/api";
+import { ProvisionFailedError } from "../devcontainer/provisionError";
 import { connectToContainer } from "./postLaunch";
 
 export interface CloneInVolumeUI extends WorkflowUI {
@@ -133,15 +134,7 @@ export async function cloneInVolume(
                 log: (text: string) => ui.showBuildLog(text),
               });
 
-              try {
-                result = await launch(options, undefined, []);
-              } catch (err: unknown) {
-                const containerErr = err as InstanceType<typeof ContainerError>;
-                if (containerErr?.description) {
-                  throw new Error(`Build failed: ${containerErr.description}`);
-                }
-                throw err;
-              }
+              result = await launchProvision(options, undefined);
             },
           );
 
@@ -173,6 +166,10 @@ export async function cloneInVolume(
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
     orchestrator.fail(error);
+
+    if (error instanceof ProvisionFailedError) {
+      throw error;
+    }
 
     await ui.showError(
       `${BRAND_PREFIX} Failed to clone repository in volume: ${error.message}`,

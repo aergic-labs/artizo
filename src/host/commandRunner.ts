@@ -19,6 +19,8 @@ import {
   checkDockerAvailable,
   getLocalWorkspaceFolder,
 } from "./guards";
+import { ProvisionFailedError } from "../devcontainer/provisionError";
+import { reportProvisionFailure } from "./reportProvisionFailure";
 import type { CommandContext } from "./commands";
 
 export interface CommandSpec {
@@ -79,6 +81,21 @@ export function registerCommand(
         logger.error(`${spec.label} failed`, error);
         ctx.buildLogPty.writeLine(`${BRAND_PREFIX} ERROR: ${error.message}`);
         if (error.stack) ctx.buildLogPty.writeLine(error.stack);
+
+        if (error instanceof ProvisionFailedError) {
+          await reportProvisionFailure(
+            error,
+            {
+              buildLogPty: ctx.buildLogPty,
+              buildLogTerminal: ctx.buildLogTerminal,
+              configManager: ctx.configManager,
+              extensionUri: ctx.extensionUri,
+            },
+            workspaceFolder,
+          );
+          return;
+        }
+
         ctx.buildLogTerminal.show(true);
         vscode.window
           .showErrorMessage(

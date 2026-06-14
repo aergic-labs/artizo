@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock getLogger so SidebarProvider doesn't crash
 vi.mock("../../src/utils/logger", () => ({
@@ -60,7 +60,17 @@ vi.mock("vscode", () => ({
   })),
 }));
 
+vi.mock("../../src/ai", async () => ({
+  getAiAssist: vi.fn(),
+}));
+
+vi.mock("comment-json", () => ({
+  parse: vi.fn(() => ({})),
+  stringify: vi.fn((obj: unknown) => JSON.stringify(obj, null, 2)),
+}));
+
 import { SidebarProvider } from "../../src/sidebar/provider";
+import { getAiAssist } from "../../src/ai";
 import {
   extractToggles,
   computeRunArgsToggle,
@@ -147,9 +157,9 @@ describe("SidebarProvider", () => {
     });
 
     it("detects copyGitConfig false when disableCopyGitConfig is true", () => {
-      expect(
-        extractToggles({ disableCopyGitConfig: true }).copyGitConfig,
-      ).toBe(false);
+      expect(extractToggles({ disableCopyGitConfig: true }).copyGitConfig).toBe(
+        false,
+      );
     });
 
     it("parses forwardPorts as numbers", () => {
@@ -414,6 +424,110 @@ describe("SidebarProvider", () => {
       );
       expect(result).toHaveLength(1);
       expect((result[0] as any).type).toBe("bind");
+    });
+  });
+});
+
+describe("SidebarProvider methods", () => {
+  let provider: SidebarProvider;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    provider = createProvider();
+  });
+
+  it("getLineColumn returns 1-based coordinates", () => {
+    const text = "line1\nline2\nline3";
+    const result = (provider as any).getLineColumn(text, 7);
+    expect(result).toEqual({ line: 2, column: 2 });
+  });
+
+  it("getLineColumn at offset 0 returns line 1 column 1", () => {
+    const result = (provider as any).getLineColumn("abc", 0);
+    expect(result).toEqual({ line: 1, column: 1 });
+  });
+
+  it("friendlyError delegates to printParseErrorCode", () => {
+    const result = (provider as any).friendlyError(1);
+    expect(typeof result).toBe("string");
+    expect(result.length).toBeGreaterThan(0);
+  });
+
+  describe("dispatchAi", () => {
+    it("calls submit with correct args", async () => {
+      const submit = vi.fn().mockResolvedValue(undefined);
+      (getAiAssist as any).mockResolvedValue({
+        isAvailable: () => Promise.resolve(true),
+        submit,
+      });
+
+      await (provider as any).dispatchAi("test prompt", [], "Test", "wizard");
+
+      expect(submit).toHaveBeenCalledWith("test prompt", {
+        files: [],
+        title: "Test",
+      });
+    });
+
+    it("does not throw when submit fails", async () => {
+      (getAiAssist as any).mockResolvedValue({
+        isAvailable: () => Promise.resolve(true),
+        submit: vi.fn().mockRejectedValue(new Error("AI down")),
+      });
+
+      await expect(
+        (provider as any).dispatchAi("prompt", [], "T", "config"),
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  describe("isAiAvailable", () => {
+    it("returns true when AI is available", async () => {
+      (getAiAssist as any).mockResolvedValue({
+        isAvailable: () => Promise.resolve(true),
+      });
+      const result = await (provider as any).isAiAvailable();
+      expect(result).toBe(true);
+    });
+
+    it("returns false when AI is not available", async () => {
+      (getAiAssist as any).mockResolvedValue({
+        isAvailable: () => Promise.resolve(false),
+      });
+      const result = await (provider as any).isAiAvailable();
+      expect(result).toBe(false);
+    });
+  });
+
+  describe("handleMessage", () => {
+    it("routes repairConfig message", async () => {
+      (provider as any).repairConfig = vi.fn();
+      await (provider as any).handleMessage({ type: "repairConfig" });
+      expect((provider as any).repairConfig).toHaveBeenCalled();
+    });
+
+    it("routes openConfigFile message", async () => {
+      (provider as any).loadConfig = vi.fn();
+      await (provider as any).handleMessage({ type: "openConfigFile" });
+      expect((provider as any).loadConfig).toHaveBeenCalledWith(true);
+    });
+
+    it("routes aiGenerateConfig message", async () => {
+      (provider as any).aiGenerateConfig = vi.fn();
+      await (provider as any).handleMessage({ type: "aiGenerateConfig" });
+      expect((provider as any).aiGenerateConfig).toHaveBeenCalled();
+    });
+
+    it("routes aiUpdateConfig message", async () => {
+      (provider as any).aiUpdateConfig = vi.fn();
+      await (provider as any).handleMessage({ type: "aiUpdateConfig" });
+      expect((provider as any).aiUpdateConfig).toHaveBeenCalled();
+    });
+
+    it("routes aiFixConfig message", async () => {
+      (provider as any).aiFixConfig = vi.fn();
+      await (provider as any).handleMessage({ type: "aiFixConfig" });
+      expect((provider as any).aiFixConfig).toHaveBeenCalled();
     });
   });
 });

@@ -37,13 +37,38 @@ vi.mock("vscode", () => {
   };
 });
 
-vi.mock("../../src/devcontainer/api", () => ({
-  launch: vi.fn(),
-  withDefaults: vi.fn().mockImplementation((o: Record<string, unknown>) => o),
-  ContainerError: class extends Error {
-    description = "mock error";
-  },
-}));
+vi.mock("../../src/devcontainer/api", async () => {
+  const { ProvisionFailedError } = await import(
+    "../../src/devcontainer/provisionError"
+  );
+  const launch = vi.fn();
+  const launchProvision = vi.fn(
+    async (
+      options: unknown,
+      configPath: string | null | undefined,
+      failureMessage = "Build failed",
+    ) => {
+      try {
+        return await launch(options, undefined, []);
+      } catch (err: unknown) {
+        const desc = (err as { description?: string })?.description;
+        const msg = desc ?? (err instanceof Error ? err.message : String(err));
+        throw new ProvisionFailedError(
+          `${failureMessage}: ${msg}`,
+          configPath ?? undefined,
+        );
+      }
+    },
+  );
+  return {
+    launch,
+    launchProvision,
+    withDefaults: vi.fn().mockImplementation((o: Record<string, unknown>) => o),
+    ContainerError: class extends Error {
+      description = "mock error";
+    },
+  };
+});
 
 vi.mock("../../src/utils/dockerUtils.js", () => ({
   execFilePromise: vi.fn().mockResolvedValue({ stdout: "", stderr: "" }),
@@ -300,7 +325,7 @@ describe("reopenInContainer", () => {
     );
   });
 
-  it("shows error notification on failure", async () => {
+  it("propagates build failures without its own toast (reported at command layer)", async () => {
     (launch as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error("Build error"),
     );
@@ -311,7 +336,10 @@ describe("reopenInContainer", () => {
       reopenInContainer(deps, ui, { workspaceFolder: "/workspace" }),
     ).rejects.toThrow("Build error");
 
-    expect(showErrorMock).toHaveBeenCalled();
+    // Build/provision failures are now reported once at the command layer
+    // (with "Diagnose with AI"), so the workflow does not show its own toast.
+    expect(showErrorMock).not.toHaveBeenCalled();
+    expect(orchestrator.state).toBe("error");
   });
 
   it("shows build log messages during server setup", async () => {

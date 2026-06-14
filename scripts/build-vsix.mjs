@@ -5,46 +5,38 @@
 
 /**
  * Build a vendor-specific VSIX.
- * Usage: node scripts/build-vsix.mjs --target=kiro|trae|windsurf
+ * Usage: node scripts/build-vsix.mjs --target=kiro|trae|devin
  *
- * Platform differentiation happens at build time via the __TARGET__ define
- * (tree-shaken by esbuild) and vendor/<target>/package.json merge. A single
- * .vscodeignore covers all targets.
+ * Builds the esbuild bundle in the working tree, then assembles the VSIX in a
+ * temp directory so the working tree's package.json is never mutated.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import { execSync } from "node:child_process";
 
 const target = process.argv
   .find((a) => a.startsWith("--target="))
   ?.split("=")[1];
-if (
-  !target ||
-  (target !== "kiro" &&
-    target !== "trae" &&
-    target !== "windsurf" &&
-    target !== "devin")
-) {
-  console.error(
-    "Usage: node scripts/build-vsix.mjs --target=kiro|trae|windsurf|devin",
-  );
+if (!target || (target !== "kiro" && target !== "trae" && target !== "devin")) {
+  console.error("Usage: node scripts/build-vsix.mjs --target=kiro|trae|devin");
   process.exit(1);
 }
 
 const root = path.resolve(import.meta.dirname, "..");
 const basePkgPath = path.join(root, "package.json");
-const vendorPkgPath = path.join(root, "vendor", target, "package.json");
-const bakPkgPath = path.join(root, "package.json.bak");
+const vendorDir = path.join(root, "vendor", target);
+const vendorPkgPath = path.join(vendorDir, "package.json");
+const templatePath = path.join(root, "vendor", "README.template.md");
 
 // Read version from package.json
 const basePkg = JSON.parse(fs.readFileSync(basePkgPath, "utf-8"));
 const version = basePkg.version;
 
-// Remove any old VSIX for this target to ensure fresh build
+// Remove any old VSIX for this target
 const outFile = `artizo-${target}-${version}.vsix`;
 const outPath = path.join(root, outFile);
-// Also remove any older versioned VSIX files
 for (const f of fs.readdirSync(root)) {
   if (
     f.startsWith(`artizo-${target}-`) &&
@@ -60,13 +52,9 @@ if (fs.existsSync(outPath)) {
   console.log(`Removed old ${outFile}`);
 }
 
-// Merge vendor package.json over base
-const vendorOverride = JSON.parse(fs.readFileSync(vendorPkgPath, "utf-8"));
-const merged = { ...basePkg, ...vendorOverride };
-delete merged.scripts;
-delete merged.devDependencies;
-
 try {
+  // ── Build steps (in working tree) ──────────────────────────
+
   // Clean stale bundles from previous builds
   const distDir = path.join(root, "dist");
   for (const f of fs.readdirSync(distDir)) {
@@ -95,32 +83,100 @@ try {
     env: { ...process.env, TARGET: target },
   });
 
+  console.log("Guarding bundle for competitor strings...");
+  execSync(`node scripts/guard-bundle.mjs --target=${target}`, {
+    cwd: root,
+    stdio: "inherit",
+    env: { ...process.env, TARGET: target },
+  });
+
   console.log("Downloading busybox...");
   execSync("node scripts/download-busybox.mjs", {
     cwd: root,
     stdio: "inherit",
   });
 
-  console.log(`Packaging ${outFile}...`);
+  // ── Assemble in temp directory ──────────────────────────────
 
-  // Write merged package.json only for vsce, restore immediately
-  fs.copyFileSync(basePkgPath, bakPkgPath);
-  fs.writeFileSync(basePkgPath, JSON.stringify(merged, null, 2) + "\n");
-  try {
-    execSync(
-      `npx vsce package --no-dependencies --allow-missing-repository --readme-path vendor/${target}/README.md -o ${outFile}`,
-      {
-        cwd: root,
-        stdio: "inherit",
-        env: { ...process.env, TARGET: target },
-      },
-    );
-  } finally {
-    fs.copyFileSync(bakPkgPath, basePkgPath);
-    fs.unlinkSync(bakPkgPath);
+  const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), "artizo-pack-"));
+  console.log(`Packaging in ${stageDir}...`);
+
+  // Merge vendor package.json over base
+  const vendorOverride = JSON.parse(fs.readFileSync(vendorPkgPath, "utf-8"));
+  const merged = { ...basePkg, ...vendorOverride };
+  delete merged.scripts;
+  delete merged.devDependencies;
+
+  // Generate vendor README from template
+  const vendorPkg = JSON.parse(fs.readFileSync(vendorPkgPath, "utf-8"));
+  const platform = vendorPkg.platform;
+  let readme = fs.readFileSync(templatePath, "utf-8");
+  readme = readme.replace(/\{\{NAME\}\}/g, platform.name);
+  readme = readme.replace(
+    /\{\{URL\}\}/g,
+    platform.name === "Kiro"
+      ? "https://kiro.dev"
+      : platform.name === "Trae"
+        ? "https://trae.ai"
+        : "https://devin.ai",
+  );
+
+  // Copy project files, skipping dirs that .vscodeignore would exclude anyway
+  // and skipping node_modules (huge, not packaged).
+  const SKIP = new Set([
+    "node_modules",
+    "vendor",
+    ".git",
+    "plans",
+    "coverage",
+    "dist/meta.json",
+  ]);
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const name = entry.name;
+    if (SKIP.has(name)) continue;
+    if (name.startsWith("package.json.bak") || name.endsWith(".vsix")) continue;
+    const src = path.join(root, name);
+    const dest = path.join(stageDir, name);
+    if (entry.isDirectory()) {
+      fs.cpSync(src, dest, { recursive: true });
+    } else {
+      fs.copyFileSync(src, dest);
+    }
   }
 
+  // Write vendor README after copy so it replaces any root README.md that was copied
+  fs.writeFileSync(path.join(stageDir, "readme.md"), readme);
+
+  // Write merged package.json after copy so it replaces the root one
+  fs.writeFileSync(
+    path.join(stageDir, "package.json"),
+    JSON.stringify(merged, null, 2) + "\n",
+  );
+
+  // Clean up stale meta.json that may have been copied
+  const metaPath = path.join(stageDir, "dist", "meta.json");
+  if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath);
+
+  // Also clean any source maps
+  for (const f of fs
+    .readdirSync(path.join(stageDir, "dist"))
+    .filter((f) => f.endsWith(".map"))) {
+    fs.unlinkSync(path.join(stageDir, "dist", f));
+  }
+
+  // ── Package ─────────────────────────────────────────────────
+  execSync(
+    `npx vsce package --no-dependencies --allow-missing-repository -o ${outPath}`,
+    {
+      cwd: stageDir,
+      stdio: "inherit",
+    },
+  );
+
   console.log(`Done: ${outFile}`);
+
+  // ── Cleanup ─────────────────────────────────────────────────
+  fs.rmSync(stageDir, { recursive: true, force: true });
 } catch (err) {
   console.error(err.message);
   process.exit(1);

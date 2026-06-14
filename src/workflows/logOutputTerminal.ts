@@ -45,6 +45,10 @@ export class LogOutputTerminal implements vscode.Pseudoterminal {
   private sessionStart: Date;
   private logLevel: LogLevel = LogLevel.Info;
 
+  /** Bounded recent-output ring buffer (chars), for diagnose-on-failure. */
+  private recent = "";
+  private static readonly RECENT_MAX = 64 * 1024;
+
   onDidWrite = this.writeEmitter.event;
   onDidClose = this.closeEmitter.event;
   onDidInput = this.inputEmitter.event;
@@ -63,6 +67,24 @@ export class LogOutputTerminal implements vscode.Pseudoterminal {
 
   setLogLevel(level: LogLevel): void {
     this.logLevel = level;
+  }
+
+  /**
+   * Recent log output (bounded tail), with ANSI codes and CRLF stripped —
+   * suitable for handing to an AI for diagnosis. `maxChars` further trims the
+   * returned tail (the prompt doesn't need the full 64KB).
+   */
+  getRecentText(maxChars = 16 * 1024): string {
+    const clean = this.recent
+      // eslint-disable-next-line no-control-regex
+      .replace(/\x1b\[[0-9;]*m/g, "")
+      .replace(/\r\n/g, "\n");
+    return clean.slice(-maxChars);
+  }
+
+  /** Absolute path to the full on-disk log file (whole session). */
+  getLogPath(): string {
+    return this.logPath;
   }
 
   open(): void {
@@ -179,6 +201,9 @@ export class LogOutputTerminal implements vscode.Pseudoterminal {
   private _logFileFailed = false;
 
   private appendToLogFile(text: string): void {
+    // Keep a bounded tail of recent output for diagnose-on-failure.
+    this.recent = (this.recent + text).slice(-LogOutputTerminal.RECENT_MAX);
+
     if (this._logFileFailed) return;
     try {
       const dir = path.dirname(this.logPath);

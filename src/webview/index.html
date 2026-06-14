@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <link rel="stylesheet" href="${STYLE_URI}" />
+        <title>Artizo</title>
+    </head>
+    <body>
+        <div id="root">
+            <div class="panel active" id="panel-config">
+                <div id="status-bar"></div>
+                <div class="section">
+                    <h3>Commands</h3>
+                    <div id="command-list"></div>
+                </div>
+                <div class="section">
+                    <div class="accordion-header" data-section="containers">
+                        <span class="chevron"></span>
+                        <h3>Containers</h3>
+                        <button
+                            class="refresh-btn"
+                            data-action="refreshSection"
+                            data-section="containers"
+                        >
+                            &#x21bb;
+                        </button>
+                    </div>
+                    <div class="accordion-body">
+                        <div id="container-list"></div>
+                        <p id="container-empty" class="empty-state hidden">
+                            No dev containers found.
+                        </p>
+                    </div>
+                </div>
+                <div class="section">
+                    <div class="accordion-header" data-section="volumes">
+                        <span class="chevron"></span>
+                        <h3>Volumes</h3>
+                        <button
+                            class="refresh-btn"
+                            data-action="refreshSection"
+                            data-section="volumes"
+                        >
+                            &#x21bb;
+                        </button>
+                    </div>
+                    <div class="accordion-body">
+                        <div id="volume-list"></div>
+                        <p id="volume-empty" class="empty-state hidden">
+                            No managed volumes found.
+                        </p>
+                    </div>
+                </div>
+                <div id="config-section" class="section hidden">
+                    <div class="accordion-header" data-section="config">
+                        <span class="chevron"></span>
+                        <h3>devcontainer.json</h3>
+                    </div>
+                    <div class="accordion-body">
+                        <div
+                            id="config-error-banner"
+                            class="error-banner hidden"
+                        ></div>
+                        ${AI_ASSIST:start}
+                        <div class="wizard-tabs config-tabs">
+                            <div class="tab-bar">
+                                <button
+                                    class="tab-btn active"
+                                    data-action="tabSwitch"
+                                    data-tab="config-ai"
+                                >
+                                    ✨ Update with AI
+                                </button>
+                                <button
+                                    class="tab-btn"
+                                    data-action="tabSwitch"
+                                    data-tab="config-manual"
+                                >
+                                    ✍️ Edit Manually
+                                </button>
+                            </div>
+                            <div class="tab-panel active" id="tab-config-ai">
+                                <p class="ai-desc">
+                                    Let AI review your devcontainer.json and
+                                    suggest improvements. AI summarizes your
+                                    current config, then asks targeted questions
+                                    about what to add or change.
+                                </p>
+                                <button
+                                    id="config-ai-btn"
+                                    class="btn primary"
+                                    data-action="aiUpdateConfig"
+                                >
+                                    Update with AI
+                                </button>
+                                <p id="config-ai-status" class="ai-status"></p>
+                            </div>
+                        </div>
+                        ${AI_ASSIST:end}
+                        <div id="config-no-ai">
+                            <p class="empty-state">
+                                <button
+                                    id="open-config-btn"
+                                    class="btn small"
+                                    data-action="openConfig"
+                                >
+                                    Open File
+                                </button>
+                            </p>
+                        </div>
+                        <div id="config-manual-content">
+                            <div class="section">
+                                <div
+                                    class="list-row command-parent"
+                                    data-action="toggleAccordion"
+                                >
+                                    <span>Options</span>
+                                    <button class="btn small chevron-btn">
+                                        ▶
+                                    </button>
+                                </div>
+                                <div class="command-children hidden">
+                                    <div id="toggle-list"></div>
+                                </div>
+                            </div>
+                            <div class="section">
+                                <div
+                                    class="list-row command-parent"
+                                    data-action="toggleAccordion"
+                                >
+                                    <span>Software</span>
+                                    <button class="btn small chevron-btn">
+                                        ▶
+                                    </button>
+                                </div>
+                                <div class="command-children hidden">
+                                    <div id="software-list"></div>
+                                    <div class="freeform-row">
+                                        <input
+                                            type="text"
+                                            id="software-input"
+                                            placeholder="ghcr.io/devcontainers/features/terraform:1"
+                                        />
+                                        <button
+                                            id="add-software-btn"
+                                            class="btn small"
+                                            data-action="addSoftware"
+                                        >
+                                            Add
+                                        </button>
+                                    </div>
+                                    <small
+                                        ><a
+                                            href="https://containers.dev/features"
+                                            target="_blank"
+                                            >Browse catalog</a
+                                        ></small
+                                    >
+                                </div>
+                            </div>
+                            <div class="section">
+                                <div
+                                    class="list-row command-parent"
+                                    data-action="toggleAccordion"
+                                >
+                                    <span>Ports</span>
+                                    <button class="btn small chevron-btn">
+                                        ▶
+                                    </button>
+                                </div>
+                                <div class="command-children hidden">
+                                    <div id="port-list"></div>
+                                    <div class="add-row">
+                                        <input
+                                            type="number"
+                                            id="port-input"
+                                            placeholder="Port"
+                                            min="1"
+                                            max="65535"
+                                        />
+                                        <input
+                                            type="text"
+                                            id="port-label-input"
+                                            placeholder="Label"
+                                        />
+                                        <button
+                                            id="add-port-btn"
+                                            class="btn"
+                                            data-action="addPort"
+                                        >
+                                            Add
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="section">
+                                <div
+                                    class="list-row command-parent"
+                                    data-action="toggleAccordion"
+                                >
+                                    <span>VS Code Extensions</span>
+                                    <button class="btn small chevron-btn">
+                                        ▶
+                                    </button>
+                                </div>
+                                <div class="command-children hidden">
+                                    <input
+                                        type="text"
+                                        id="extension-filter"
+                                        placeholder="Filter or type a publisher.extension to add"
+                                    />
+                                    <div id="extension-checklist"></div>
+                                    <div id="extension-list"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="empty-config" class="section hidden">
+                    <div class="accordion-header" data-section="wizard">
+                        <span class="chevron"></span>
+                        <h3>New devcontainer.json</h3>
+                    </div>
+                    <div class="accordion-body">
+                        <p id="empty-config-msg" class="empty-state">
+                            No devcontainer.json found in this workspace. Create
+                            one below:
+                        </p>
+                        ${AI_ASSIST:start}
+                        <div class="wizard-tabs">
+                            <div class="tab-bar">
+                                <button
+                                    class="tab-btn active"
+                                    data-action="tabSwitch"
+                                    data-tab="ai"
+                                >
+                                    ✨ Generate with AI
+                                </button>
+                                <button
+                                    class="tab-btn"
+                                    data-action="tabSwitch"
+                                    data-tab="manual"
+                                >
+                                    ✍️ Create Manually
+                                </button>
+                            </div>
+                            <div class="tab-panel active" id="tab-ai">
+                                <p class="ai-desc">
+                                    Let AI analyze your project and create a
+                                    devcontainer.json automatically. AI scans
+                                    your code, detects the runtime and tooling,
+                                    and asks you questions if anything is
+                                    ambiguous.
+                                </p>
+                                <button
+                                    id="wizard-ai-btn"
+                                    class="btn primary"
+                                    data-action="aiGenerate"
+                                >
+                                    Generate with AI
+                                </button>
+                                <p id="ai-status" class="ai-status"></p>
+                            </div>
+                            <div class="tab-panel" id="tab-manual">
+                                <div class="section">
+                                    <h4>Common Images</h4>
+                                    <div id="wizard-images"></div>
+                                </div>
+                                <div class="section">
+                                    <h4>Custom Image</h4>
+                                    <div class="add-row">
+                                        <input
+                                            type="text"
+                                            id="wizard-image-input"
+                                            placeholder="e.g. alpine, ubuntu:22.04"
+                                        />
+                                        <button
+                                            id="wizard-generate-btn"
+                                            class="btn primary"
+                                            data-action="generateConfig"
+                                        >
+                                            Generate
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        ${AI_ASSIST:end}
+                        <div id="wizard-section">
+                            <div class="section">
+                                <h4>Common Images</h4>
+                                <div id="wizard-images"></div>
+                            </div>
+                            <div class="section">
+                                <h4>Custom Image</h4>
+                                <div class="add-row">
+                                    <input
+                                        type="text"
+                                        id="wizard-image-input"
+                                        placeholder="e.g. alpine, ubuntu:22.04"
+                                    />
+                                    <button
+                                        id="wizard-generate-btn"
+                                        class="btn primary"
+                                        data-action="generateConfig"
+                                    >
+                                        Generate
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <script src="${SCRIPT_URI}"></script>
+    </body>
+</html>

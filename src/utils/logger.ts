@@ -24,6 +24,11 @@ export class Logger {
     this.terminal.setLogLevel(level);
   }
 
+  /** Swap the underlying pty, used when the terminal is recreated. */
+  setTerminal(terminal: LogOutputTerminal): void {
+    this.terminal = terminal;
+  }
+
   debug(message: string): void {
     this.terminal.debug(message);
   }

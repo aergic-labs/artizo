@@ -13,7 +13,8 @@
  */
 
 let _vendor: any;
-let _errors: any;
+
+import { ProvisionFailedError } from "./provisionError";
 
 function vendor() {
   if (!_vendor) {
@@ -22,30 +23,37 @@ function vendor() {
   return _vendor;
 }
 
-function errors() {
-  if (!_errors) {
-    _errors = require("../../vendor/devcontainers-cli/src/spec-common/errors");
-  }
-  return _errors;
-}
-
 export async function launch(...args: any[]): Promise<any> {
   return vendor().launch(...args);
 }
 
-export const ContainerError: any = {
-  get description() {
-    return "";
-  },
-};
-// Override with real class when first used
-Object.defineProperty(exports, "ContainerError", {
-  get() {
-    return errors().ContainerError;
-  },
-  enumerable: true,
-  configurable: true,
-});
+/**
+ * Run a provision (`launch`) and normalize failures to ProvisionFailedError,
+ * carrying the devcontainer.json path. Centralizes the try/catch that every
+ * building workflow previously duplicated, and is the single throw point for
+ * the "Diagnose with AI on build failure" flow.
+ */
+export async function launchProvision(
+  options: ProvisionOptions,
+  configPath: string | null | undefined,
+  failureMessage = "Build failed",
+): Promise<any> {
+  try {
+    return await launch(options, undefined, []);
+  } catch (err: unknown) {
+    const containerErr = err as { description?: string };
+    if (containerErr?.description) {
+      throw new ProvisionFailedError(
+        `${failureMessage}: ${containerErr.description}`,
+        configPath ?? undefined,
+      );
+    }
+    throw new ProvisionFailedError(
+      `${failureMessage}: ${err instanceof Error ? err.message : String(err)}`,
+      configPath ?? undefined,
+    );
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Options defaults

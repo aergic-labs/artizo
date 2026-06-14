@@ -64,6 +64,8 @@ export interface ConfigLoadedMessage {
   path: string;
   toggles: ConfigToggles;
   software: SoftwareFeature[];
+  errors?: ConfigParseError[];
+  aiAvailable: boolean;
 }
 
 export interface UpdateContainersMessage {
@@ -114,7 +116,20 @@ export type WebviewMessage =
   | { type: "volumeAction"; action: "inspect" | "remove"; volumeName: string }
   | { type: "refreshSection"; section: "containers" | "volumes" }
   | { type: "runCommand"; command: string }
-  | { type: "generateConfig"; image: string };
+  | { type: "generateConfig"; image: string }
+  | { type: "aiGenerateConfig" }
+  | { type: "aiUpdateConfig" }
+  | { type: "aiFixConfig" }
+  | { type: "openConfigFile" }
+  | { type: "repairConfig" };
+
+export interface ConfigParseError {
+  message: string;
+  offset: number;
+  length: number;
+  line: number;
+  column: number;
+}
 
 export interface CommandInfo {
   id: string;
@@ -137,4 +152,17 @@ export type HostMessage =
   | {
       type: "setInstalledExtensions";
       extensions: { id: string; label: string; enabled: boolean }[];
-    };
+    }
+  | {
+      type: "aiStatus";
+      status:
+        | "generating"
+        | "questions"
+        | "submitted"
+        | "done"
+        | "error"
+        | "timeout";
+      message?: string;
+      target?: string;
+    }
+  | { type: "switchTab"; tab: string };

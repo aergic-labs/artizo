@@ -74,9 +74,7 @@ async function ensureArgvProposedApi(
     ? "aergic.artizo-kiro"
     : HAS_TRAE_ADAPTER
       ? "aergic.artizo-trae"
-      : HAS_DEVIN_ADAPTER
-        ? "aergic.artizo-devin"
-        : "aergic.artizo-windsurf";
+      : "aergic.artizo-devin";
 
   let content: string;
   try {
@@ -121,17 +119,11 @@ async function ensureArgvProposedApi(
  */
 export function initializeLogger(context: vscode.ExtensionContext): {
   buildLogPty: LogOutputTerminal;
-  buildLogTerminal: vscode.Terminal;
+  buildLogTerminal: { show(preserveFocus?: boolean): void };
 } {
   const nodePath = require("node:path");
   const logFilePath = nodePath.join(context.logPath, "artizo.log");
   const buildLogPty = new LogOutputTerminal(logFilePath);
-  const buildLogTerminal = vscode.window.createTerminal({
-    name: `Dev Containers (${BRAND})`,
-    pty: buildLogPty,
-  });
-  context.subscriptions.push(buildLogTerminal);
-
   const logLevelConfig = vscode.workspace
     .getConfiguration("artizo")
     .get<string>("logLevel", "info");
@@ -140,7 +132,34 @@ export function initializeLogger(context: vscode.ExtensionContext): {
     debug: LogLevel.Debug,
     trace: LogLevel.Trace,
   };
-  buildLogPty.setLogLevel(logLevelMap[logLevelConfig] ?? LogLevel.Info);
+  const level = logLevelMap[logLevelConfig] ?? LogLevel.Info;
+  buildLogPty.setLogLevel(level);
+
+  // Terminal handle that supports recreation after user closes it.
+  const handle = {
+    pty: buildLogPty,
+    terminal: vscode.window.createTerminal({
+      name: `Dev Containers (${BRAND})`,
+      pty: buildLogPty,
+    }),
+    show(preserveFocus?: boolean) {
+      try {
+        this.terminal.show(preserveFocus);
+      } catch {
+        // Terminal was closed — recreate with fresh pty.
+        this.pty = new LogOutputTerminal(logFilePath);
+        this.pty.setLogLevel(level);
+        initLogger(this.pty);
+        this.terminal = vscode.window.createTerminal({
+          name: `Dev Containers (${BRAND})`,
+          pty: this.pty,
+        });
+        this.terminal.show(preserveFocus);
+      }
+    },
+  };
+
+  context.subscriptions.push(handle.terminal);
 
   const logger = initLogger(buildLogPty);
   logger.info(`${BRAND} activating...`);
@@ -150,11 +169,16 @@ export function initializeLogger(context: vscode.ExtensionContext): {
   // Register reveal log terminal command
   context.subscriptions.push(
     vscode.commands.registerCommand("artizo.revealLogTerminal", () => {
-      buildLogTerminal.show();
+      handle.show();
     }),
   );
 
-  return { buildLogPty, buildLogTerminal };
+  return {
+    get buildLogPty() {
+      return handle.pty;
+    },
+    buildLogTerminal: handle,
+  };
 }
 
 /**

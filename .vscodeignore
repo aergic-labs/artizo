@@ -4,6 +4,7 @@ README.md
 # Source files (bundled into dist/extension.js)
 src/**
 !src/webview/**
+!src/ai/prompts/**
 test/**
 test-project/**
 
@@ -40,3 +41,7 @@ dist/meta.json
 dist/**/*.map
 *.vsix
 .gitmodules
+tmp/
+.knip.json
+AGENTS.md
+artizo-summary.md

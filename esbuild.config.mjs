@@ -8,11 +8,10 @@ const target = process.env.TARGET || "kiro";
 // Per-vendor feature flags; vendor names never ship in VSIX
 const flags = {
   HAS_SECCOMP_UNCONFINED: target === "trae",
-  HAS_HOME_SYMLINK: target === "windsurf" || target === "devin",
+  HAS_HOME_SYMLINK: target === "devin",
   HAS_ARGV_PATCH: target !== "trae",
   HAS_KIRO_ADAPTER: target === "kiro",
   HAS_TRAE_ADAPTER: target === "trae",
-  HAS_WINDSURF_ADAPTER: target === "windsurf",
   HAS_DEVIN_ADAPTER: target === "devin",
 };
 

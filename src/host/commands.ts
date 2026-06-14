@@ -38,6 +38,8 @@ import {
   getLocalWorkspaceFolder,
 } from "./guards";
 import { registerCommand, type CommandSpec } from "./commandRunner";
+import { ProvisionFailedError } from "../devcontainer/provisionError";
+import { reportProvisionFailure } from "./reportProvisionFailure";
 import {
   buildOpenFolderUI,
   buildCloneInVolumeUI,
@@ -51,14 +53,47 @@ export interface CommandContext {
   configManager: ConfigManager;
   containerLifecycle: ContainerLifecycle;
   orchestrator: WorkflowOrchestrator;
-  buildLogTerminal: vscode.Terminal;
+  buildLogTerminal: { show(preserveFocus?: boolean): void };
   buildLogPty: LogOutputTerminal;
   dockerPath: string;
   sidebarProvider: SidebarProvider;
+  extensionUri: vscode.Uri;
 }
 
 function wrapError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
+}
+
+/**
+ * Report a rebuild failure. Build/provision failures route to the shared
+ * reportProvisionFailure (offering "Diagnose with AI"); anything else falls
+ * back to the plain "Rebuild failed" notification.
+ */
+async function reportRebuildFailure(
+  ctx: CommandContext,
+  error: Error,
+  workspaceFolder: string,
+): Promise<void> {
+  ctx.buildLogPty.writeLine(`${BRAND_PREFIX} ERROR: ${error.message}`);
+  if (error instanceof ProvisionFailedError) {
+    await reportProvisionFailure(
+      error,
+      {
+        buildLogPty: ctx.buildLogPty,
+        buildLogTerminal: ctx.buildLogTerminal,
+        configManager: ctx.configManager,
+        extensionUri: ctx.extensionUri,
+      },
+      workspaceFolder,
+    );
+    return;
+  }
+  ctx.buildLogTerminal.show(true);
+  vscode.window
+    .showErrorMessage(`Rebuild failed: ${error.message}`, "Show Log")
+    .then((action) => {
+      if (action === "Show Log") ctx.buildLogTerminal.show(true);
+    });
 }
 
 export async function reopenInContainerHandler(
@@ -252,13 +287,7 @@ export async function rebuildContainerMenuHandler(
   } catch (err: unknown) {
     const error = wrapError(err);
     logger.error(`Rebuild failed`, error);
-    ctx.buildLogPty.writeLine(`${BRAND_PREFIX} ERROR: ${error.message}`);
-    ctx.buildLogTerminal.show(true);
-    vscode.window
-      .showErrorMessage(`Rebuild failed: ${error.message}`, "Show Log")
-      .then((action) => {
-        if (action === "Show Log") ctx.buildLogTerminal.show(true);
-      });
+    await reportRebuildFailure(ctx, error, workspaceFolder);
   }
 }
 
@@ -303,13 +332,7 @@ export async function rebuildContainerHandler(
   } catch (err: unknown) {
     const error = wrapError(err);
     logger.error("Rebuild container failed", error);
-    ctx.buildLogPty.writeLine(`${BRAND_PREFIX} ERROR: ${error.message}`);
-    ctx.buildLogTerminal.show(true);
-    vscode.window
-      .showErrorMessage(`Rebuild failed: ${error.message}`, "Show Log")
-      .then((action) => {
-        if (action === "Show Log") ctx.buildLogTerminal.show(true);
-      });
+    await reportRebuildFailure(ctx, error, workspaceFolder);
   }
 }
 
@@ -355,13 +378,7 @@ export async function rebuildContainerNoCacheHandler(
   } catch (err: unknown) {
     const error = wrapError(err);
     logger.error("Rebuild container (no cache) failed", error);
-    ctx.buildLogPty.writeLine(`${BRAND_PREFIX} ERROR: ${error.message}`);
-    ctx.buildLogTerminal.show(true);
-    vscode.window
-      .showErrorMessage(`Rebuild failed: ${error.message}`, "Show Log")
-      .then((action) => {
-        if (action === "Show Log") ctx.buildLogTerminal.show(true);
-      });
+    await reportRebuildFailure(ctx, error, workspaceFolder);
   }
 }
 

@@ -8,7 +8,6 @@ import { vi } from "vitest";
 // esbuild define flags — tests use the default (Kiro) path
 globalThis.HAS_KIRO_ADAPTER = false;
 globalThis.HAS_TRAE_ADAPTER = false;
-globalThis.HAS_WINDSURF_ADAPTER = false;
 globalThis.HAS_DEVIN_ADAPTER = false;
 globalThis.HAS_SECCOMP_UNCONFINED = false;
 globalThis.HAS_HOME_SYMLINK = false;

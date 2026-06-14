@@ -7,7 +7,8 @@ import { URI } from "vscode-uri";
 import { encodeAuthority } from "../utils/uriUtils";
 import { BRAND, BRAND_PREFIX } from "../utils/constants";
 import type { WorkflowDependencies, WorkflowUI } from "./types";
-import { launch, withDefaults, ContainerError } from "../devcontainer/api";
+import { launchProvision, withDefaults } from "../devcontainer/api";
+import { ProvisionFailedError } from "../devcontainer/provisionError";
 import { connectToContainer } from "./postLaunch";
 import type { ReadConfigResult } from "../config/configManager";
 
@@ -100,15 +101,10 @@ export async function openFolderInContainer(
                 log: (text: string) => ui.showBuildLog(text),
               });
 
-              try {
-                result = await launch(options, undefined, []);
-              } catch (err: unknown) {
-                const containerErr = err as InstanceType<typeof ContainerError>;
-                if (containerErr?.description) {
-                  throw new Error(`Build failed: ${containerErr.description}`);
-                }
-                throw err;
-              }
+              result = await launchProvision(
+                options,
+                configResult.configPath,
+              );
             },
           );
 
@@ -150,6 +146,10 @@ export async function openFolderInContainer(
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
     orchestrator.fail(error);
+
+    if (error instanceof ProvisionFailedError) {
+      throw error;
+    }
 
     await ui.showError(
       `${BRAND_PREFIX} Failed to open folder in container: ${error.message}`,

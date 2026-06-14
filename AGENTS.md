@@ -12,6 +12,13 @@ without explicit permission. This includes `git checkout -- <file>` and
 `git checkout HEAD -- <file>`. If a file is broken, explain the situation
 and ask before reverting.
 
+## Shell: detect before assuming
+
+The shell environment is **configurable** and may not be what you expect.
+On this machine it is git-bash, but don't hardcode that assumption in general.
+Before running shell commands, probe with `echo $SHELL` or `echo $0` if unsure.
+Never assume PowerShell on Windows or bash on macOS — verify first.
+
 ## Command quick reference
 
 | Task | Command | Notes |
