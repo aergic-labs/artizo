@@ -20,6 +20,7 @@ let _ai: AiAssist | undefined;
 declare const HAS_KIRO_ADAPTER: boolean;
 declare const HAS_TRAE_ADAPTER: boolean;
 declare const HAS_DEVIN_ADAPTER: boolean;
+declare const HAS_VSCODIUM_ADAPTER: boolean;
 
 /**
  * Returns the AI assist implementation for the current build target.
@@ -36,6 +37,9 @@ export async function getAiAssist(): Promise<AiAssist> {
     } else if (HAS_DEVIN_ADAPTER) {
       const { DevinAiAssist } = await import("./devin.js");
       _ai = new DevinAiAssist();
+    } else if (HAS_VSCODIUM_ADAPTER) {
+      const { GenericAiAssist } = await import("./generic.js");
+      _ai = new GenericAiAssist();
     } else {
       // No known AI chat for this build target.
       _ai = {

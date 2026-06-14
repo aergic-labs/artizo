@@ -32,6 +32,7 @@ import { getPlatformAdapter } from "../platform";
 declare const HAS_TRAE_ADAPTER: boolean;
 declare const HAS_KIRO_ADAPTER: boolean;
 declare const HAS_DEVIN_ADAPTER: boolean;
+declare const HAS_VSCODIUM_ADAPTER: boolean;
 import { ConfigWatcher } from "../config/configWatcher";
 import { ContainerLifecycle } from "../lifecycle/containerLifecycle";
 import { SidebarProvider } from "../sidebar/provider";
@@ -74,7 +75,9 @@ async function ensureArgvProposedApi(
     ? "aergic.artizo-kiro"
     : HAS_TRAE_ADAPTER
       ? "aergic.artizo-trae"
-      : "aergic.artizo-devin";
+      : HAS_DEVIN_ADAPTER
+        ? "aergic.artizo-devin"
+        : "aergic.artizo-vscodium";
 
   let content: string;
   try {
@@ -196,50 +199,51 @@ export async function validatePlatformRuntime(
   const expected = platformAdapter.name;
   const logger = getLogger();
   let actual = "unknown";
+  let actualDisplay = "";
   try {
     const fs = require("node:fs");
     const path = require("node:path");
     const productPath = path.join(vscode.env.appRoot, "product.json");
     const product = JSON.parse(fs.readFileSync(productPath, "utf-8"));
     actual = product?.applicationName ?? "unknown";
+    actualDisplay = product?.nameShort ?? product?.nameLong ?? "";
   } catch {
     /* ignore */
   }
 
-  const message = `${BRAND}: This extension is built for ${expected}. It cannot run on ${actual}. Please install the correct extension for your editor.`;
+  const actualLabel = actualDisplay ? `${actualDisplay} (${actual})` : actual;
+
+  const message = `${BRAND}: This extension is built for ${expected}. It cannot run on ${actualLabel}. Please install the correct extension for your editor.`;
   logger.error(message);
   vscode.window.showErrorMessage(message);
 
-  const stubError = () => vscode.window.showErrorMessage(message);
-  const allCommandIds = [
-    "artizo.reopenInContainer",
-    "artizo.reopenLocally",
-    "artizo.openDevContainerFile",
-    "artizo.rebuildContainer",
-    "artizo.rebuildContainerMenu",
-    "artizo.rebuildContainerNoCache",
-    "artizo.rebuildAndReopenInContainer",
-    "artizo.revealLogTerminal",
-    "artizo.configureDevContainer",
-    "artizo.openFolderInContainer",
-    "artizo.cloneInVolume",
-    "artizo.attachToRunningContainer",
-    "artizo.addConfiguration",
-    "artizo.cleanUpContainers",
-    "artizo.explorer.refresh",
-    "artizo.explorer.connectCurrentWindow",
-    "artizo.explorer.connectNewWindow",
-    "artizo.ports.add",
-    "artizo.ports.remove",
-    "artizo.ports.setLabel",
-    "artizo.volumes.refresh",
-    "artizo.volumes.inspect",
-    "artizo.volumes.remove",
-  ];
+  // Replace the sidebar with a persistent explanation so the user sees
+  // the problem every time they open the Artizo panel.
+  const sidebarHtml =
+    "<!DOCTYPE html>" +
+    '<html lang="en"><head><meta charset="UTF-8">' +
+    "<style>" +
+    "body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 24px; margin: 0; }" +
+    "h2 { color: var(--vscode-errorForeground); }" +
+    "p { line-height: 1.5; }" +
+    "</style></head><body>" +
+    "<h2>Wrong Extension</h2>" +
+    "<p>You installed <strong>Artizo for " +
+    expected +
+    "</strong>, but this appears to be <strong>" +
+    actualLabel +
+    "</strong>.</p>" +
+    "<p>Open the Extensions panel (Ctrl+Shift+X) and uninstall this extension, " +
+    "then install the Artizo build that matches your editor.</p>" +
+    "</body></html>";
 
-  for (const id of allCommandIds) {
-    context.subscriptions.push(vscode.commands.registerCommand(id, stubError));
-  }
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider("artizo.sidebar", {
+      resolveWebviewView(webviewView: vscode.WebviewView) {
+        webviewView.webview.html = sidebarHtml;
+      },
+    }),
+  );
 
   return false;
 }

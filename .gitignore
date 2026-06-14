@@ -11,3 +11,4 @@ nul
 package.json.bak
 plans/
 vendor/devcontainers-cli/package-lock.json
+test-project/.devcontainer/devcontainer-lock.json

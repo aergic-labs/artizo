@@ -9,6 +9,7 @@ import { vi } from "vitest";
 globalThis.HAS_KIRO_ADAPTER = false;
 globalThis.HAS_TRAE_ADAPTER = false;
 globalThis.HAS_DEVIN_ADAPTER = false;
+globalThis.HAS_VSCODIUM_ADAPTER = false;
 globalThis.HAS_SECCOMP_UNCONFINED = false;
 globalThis.HAS_HOME_SYMLINK = false;
 globalThis.HAS_ARGV_PATCH = true;

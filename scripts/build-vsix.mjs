@@ -19,8 +19,16 @@ import { execSync } from "node:child_process";
 const target = process.argv
   .find((a) => a.startsWith("--target="))
   ?.split("=")[1];
-if (!target || (target !== "kiro" && target !== "trae" && target !== "devin")) {
-  console.error("Usage: node scripts/build-vsix.mjs --target=kiro|trae|devin");
+if (
+  !target ||
+  (target !== "kiro" &&
+    target !== "trae" &&
+    target !== "devin" &&
+    target !== "vscodium")
+) {
+  console.error(
+    "Usage: node scripts/build-vsix.mjs --target=kiro|trae|devin|vscodium",
+  );
   process.exit(1);
 }
 
@@ -107,19 +115,24 @@ try {
   delete merged.scripts;
   delete merged.devDependencies;
 
-  // Generate vendor README from template
+  // Generate vendor README — VSCodium has its own, others use the template
   const vendorPkg = JSON.parse(fs.readFileSync(vendorPkgPath, "utf-8"));
   const platform = vendorPkg.platform;
-  let readme = fs.readFileSync(templatePath, "utf-8");
-  readme = readme.replace(/\{\{NAME\}\}/g, platform.name);
-  readme = readme.replace(
-    /\{\{URL\}\}/g,
-    platform.name === "Kiro"
-      ? "https://kiro.dev"
-      : platform.name === "Trae"
-        ? "https://trae.ai"
-        : "https://devin.ai",
-  );
+  let readme;
+  if (target === "vscodium") {
+    readme = fs.readFileSync(path.join(vendorDir, "README.md"), "utf-8");
+  } else {
+    readme = fs.readFileSync(templatePath, "utf-8");
+    readme = readme.replace(/\{\{NAME\}\}/g, platform.name);
+    readme = readme.replace(
+      /\{\{URL\}\}/g,
+      platform.name === "Kiro"
+        ? "https://kiro.dev"
+        : platform.name === "Trae"
+          ? "https://trae.ai"
+          : "https://devin.ai",
+    );
+  }
 
   // Copy project files, skipping dirs that .vscodeignore would exclude anyway
   // and skipping node_modules (huge, not packaged).

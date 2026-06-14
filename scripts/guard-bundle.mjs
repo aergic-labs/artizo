@@ -25,6 +25,7 @@ export const FORBIDDEN_TERMS = {
   kiro: ["trae", "icube", "devin", "windsurf"],
   trae: ["kiro", "devin", "windsurf"],
   devin: ["kiro", "trae", "icube"],
+  vscodium: ["kiro", "trae", "icube", "devin", "windsurf"],
 };
 
 /**
@@ -52,7 +53,10 @@ export function findForbidden(text, terms) {
       hits.push({
         term,
         count,
-        snippet: text.slice(Math.max(0, firstIdx - 30), firstIdx + term.length + 30),
+        snippet: text.slice(
+          Math.max(0, firstIdx - 30),
+          firstIdx + term.length + 30,
+        ),
       });
     }
   }
@@ -100,7 +104,9 @@ export function scanTarget(root, target) {
 
 // ── CLI ──────────────────────────────────────────────────────
 const invokedDirectly =
-  process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.dirname, "guard-bundle.mjs");
+  process.argv[1] &&
+  path.resolve(process.argv[1]) ===
+    path.resolve(import.meta.dirname, "guard-bundle.mjs");
 
 if (invokedDirectly) {
   const target =
@@ -116,7 +122,7 @@ if (invokedDirectly) {
   }
   if (!FORBIDDEN_TERMS[target]) {
     console.error(
-      `guard-bundle: unknown target "${target}" (expected kiro|trae|devin)`,
+      `guard-bundle: unknown target "${target}" (expected kiro|trae|devin|vscodium)`,
     );
     process.exit(1);
   }

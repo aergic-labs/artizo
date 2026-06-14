@@ -1,0 +1,28 @@
+{
+  "name": "artizo-vscodium",
+  "displayName": "Artizo Dev Containers for VSCodium",
+  "description": "Artizo Dev Containers for VSCodium: Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
+  "keywords": [
+    "vscodium",
+    "codium",
+    "code-oss",
+    "dev container",
+    "dev containers",
+    "devcontainers",
+    "devcontainer",
+    "docker",
+    "remote",
+    "remote development",
+    "containers"
+  ],
+  "license": "AGPL-3.0-only",
+  "platform": {
+    "name": "VSCodium",
+    "dataFolderName": ".vscode-oss",
+    "serverApplicationName": "codium-server",
+    "needsArgvPatch": true,
+    "additionalDockerRunArgs": [],
+    "serverInstallRoot": "/tmp",
+    "needsHomeSymlink": false
+  }
+}

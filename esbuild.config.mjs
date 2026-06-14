@@ -13,6 +13,7 @@ const flags = {
   HAS_KIRO_ADAPTER: target === "kiro",
   HAS_TRAE_ADAPTER: target === "trae",
   HAS_DEVIN_ADAPTER: target === "devin",
+  HAS_VSCODIUM_ADAPTER: target === "vscodium",
 };
 
 /** @type {esbuild.BuildOptions} */

@@ -87,6 +87,7 @@ build: $(NODE_MODULES) $(VENDOR_CLI)
 	npm run package:trae
 	npm run package:windsurf
 	npm run package:devin
+	npm run package:vscodium
 
 # ── Release ────────────────────────────────────────────────────
 
@@ -110,6 +111,7 @@ publish:
 	npx ovsx publish artizo-trae-*.vsix
 	npx ovsx publish artizo-windsurf-*.vsix
 	npx ovsx publish artizo-devin-*.vsix
+	npx ovsx publish artizo-vscodium-*.vsix
 
 # ── Clean ──────────────────────────────────────────────────────
 # clean:     removes build artifacts only (dist/, coverage/).

@@ -17,6 +17,7 @@ const testFlags = {
   HAS_KIRO_ADAPTER: JSON.stringify(true),
   HAS_TRAE_ADAPTER: JSON.stringify(false),
   HAS_DEVIN_ADAPTER: JSON.stringify(false),
+  HAS_VSCODIUM_ADAPTER: JSON.stringify(false),
 };
 
 export default defineConfig({

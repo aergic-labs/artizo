@@ -29,7 +29,13 @@ import type { LogOutputTerminal } from "./workflows/logOutputTerminal";
 export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
-  // 1. Init logger
+  // 1. Validate platform first — before any commands are registered, so a
+  //    mismatch can bail cleanly without duplicate-command collisions.
+  if (!(await validatePlatformRuntime(context))) {
+    return;
+  }
+
+  // 2. Init logger
   const { buildLogPty, buildLogTerminal } = initializeLogger(context);
 
   try {
@@ -57,12 +63,7 @@ async function activateInternal(
   buildLogPty: LogOutputTerminal,
   buildLogTerminal: { show(preserveFocus?: boolean): void },
 ): Promise<void> {
-  // 2. Validate platform
-  if (!(await validatePlatformRuntime(context))) {
-    return;
-  }
-
-  // 3. Read settings, configure Docker path
+  // 2. Read settings, configure Docker path
   const settings = readSettings();
   configureDockerPath(settings.dockerPath);
 

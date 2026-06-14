@@ -645,6 +645,47 @@ const changeHandlers = {
   },
 };
 
+/** Hide or show AI tabs based on whether an AI extension is installed. */
+function gateAiContent(available) {
+  const show = (sel, v) => {
+    document.querySelectorAll(sel).forEach((el) => {
+      el.style.display = v ? "" : "none";
+    });
+  };
+
+  if (available) {
+    // Show AI content, hide no-AI fallbacks
+    show(".config-tabs", true);
+    show("#config-no-ai", false);
+    show(".wizard-tabs", true);
+    show("#wizard-section", false);
+  } else {
+    // Show tab containers but hide AI tab buttons, select manual tab
+    show(".config-tabs", true);
+    show(".wizard-tabs", true);
+    show("#config-no-ai", false);
+    show("#wizard-section", false);
+
+    // Hide AI tab buttons and simplify labels
+    document
+      .querySelectorAll(
+        ".tab-btn[data-tab='ai'], .tab-btn[data-tab='config-ai']",
+      )
+      .forEach((b) => (b.style.display = "none"));
+
+    // Rename manual tabs — "Manually" is redundant when AI is gone
+    document
+      .querySelectorAll(
+        ".tab-btn[data-tab='manual'], .tab-btn[data-tab='config-manual']",
+      )
+      .forEach((b) => {
+        b.textContent = b.dataset.tab === "config-manual" ? "Edit" : "Create";
+        b.classList.add("active");
+        b.click();
+      });
+  }
+}
+
 document.getElementById("extension-filter")?.addEventListener("input", () => {
   if (state.allExtensions.length) {
     renderExtensionChecklist(state.allExtensions);
@@ -663,6 +704,9 @@ const messageHandlers = {
     renderPorts(msg.toggles.forwardPorts);
     renderExtensions(msg.toggles.extensions);
     renderSoftware(msg.software);
+
+    // Show AI tabs only when an AI extension is available
+    gateAiContent(msg.aiAvailable);
 
     const banner = document.getElementById("config-error-banner");
     if (!banner) return;
@@ -693,6 +737,8 @@ const messageHandlers = {
   },
 
   configMissing(msg) {
+    gateAiContent(msg.aiAvailable);
+
     if (msg.noWorkspace) {
       showNoWorkspace();
     } else if (msg.remote) {

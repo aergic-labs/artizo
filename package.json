@@ -2,7 +2,7 @@
   "name": "artizo",
   "displayName": "Artizo Dev Containers",
   "description": "Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "aergic",
   "productName": "Artizo",
   "license": "AGPL-3.0-only",
@@ -388,7 +388,8 @@
     "package:kiro": "node scripts/build-vsix.mjs --target=kiro",
     "package:trae": "node scripts/build-vsix.mjs --target=trae",
     "package:windsurf": "node scripts/build-vsix.mjs --target=windsurf",
-    "package:devin": "node scripts/build-vsix.mjs --target=devin"
+    "package:devin": "node scripts/build-vsix.mjs --target=devin",
+    "package:vscodium": "node scripts/build-vsix.mjs --target=vscodium"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

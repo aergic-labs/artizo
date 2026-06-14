@@ -19,6 +19,7 @@ let _adapter: IPlatformAdapter | undefined;
 declare const HAS_KIRO_ADAPTER: boolean;
 declare const HAS_TRAE_ADAPTER: boolean;
 declare const HAS_DEVIN_ADAPTER: boolean;
+declare const HAS_VSCODIUM_ADAPTER: boolean;
 
 /**
  * Returns the platform adapter for the current build target.
@@ -46,6 +47,17 @@ export async function getPlatformAdapter(): Promise<IPlatformAdapter> {
         serverInstallRoot: "/tmp",
         needsHomeSymlink: true,
         hostDataFolderName: ".devin",
+      });
+    } else if (HAS_VSCODIUM_ADAPTER) {
+      const { VSCodiumAdapter } = await import("./vscodium.js");
+      _adapter = new VSCodiumAdapter({
+        name: "VSCodium",
+        dataFolderName: ".vscode-oss",
+        serverApplicationName: "codium-server",
+        needsArgvPatch: true,
+        additionalDockerRunArgs: [],
+        serverInstallRoot: "/tmp",
+        needsHomeSymlink: false,
       });
     } else {
       const { KiroAdapter } = await import("./kiro.js");

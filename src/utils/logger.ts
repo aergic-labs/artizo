@@ -71,7 +71,15 @@ export function initLogger(terminal: LogOutputTerminal): Logger {
  */
 export function getLogger(): Logger {
   if (!globalLogger) {
-    throw new Error("Logger not initialized. Call initLogger() first.");
+    // Return a no-op logger before initLogger() is called — useful for
+    // early-activation checks like validatePlatformRuntime that run first.
+    return {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {},
+      trace() {},
+    } as unknown as Logger;
   }
   return globalLogger;
 }
