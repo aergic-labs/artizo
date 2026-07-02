@@ -11,7 +11,7 @@ interface ClineAPI {
   startNewTask(task?: string, images?: string[]): Promise<void>;
 }
 
-/** Roo Code / Zoo Code — Cline descendants, same API shape. */
+/** Roo Code / Zoo Code - Cline descendants, same API shape. */
 interface ZooCodeAPI {
   startNewTask(opts: { text?: string }): Promise<string>;
 }
@@ -23,7 +23,7 @@ interface ProbeTarget {
   buildSubmit(exports: unknown): SubmitFn | undefined;
 }
 
-/** Reusable probe for Roo Code and Zoo Code — same API, different IDs. */
+/** Reusable probe for Roo Code and Zoo Code - same API, different IDs. */
 const ROO_ZOO_PROBE: ProbeTarget = {
   extensionId: "",
   buildSubmit(exports) {

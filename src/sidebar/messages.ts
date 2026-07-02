@@ -10,8 +10,7 @@
  * Webview → Extension messages request actions or state changes.
  */
 
-// ── Data types ──────────────────────────────────────────────
-
+// Data types
 export interface ConfigToggles {
   gpu: boolean;
   waylandSocket: boolean;
@@ -57,8 +56,7 @@ export interface SoftwareFeature {
   enabled: boolean;
 }
 
-// ── Extension → Webview ──────────────────────────────────────
-
+// Extension → Webview
 export interface ConfigLoadedMessage {
   type: "configLoaded";
   path: string;
@@ -78,8 +76,7 @@ export interface UpdateVolumesMessage {
   volumes: VolumeInfo[];
 }
 
-// ── Webview → Extension ──────────────────────────────────────
-
+// Webview → Extension
 export type WebviewMessage =
   | { type: "ready" }
   | {
@@ -93,6 +90,11 @@ export type WebviewMessage =
   | { type: "removePort"; index: number }
   | { type: "addExtension"; extensionId: string }
   | { type: "removeExtension"; index: number }
+  | {
+      type: "toggleExtension";
+      extensionId: string;
+      enabled: boolean;
+    }
   | { type: "addMount"; source: string; target: string }
   | { type: "removeMount"; index: number }
   | { type: "addRunArg"; arg: string }
@@ -137,14 +139,13 @@ export interface CommandInfo {
   children?: { id: string; label: string }[];
 }
 
-// ── Extension → Webview ──────────────────────────────────────
-
+// Extension → Webview
 export type HostMessage =
   | ConfigLoadedMessage
   | { type: "optionToggled"; feature: string; enabled: boolean }
-  | { type: "configMissing" }
-  | { type: "configMissing"; noWorkspace: true }
-  | { type: "configMissing"; remote: true }
+  | { type: "configMissing"; aiAvailable?: boolean }
+  | { type: "configMissing"; noWorkspace: true; aiAvailable?: boolean }
+  | { type: "configMissing"; managed: true; aiAvailable?: boolean }
   | UpdateContainersMessage
   | UpdateVolumesMessage
   | { type: "expandSection"; section: string }

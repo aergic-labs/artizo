@@ -21,13 +21,18 @@ vi.mock("vscode", () => ({
     dispose: vi.fn(),
   })),
   ProgressLocation: { Notification: 15 },
-  Uri: { parse: (s: string) => ({ toString: () => s }) },
+  ExtensionKind: { UI: 1, Workspace: 2 },
+  env: { remoteAuthority: undefined, remoteName: undefined },
+  workspace: { workspaceFolders: [] },
+  Uri: {
+    parse: (s: string) => ({ toString: () => s }),
+    file: (s: string) => ({ fsPath: s }),
+  },
 }));
 
 vi.mock("../../src/devcontainer/api", async () => {
-  const { ProvisionFailedError } = await import(
-    "../../src/devcontainer/provisionError"
-  );
+  const { ProvisionFailedError } =
+    await import("../../src/devcontainer/provisionError");
   const launch = vi.fn();
   const launchProvision = vi.fn(
     async (
@@ -62,19 +67,17 @@ import {
   openFolderInContainer,
   type OpenFolderUI,
 } from "../../src/workflows/openFolder";
-import { WorkflowOrchestrator } from "../../src/workflows/orchestrator";
 import type { WorkflowDependencies } from "../../src/workflows/types";
 import { BRAND } from "../../src/utils/constants";
 import type { IConfigManager } from "../../src/config/configManager";
 import type { IServerManager } from "../../src/remote/serverManager";
-import type { ICommunicationBridge } from "../../src/remote/communicationBridge";
 import type { IGitConfigCopier } from "../../src/credentials/gitConfigCopier";
 
 function createMockConfigManager(
   overrides?: Partial<IConfigManager>,
 ): IConfigManager {
   return {
-    readConfig: vi.fn().mockReturnValue({
+    readConfig: vi.fn().mockResolvedValue({
       config: { image: "node:18" },
       configPath: "/project/.devcontainer/devcontainer.json",
       parseErrors: [],
@@ -82,9 +85,9 @@ function createMockConfigManager(
     validateConfig: vi
       .fn()
       .mockReturnValue({ valid: true, errors: [], warnings: [] }),
-    getConfigPath: vi
-      .fn()
-      .mockReturnValue("/project/.devcontainer/devcontainer.json"),
+    getConfigPath: vi.fn().mockResolvedValue({
+      fsPath: "/project/.devcontainer/devcontainer.json",
+    }),
     ...overrides,
   };
 }
@@ -109,20 +112,7 @@ function createMockServerManager(
     stop: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockResolvedValue(null),
     getCompatibleVersion: vi.fn().mockReturnValue("1.96.0"),
-    ...overrides,
-  };
-}
-
-function createMockBridge(
-  overrides?: Partial<ICommunicationBridge>,
-): ICommunicationBridge {
-  return {
-    connect: vi
-      .fn()
-      .mockResolvedValue({ send: vi.fn(), onData: vi.fn(), onClose: vi.fn() }),
-    disconnect: vi.fn().mockResolvedValue(undefined),
-    isConnected: vi.fn().mockReturnValue(false),
-    onDidDisconnect: vi.fn(),
+    getExtensionsDir: vi.fn().mockResolvedValue("/tmp/test-extensions"),
     ...overrides,
   };
 }
@@ -150,7 +140,6 @@ function createMockGitConfigCopier(): IGitConfigCopier {
 }
 
 describe("openFolderInContainer", () => {
-  let orchestrator: WorkflowOrchestrator;
   let deps: WorkflowDependencies;
   let ui: OpenFolderUI;
 
@@ -161,13 +150,15 @@ describe("openFolderInContainer", () => {
       remoteUser: "vscode",
       remoteWorkspaceFolder: "/workspaces/project",
     });
-    orchestrator = new WorkflowOrchestrator();
     deps = {
       configManager: createMockConfigManager(),
       serverManager: createMockServerManager(),
-      bridge: createMockBridge(),
-      orchestrator,
       gitConfigCopier: createMockGitConfigCopier(),
+      dockerPath: "docker",
+      extensionInstaller: {
+        installFromConfig: vi.fn().mockResolvedValue([]),
+        installExtensions: vi.fn().mockResolvedValue([]),
+      } as any,
     };
     ui = createMockUI();
   });
@@ -175,27 +166,13 @@ describe("openFolderInContainer", () => {
   it("completes the full workflow with pre-selected folder", async () => {
     await openFolderInContainer(deps, ui, { folder: "/project" });
 
-    expect(orchestrator.state).toBe("connected");
-    expect(deps.configManager.getConfigPath).toHaveBeenCalledWith("/project");
+    expect(deps.configManager.getConfigPath).toHaveBeenCalledWith({
+      fsPath: "/project",
+    });
     expect(launch).toHaveBeenCalled();
     expect(deps.serverManager.ensureInstalled).toHaveBeenCalledWith("abc123");
-    expect(deps.bridge.connect).toHaveBeenCalled();
+    expect(deps.serverManager.start).toHaveBeenCalledWith("abc123");
     expect(ui.openWindow).toHaveBeenCalled();
-  });
-
-  it("transitions through correct states", async () => {
-    const states: string[] = [];
-    orchestrator.onDidChangeState((s) => states.push(s));
-
-    await openFolderInContainer(deps, ui, { folder: "/project" });
-
-    expect(states).toEqual([
-      "parsing-config",
-      "building-container",
-      "installing-server",
-      "connecting",
-      "connected",
-    ]);
   });
 
   it("uses folder picker when no pre-selected folder", async () => {
@@ -205,9 +182,9 @@ describe("openFolderInContainer", () => {
     await openFolderInContainer(deps, ui, {});
 
     expect(pickFolderMock).toHaveBeenCalled();
-    expect(deps.configManager.getConfigPath).toHaveBeenCalledWith(
-      "/picked-folder",
-    );
+    expect(deps.configManager.getConfigPath).toHaveBeenCalledWith({
+      fsPath: "/picked-folder",
+    });
     expect(launch).toHaveBeenCalled();
   });
 
@@ -217,25 +194,26 @@ describe("openFolderInContainer", () => {
     await openFolderInContainer(deps, ui, {});
 
     expect(launch).not.toHaveBeenCalled();
-    expect(orchestrator.state).toBe("idle");
   });
 
   it("detects existing config and uses it", async () => {
     deps.configManager = createMockConfigManager({
-      getConfigPath: vi
-        .fn()
-        .mockReturnValue("/project/.devcontainer/devcontainer.json"),
+      getConfigPath: vi.fn().mockResolvedValue({
+        fsPath: "/project/.devcontainer/devcontainer.json",
+      }),
     });
 
     await openFolderInContainer(deps, ui, { folder: "/project" });
 
-    expect(deps.configManager.getConfigPath).toHaveBeenCalledWith("/project");
+    expect(deps.configManager.getConfigPath).toHaveBeenCalledWith({
+      fsPath: "/project",
+    });
     expect(launch).toHaveBeenCalled();
   });
 
   it("prompts to create config when none found", async () => {
     deps.configManager = createMockConfigManager({
-      getConfigPath: vi.fn().mockReturnValue(undefined),
+      getConfigPath: vi.fn().mockResolvedValue(undefined),
     });
     const promptMock = vi.fn().mockResolvedValue(false);
     ui = createMockUI({
@@ -247,12 +225,11 @@ describe("openFolderInContainer", () => {
 
     expect(promptMock).toHaveBeenCalled();
     expect(launch).not.toHaveBeenCalled();
-    expect(orchestrator.state).toBe("idle");
   });
 
   it("throws on config parse errors", async () => {
     deps.configManager = createMockConfigManager({
-      readConfig: vi.fn().mockReturnValue({
+      readConfig: vi.fn().mockResolvedValue({
         config: { image: "node:18" },
         configPath: "/project/.devcontainer/devcontainer.json",
         parseErrors: [
@@ -282,7 +259,7 @@ describe("openFolderInContainer", () => {
       expect.stringContaining("Installing"),
     );
     expect(ui.showBuildLog).toHaveBeenCalledWith(
-      expect.stringContaining("Connecting to container"),
+      expect.stringContaining("Copying Git config"),
     );
   });
 
@@ -304,6 +281,5 @@ describe("openFolderInContainer", () => {
 
     expect(deps.configManager.getConfigPath).not.toHaveBeenCalled();
     expect(launch).toHaveBeenCalled();
-    expect(orchestrator.state).toBe("connected");
   });
 });

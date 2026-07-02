@@ -1,5 +1,5 @@
 /**
- * Minimal type declarations for node-pty — satisfies the vendored CLI's
+ * Minimal type declarations for node-pty  -  satisfies the vendored CLI's
  * `import * as ptyType from 'node-pty'` without native compilation.
  *
  * Matches the surface used by @devcontainers/cli v0.87.0.

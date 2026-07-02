@@ -25,10 +25,27 @@ vi.mock("../../src/utils/constants", () => ({
   MANAGED_LABEL: "com.artizo.managed=true",
 }));
 
+const { mockReportProvisionFailure } = vi.hoisted(() => ({
+  mockReportProvisionFailure: vi.fn(),
+}));
+
+vi.mock("../../src/devcontainer/provisionError", () => ({
+  ProvisionFailedError: class extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "ProvisionFailedError";
+    }
+  },
+}));
+
+vi.mock("../../src/host/reportProvisionFailure", () => ({
+  reportProvisionFailure: mockReportProvisionFailure,
+}));
+
 vi.mock("../../src/host/guards", () => ({
-  guardLocalContext: vi.fn(),
+  guardHostContext: vi.fn(),
   checkDockerAvailable: vi.fn(),
-  getLocalWorkspaceFolder: vi.fn(),
+  getHostWorkspaceFolder: vi.fn(),
 }));
 
 vi.mock("vscode", () => ({
@@ -41,15 +58,22 @@ vi.mock("vscode", () => ({
       return { dispose: vi.fn() };
     }),
   },
+  Uri: {
+    file: (p: string) => ({ fsPath: p, scheme: "file", path: p }),
+  },
 }));
 
 import * as vscode from "vscode";
 import {
-  guardLocalContext,
+  guardHostContext,
   checkDockerAvailable,
-  getLocalWorkspaceFolder,
+  getHostWorkspaceFolder,
 } from "../../src/host/guards";
-import { registerCommand, type CommandSpec } from "../../src/host/commandRunner";
+import {
+  registerCommand,
+  type CommandSpec,
+} from "../../src/host/commandRunner";
+import { ProvisionFailedError } from "../../src/devcontainer/provisionError";
 import type { CommandContext } from "../../src/host/commands";
 
 function createMockCommandContext(
@@ -60,10 +84,15 @@ function createMockCommandContext(
     ui: {} as any,
     configManager: {} as any,
     containerLifecycle: {} as any,
-    orchestrator: {} as any,
     buildLogTerminal: { show: vi.fn(), dispose: vi.fn() } as any,
-    buildLogPty: { writeLine: vi.fn(), write: vi.fn(), show: vi.fn(), dispose: vi.fn() } as any,
+    buildLogPty: {
+      writeLine: vi.fn(),
+      write: vi.fn(),
+      show: vi.fn(),
+      dispose: vi.fn(),
+    } as any,
     dockerPath: "docker",
+    extensionUri: vscode.Uri.file("/test/extension"),
     sidebarProvider: {} as any,
     ...overrides,
   };
@@ -135,7 +164,9 @@ describe("registerCommand", () => {
       await capturedHandlers["test.log"]();
 
       expect(mockLogger.info).toHaveBeenCalledWith("=== Log Test starting ===");
-      expect(mockLogger.info).toHaveBeenCalledWith("=== Log Test completed ===");
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        "=== Log Test completed ===",
+      );
     });
 
     it("writes start and done messages to buildLogPty", async () => {
@@ -168,7 +199,7 @@ describe("registerCommand", () => {
     it("resolves workspace folder when required", async () => {
       const ctx = createMockCommandContext();
       const context = { subscriptions: [] };
-      vi.mocked(getLocalWorkspaceFolder).mockReturnValue("/my/workspace");
+      vi.mocked(getHostWorkspaceFolder).mockReturnValue("/my/workspace");
       const handler = vi.fn().mockResolvedValue(undefined);
       const spec = makeSpec({
         id: "test.ws",
@@ -188,7 +219,7 @@ describe("registerCommand", () => {
     it("shows error when workspace is required but none exists", async () => {
       const ctx = createMockCommandContext();
       const context = { subscriptions: [] };
-      vi.mocked(getLocalWorkspaceFolder).mockReturnValue(undefined);
+      vi.mocked(getHostWorkspaceFolder).mockReturnValue(undefined);
       const handler = vi.fn();
       const spec = makeSpec({
         id: "test.nows",
@@ -215,7 +246,7 @@ describe("registerCommand", () => {
       registerCommand(context as any, ctx, spec);
       await capturedHandlers["test.guard"]();
 
-      expect(guardLocalContext).toHaveBeenCalled();
+      expect(guardHostContext).toHaveBeenCalled();
     });
 
     it("executes checkDockerAvailable when spec requires it", async () => {
@@ -241,8 +272,8 @@ describe("registerCommand", () => {
       registerCommand(context as any, ctx, spec);
       await capturedHandlers["test.both"]();
 
-      // guardLocalContext called twice (once standalone, once as double-guard)
-      expect(guardLocalContext).toHaveBeenCalledTimes(2);
+      // guardHostContext called twice (once standalone, once as double-guard)
+      expect(guardHostContext).toHaveBeenCalledTimes(2);
       expect(checkDockerAvailable).toHaveBeenCalledTimes(1);
     });
 
@@ -254,7 +285,7 @@ describe("registerCommand", () => {
       registerCommand(context as any, ctx, spec);
       await capturedHandlers["test.noguard"]();
 
-      expect(guardLocalContext).not.toHaveBeenCalled();
+      expect(guardHostContext).not.toHaveBeenCalled();
       expect(checkDockerAvailable).not.toHaveBeenCalled();
     });
   });
@@ -308,7 +339,11 @@ describe("registerCommand", () => {
       const ctx = createMockCommandContext();
       const context = { subscriptions: [] };
       const handler = vi.fn().mockRejectedValue("string error");
-      const spec = makeSpec({ id: "test.strerr", label: "String Err", handler });
+      const spec = makeSpec({
+        id: "test.strerr",
+        label: "String Err",
+        handler,
+      });
 
       registerCommand(context as any, ctx, spec);
       await capturedHandlers["test.strerr"]();
@@ -329,7 +364,7 @@ describe("registerCommand", () => {
       const handler = vi.fn().mockRejectedValue(new Error("fail"));
       const spec = makeSpec({ id: "test.showlog", label: "ShowLog", handler });
 
-      let resolveAction: (value: string | undefined) => void;
+      let resolveAction: (value: any) => void;
       vi.mocked(vscode.window.showErrorMessage).mockReturnValue(
         new Promise((resolve) => {
           resolveAction = resolve;
@@ -345,6 +380,57 @@ describe("registerCommand", () => {
 
       // Called 3 times: start, error handler, then "Show Log" action
       expect(ctx.buildLogTerminal.show).toHaveBeenCalledTimes(3);
+    });
+
+    it("handles error without stack", async () => {
+      const ctx = createMockCommandContext();
+      const context = { subscriptions: [] };
+      const error = new Error("no stack");
+      delete (error as any).stack;
+      const handler = vi.fn().mockRejectedValue(error);
+      const spec = makeSpec({ id: "test.nostack", label: "NoStack", handler });
+
+      registerCommand(context as any, ctx, spec);
+      await capturedHandlers["test.nostack"]();
+
+      // Error message still logged, but stack writeLine NOT called
+      expect(ctx.buildLogPty.writeLine).toHaveBeenCalledWith(
+        "[Artizo] ERROR: no stack",
+      );
+      // Only the ERROR message + "Done." were written, no stack line
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        "NoStack failed",
+        expect.any(Error),
+      );
+    });
+
+    it("routes ProvisionFailedError to reportProvisionFailure", async () => {
+      const ctx = createMockCommandContext();
+      const context = { subscriptions: [] };
+      const handler = vi
+        .fn()
+        .mockRejectedValue(new ProvisionFailedError("provision boom"));
+      const spec = makeSpec({
+        id: "test.provision",
+        label: "ProvisionErr",
+        workspaceRequired: true,
+        handler,
+      });
+      vi.mocked(getHostWorkspaceFolder).mockReturnValue("/ws");
+
+      registerCommand(context as any, ctx, spec);
+      await capturedHandlers["test.provision"]();
+
+      expect(mockReportProvisionFailure).toHaveBeenCalledWith(
+        expect.any(ProvisionFailedError),
+        {
+          buildLogPty: ctx.buildLogPty,
+          buildLogTerminal: ctx.buildLogTerminal,
+          configManager: ctx.configManager,
+          extensionUri: ctx.extensionUri,
+        },
+        "/ws",
+      );
     });
   });
 });

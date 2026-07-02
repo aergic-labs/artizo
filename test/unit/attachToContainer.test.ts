@@ -21,6 +21,9 @@ vi.mock("vscode", () => ({
     dispose: vi.fn(),
   })),
   ProgressLocation: { Notification: 15 },
+  ExtensionKind: { UI: 1, Workspace: 2 },
+  env: { remoteAuthority: undefined, remoteName: undefined },
+  workspace: { workspaceFolders: [] },
   Uri: { parse: (s: string) => ({ toString: () => s }) },
 }));
 
@@ -31,7 +34,6 @@ import {
   loadAttachConfig,
   saveAttachConfig,
 } from "../../src/workflows/attachToContainer";
-import { WorkflowOrchestrator } from "../../src/workflows/orchestrator";
 import type { WorkflowDependencies } from "../../src/workflows/types";
 import type {
   AttachToContainerUI,
@@ -40,7 +42,6 @@ import type {
 } from "../../src/workflows/attachToContainer";
 import type { IConfigManager } from "../../src/config/configManager";
 import type { IServerManager } from "../../src/remote/serverManager";
-import type { ICommunicationBridge } from "../../src/remote/communicationBridge";
 import type { IGitConfigCopier } from "../../src/credentials/gitConfigCopier";
 import { BRAND_PREFIX } from "../../src/utils/constants";
 
@@ -89,19 +90,7 @@ function createMockServerManager(): IServerManager {
     stop: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockResolvedValue(null),
     getCompatibleVersion: vi.fn().mockReturnValue("1.96.0"),
-  };
-}
-
-function createMockBridge(): ICommunicationBridge {
-  return {
-    connect: vi.fn().mockResolvedValue({
-      send: vi.fn(),
-      onData: vi.fn(),
-      onClose: vi.fn(),
-    }),
-    disconnect: vi.fn().mockResolvedValue(undefined),
-    isConnected: vi.fn().mockReturnValue(false),
-    onDidDisconnect: vi.fn(),
+    getExtensionsDir: vi.fn().mockResolvedValue("/tmp/test-extensions"),
   };
 }
 
@@ -150,7 +139,6 @@ function createMockDocker(
 }
 
 describe("attachToContainer", () => {
-  let orchestrator: WorkflowOrchestrator;
   let deps: WorkflowDependencies;
   let ui: AttachToContainerUI;
   let docker: DockerListDependency;
@@ -163,13 +151,15 @@ describe("attachToContainer", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    orchestrator = new WorkflowOrchestrator();
     deps = {
       configManager: createMockConfigManager(),
       serverManager: createMockServerManager(),
-      bridge: createMockBridge(),
-      orchestrator,
       gitConfigCopier: createMockGitConfigCopier(),
+      dockerPath: "docker",
+      extensionInstaller: {
+        installFromConfig: vi.fn().mockResolvedValue([]),
+        installExtensions: vi.fn().mockResolvedValue([]),
+      } as any,
     };
     ui = createMockUI();
     docker = createMockDocker();
@@ -250,28 +240,14 @@ describe("attachToContainer", () => {
     it("completes the full workflow successfully", async () => {
       await attachToContainer(deps, ui, docker, {});
 
-      expect(orchestrator.state).toBe("connected");
       expect(deps.serverManager.ensureInstalled).toHaveBeenCalledWith(
         "container-abc",
       );
       expect(deps.serverManager.start).toHaveBeenCalledWith("container-abc");
-      expect(deps.bridge.connect).toHaveBeenCalledWith(
-        "container-abc",
-        15999,
-        expect.any(String),
-      );
       expect(ui.openWindow).toHaveBeenCalledWith(
         expect.stringContaining("vscode-remote://attached-container+"),
+        { forceReuseWindow: true },
       );
-    });
-
-    it("transitions through correct states", async () => {
-      const states: string[] = [];
-      orchestrator.onDidChangeState((s) => states.push(s));
-
-      await attachToContainer(deps, ui, docker, {});
-
-      expect(states).toEqual(["installing-server", "connecting", "connected"]);
     });
 
     it("throws when server installation fails", async () => {
@@ -283,14 +259,12 @@ describe("attachToContainer", () => {
       await expect(attachToContainer(deps, ui, docker, {})).rejects.toThrow(
         "Install failed",
       );
-
-      expect(orchestrator.state).toBe("error");
     });
 
     it("shows error notification on failure", async () => {
-      deps.bridge = {
-        ...createMockBridge(),
-        connect: vi.fn().mockRejectedValue(new Error("Connection refused")),
+      deps.serverManager = {
+        ...createMockServerManager(),
+        start: vi.fn().mockRejectedValue(new Error("Connection refused")),
       };
 
       await expect(attachToContainer(deps, ui, docker, {})).rejects.toThrow(

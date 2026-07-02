@@ -21,6 +21,9 @@ vi.mock("vscode", () => ({
     dispose: vi.fn(),
   })),
   ProgressLocation: { Notification: 15 },
+  ExtensionKind: { UI: 1, Workspace: 2 },
+  env: { remoteAuthority: undefined, remoteName: undefined },
+  workspace: { workspaceFolders: [] },
   Uri: { parse: (s: string) => ({ toString: () => s }) },
 }));
 
@@ -35,9 +38,8 @@ vi.mock("../../src/utils/dockerUtils", () => ({
 }));
 
 vi.mock("../../src/devcontainer/api", async () => {
-  const { ProvisionFailedError } = await import(
-    "../../src/devcontainer/provisionError"
-  );
+  const { ProvisionFailedError } =
+    await import("../../src/devcontainer/provisionError");
   const launch = vi.fn();
   const launchProvision = vi.fn(
     async (
@@ -72,12 +74,10 @@ import {
   cloneInVolume,
   generateVolumeName,
 } from "../../src/workflows/cloneInVolume";
-import { WorkflowOrchestrator } from "../../src/workflows/orchestrator";
 import type { WorkflowDependencies } from "../../src/workflows/types";
 import type { CloneInVolumeUI } from "../../src/workflows/cloneInVolume";
 import type { IConfigManager } from "../../src/config/configManager";
 import type { IServerManager } from "../../src/remote/serverManager";
-import type { ICommunicationBridge } from "../../src/remote/communicationBridge";
 import type { IGitConfigCopier } from "../../src/credentials/gitConfigCopier";
 import { BRAND } from "../../src/utils/constants";
 
@@ -93,9 +93,9 @@ function createMockConfigManager(
     validateConfig: vi
       .fn()
       .mockReturnValue({ valid: true, errors: [], warnings: [] }),
-    getConfigPath: vi
-      .fn()
-      .mockReturnValue("/workspace/.devcontainer/devcontainer.json"),
+    getConfigPath: vi.fn().mockReturnValue({
+      fsPath: "/workspace/.devcontainer/devcontainer.json",
+    }),
     ...overrides,
   };
 }
@@ -120,20 +120,7 @@ function createMockServerManager(
     stop: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockResolvedValue(null),
     getCompatibleVersion: vi.fn().mockReturnValue("1.96.0"),
-    ...overrides,
-  };
-}
-
-function createMockBridge(
-  overrides?: Partial<ICommunicationBridge>,
-): ICommunicationBridge {
-  return {
-    connect: vi
-      .fn()
-      .mockResolvedValue({ send: vi.fn(), onData: vi.fn(), onClose: vi.fn() }),
-    disconnect: vi.fn().mockResolvedValue(undefined),
-    isConnected: vi.fn().mockReturnValue(false),
-    onDidDisconnect: vi.fn(),
+    getExtensionsDir: vi.fn().mockResolvedValue("/tmp/test-extensions"),
     ...overrides,
   };
 }
@@ -161,7 +148,6 @@ function createMockGitConfigCopier(): IGitConfigCopier {
 }
 
 describe("cloneInVolume", () => {
-  let orchestrator: WorkflowOrchestrator;
   let deps: WorkflowDependencies;
   let ui: CloneInVolumeUI;
 
@@ -172,13 +158,15 @@ describe("cloneInVolume", () => {
       remoteUser: "vscode",
       remoteWorkspaceFolder: "/workspace",
     });
-    orchestrator = new WorkflowOrchestrator();
     deps = {
       configManager: createMockConfigManager(),
       serverManager: createMockServerManager(),
-      bridge: createMockBridge(),
-      orchestrator,
       gitConfigCopier: createMockGitConfigCopier(),
+      dockerPath: "docker",
+      extensionInstaller: {
+        installFromConfig: vi.fn().mockResolvedValue([]),
+        installExtensions: vi.fn().mockResolvedValue([]),
+      } as any,
     };
     ui = createMockUI();
   });
@@ -201,10 +189,9 @@ describe("cloneInVolume", () => {
 
     expect(result).toBeDefined();
     expect(result!.containerId).toBe("abc123");
-    expect(orchestrator.state).toBe("connected");
     expect(launch).toHaveBeenCalled();
     expect(deps.serverManager.ensureInstalled).toHaveBeenCalledWith("abc123");
-    expect(deps.bridge.connect).toHaveBeenCalled();
+    expect(deps.serverManager.start).toHaveBeenCalledWith("abc123");
     expect(ui.openWindow).toHaveBeenCalled();
   });
 
@@ -251,8 +238,6 @@ describe("cloneInVolume", () => {
     await expect(
       cloneInVolume(deps, ui, { repoUrl: "https://github.com/user/repo.git" }),
     ).rejects.toThrow("Build failed");
-
-    expect(orchestrator.state).toBe("error");
   });
 
   it("shows progress during clone and build", async () => {
@@ -279,7 +264,7 @@ describe("cloneInVolume", () => {
       expect.stringContaining("Installing"),
     );
     expect(ui.showBuildLog).toHaveBeenCalledWith(
-      expect.stringContaining("Connecting to container"),
+      expect.stringContaining("Copying Git config"),
     );
   });
 

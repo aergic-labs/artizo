@@ -5,6 +5,16 @@
 
 import { describe, it, expect, vi } from "vitest";
 
+vi.mock("../../src/utils/logger", () => ({
+  getLogger: () => ({
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+    trace: vi.fn(),
+  }),
+}));
+
 import { withDefaults } from "../../src/devcontainer/api";
 
 describe("devcontainer/api", () => {

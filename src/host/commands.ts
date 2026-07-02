@@ -25,7 +25,6 @@ import type { VscodeWorkflowUI } from "../workflows/vscodeUI";
 import type { LogOutputTerminal } from "../workflows/logOutputTerminal";
 import type { ConfigManager } from "../config/configManager";
 import type { ContainerLifecycle } from "../lifecycle/containerLifecycle";
-import type { WorkflowOrchestrator } from "../workflows/orchestrator";
 import { reopenInContainer } from "../workflows/reopenInContainer";
 import { rebuildContainer } from "../workflows/rebuildContainer";
 import { openFolderInContainer } from "../workflows/openFolder";
@@ -33,10 +32,12 @@ import { cloneInVolume } from "../workflows/cloneInVolume";
 import { attachToContainer } from "../workflows/attachToContainer";
 import type { SidebarProvider } from "../sidebar/provider";
 import {
-  guardLocalContext,
+  guardHostContext,
   checkDockerAvailable,
-  getLocalWorkspaceFolder,
+  getHostWorkspaceFolder,
 } from "./guards";
+import { isInDevContainerWindow } from "./state";
+import type { Host } from "./host";
 import { registerCommand, type CommandSpec } from "./commandRunner";
 import { ProvisionFailedError } from "../devcontainer/provisionError";
 import { reportProvisionFailure } from "./reportProvisionFailure";
@@ -52,16 +53,29 @@ export interface CommandContext {
   ui: VscodeWorkflowUI;
   configManager: ConfigManager;
   containerLifecycle: ContainerLifecycle;
-  orchestrator: WorkflowOrchestrator;
   buildLogTerminal: { show(preserveFocus?: boolean): void };
   buildLogPty: LogOutputTerminal;
   dockerPath: string;
+  host?: Host;
   sidebarProvider: SidebarProvider;
   extensionUri: vscode.Uri;
 }
 
 function wrapError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
+}
+
+/**
+ * Wraps a command handler to surface host errors uniformly.
+ * The host is always local under ["workspace","ui"] - no readiness wait.
+ */
+function withHostReady<T extends (...args: any[]) => Promise<any>>(
+  _ctx: CommandContext,
+  handler: T,
+): T {
+  return (async (...args: any[]) => {
+    return handler(...args);
+  }) as T;
 }
 
 /**
@@ -102,6 +116,7 @@ export async function reopenInContainerHandler(
 ): Promise<void> {
   await reopenInContainer(ctx.deps, ctx.ui, {
     workspaceFolder: workspaceFolder!,
+    workspaceUri: vscode.workspace.workspaceFolders![0].uri,
   });
 }
 
@@ -111,6 +126,7 @@ export async function rebuildAndReopenInContainerHandler(
 ): Promise<void> {
   await rebuildContainer(ctx.deps, ctx.ui, {
     workspaceFolder: workspaceFolder!,
+    workspaceUri: vscode.workspace.workspaceFolders![0].uri,
     noCache: false,
     reconnect: true,
   });
@@ -128,10 +144,17 @@ export async function cloneInVolumeHandler(ctx: CommandContext): Promise<void> {
 
 export async function attachToRunningContainerHandler(
   ctx: CommandContext,
+  _workspaceFolder: string | undefined,
+  ...args: unknown[]
 ): Promise<void> {
   const attachUI = buildAttachUI(ctx.ui);
   const dockerList = buildDockerLister();
-  await attachToContainer(ctx.deps, attachUI, dockerList, {});
+  const containerId = typeof args[0] === "string" ? args[0] : undefined;
+  const forceNewWindow = args[1] === true;
+  await attachToContainer(ctx.deps, attachUI, dockerList, {
+    containerId,
+    forceNewWindow,
+  });
 }
 
 export async function cleanUpContainersHandler(
@@ -197,7 +220,7 @@ export async function configureDevContainerHandler(
     "workbench.view.extension.artizo-sidebar",
   );
   await ctx.sidebarProvider.loadConfig();
-  const hasConfig = ctx.sidebarProvider.hasConfig();
+  const hasConfig = await ctx.sidebarProvider.hasConfig();
   ctx.sidebarProvider.expandSection(hasConfig ? "config" : "wizard");
 }
 
@@ -208,7 +231,7 @@ export async function addConfigurationHandler(
     "workbench.view.extension.artizo-sidebar",
   );
   await ctx.sidebarProvider.loadConfig();
-  const hasConfig = ctx.sidebarProvider.hasConfig();
+  const hasConfig = await ctx.sidebarProvider.hasConfig();
   ctx.sidebarProvider.expandSection(hasConfig ? "config" : "wizard");
 }
 
@@ -216,7 +239,9 @@ export async function openDevContainerFileHandler(
   ctx: CommandContext,
   workspaceFolder?: string,
 ): Promise<void> {
-  const configPath = ctx.configManager.getConfigPath(workspaceFolder!);
+  const configPath = await ctx.configManager.getConfigPath(
+    vscode.Uri.file(workspaceFolder!),
+  );
   if (!configPath) {
     vscode.window.showErrorMessage("No devcontainer.json found in workspace.");
     return;
@@ -229,29 +254,41 @@ export async function openFolderInContainerHandler(
   ctx: CommandContext,
 ): Promise<void> {
   const openFolderUI = buildOpenFolderUI(ctx.ui);
-  await openFolderInContainer(ctx.deps, openFolderUI, {});
+  await openFolderInContainer(ctx.deps, openFolderUI, {
+    folderUri: vscode.workspace.workspaceFolders?.[0]?.uri,
+  });
+}
+
+export async function openFolderInContainerNewWindowHandler(
+  ctx: CommandContext,
+): Promise<void> {
+  const openFolderUI = buildOpenFolderUI(ctx.ui);
+  await openFolderInContainer(ctx.deps, openFolderUI, {
+    folderUri: vscode.workspace.workspaceFolders?.[0]?.uri,
+    forceNewWindow: true,
+  });
 }
 
 export async function rebuildContainerMenuHandler(
   ctx: CommandContext,
 ): Promise<void> {
   const logger = getLogger();
-  const inContainer = vscode.env.remoteName?.startsWith("artizo-container");
-  const workspaceFolder = inContainer
+  const isManaged = isInDevContainerWindow();
+  const workspaceFolder = isManaged
     ? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-    : getLocalWorkspaceFolder();
+    : getHostWorkspaceFolder();
   if (!workspaceFolder) {
     vscode.window.showErrorMessage("No workspace folder open.");
     return;
   }
 
-  if (inContainer) {
+  if (isManaged) {
     const action = await vscode.window.showErrorMessage(
-      `${BRAND_PREFIX} Rebuild must be run from a local window. You are currently connected to a dev container.`,
-      "Reopen Folder Locally",
+      `${BRAND_PREFIX} Rebuild must be run from a host window. You are currently connected to a managed container.`,
+      "Reopen in Host",
     );
-    if (action === "Reopen Folder Locally") {
-      vscode.commands.executeCommand("artizo.reopenLocally");
+    if (action === "Reopen in Host") {
+      vscode.commands.executeCommand("artizo.reopenInHost");
     }
     return;
   }
@@ -274,12 +311,13 @@ export async function rebuildContainerMenuHandler(
     logger.info(`=== ${picked.label} starting ===`);
     ctx.buildLogTerminal.show(true);
     ctx.buildLogPty.writeLine(`${BRAND_PREFIX} ${picked.label} starting...`);
-    guardLocalContext();
+    guardHostContext();
     await checkDockerAvailable(ctx.dockerPath);
-    guardLocalContext();
+    guardHostContext();
     ctx.buildLogPty.writeLine(`${BRAND_PREFIX} Workspace: ${workspaceFolder}`);
     await rebuildContainer(ctx.deps, ctx.ui, {
       workspaceFolder,
+      workspaceUri: vscode.workspace.workspaceFolders![0].uri,
       noCache,
       reconnect,
     });
@@ -295,10 +333,10 @@ export async function rebuildContainerHandler(
   ctx: CommandContext,
 ): Promise<void> {
   const logger = getLogger();
-  const inContainer = vscode.env.remoteName?.startsWith("artizo-container");
-  const workspaceFolder = inContainer
+  const isManaged = isInDevContainerWindow();
+  const workspaceFolder = isManaged
     ? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-    : getLocalWorkspaceFolder();
+    : getHostWorkspaceFolder();
   if (!workspaceFolder) {
     vscode.window.showErrorMessage("No workspace folder open.");
     return;
@@ -308,23 +346,24 @@ export async function rebuildContainerHandler(
     ctx.buildLogTerminal.show(true);
     ctx.buildLogPty.writeLine(`${BRAND_PREFIX} Rebuild Container starting...`);
 
-    if (inContainer) {
+    if (isManaged) {
       const action = await vscode.window.showErrorMessage(
-        `${BRAND_PREFIX} Rebuild must be run from a local window. You are currently connected to a dev container.`,
-        "Reopen Folder Locally",
+        `${BRAND_PREFIX} Rebuild must be run from a host window. You are currently connected to a managed container.`,
+        "Reopen in Host",
       );
-      if (action === "Reopen Folder Locally") {
-        vscode.commands.executeCommand("artizo.reopenLocally");
+      if (action === "Reopen in Host") {
+        vscode.commands.executeCommand("artizo.reopenInHost");
       }
       return;
     }
 
-    guardLocalContext();
+    guardHostContext();
     await checkDockerAvailable(ctx.dockerPath);
-    guardLocalContext();
+    guardHostContext();
     ctx.buildLogPty.writeLine(`${BRAND_PREFIX} Workspace: ${workspaceFolder}`);
     await rebuildContainer(ctx.deps, ctx.ui, {
       workspaceFolder,
+      workspaceUri: vscode.workspace.workspaceFolders![0].uri,
       noCache: false,
       reconnect: false,
     });
@@ -340,10 +379,10 @@ export async function rebuildContainerNoCacheHandler(
   ctx: CommandContext,
 ): Promise<void> {
   const logger = getLogger();
-  const inContainer = vscode.env.remoteName?.startsWith("artizo-container");
-  const workspaceFolder = inContainer
+  const isManaged = isInDevContainerWindow();
+  const workspaceFolder = isManaged
     ? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
-    : getLocalWorkspaceFolder();
+    : getHostWorkspaceFolder();
   if (!workspaceFolder) {
     vscode.window.showErrorMessage("No workspace folder open.");
     return;
@@ -355,22 +394,23 @@ export async function rebuildContainerNoCacheHandler(
       `${BRAND_PREFIX} Rebuild Without Cache starting...`,
     );
 
-    if (inContainer) {
+    if (isManaged) {
       const action = await vscode.window.showErrorMessage(
-        `${BRAND_PREFIX} Rebuild must be run from a local window. You are currently connected to a dev container.`,
-        "Reopen Folder Locally",
+        `${BRAND_PREFIX} Rebuild must be run from a host window. You are currently connected to a managed container.`,
+        "Reopen in Host",
       );
-      if (action === "Reopen Folder Locally") {
-        vscode.commands.executeCommand("artizo.reopenLocally");
+      if (action === "Reopen in Host") {
+        vscode.commands.executeCommand("artizo.reopenInHost");
       }
       return;
     }
 
-    guardLocalContext();
+    guardHostContext();
     await checkDockerAvailable(ctx.dockerPath);
-    guardLocalContext();
+    guardHostContext();
     await rebuildContainer(ctx.deps, ctx.ui, {
       workspaceFolder,
+      workspaceUri: vscode.workspace.workspaceFolders![0].uri,
       noCache: true,
       reconnect: false,
     });
@@ -382,30 +422,38 @@ export async function rebuildContainerNoCacheHandler(
   }
 }
 
-export async function reopenLocallyHandler(ctx: CommandContext): Promise<void> {
-  const inContainer = vscode.env.remoteName?.startsWith("artizo-container");
-  if (inContainer) {
-    const localPath = getLocalWorkspaceFolder();
-    if (localPath) {
-      await vscode.commands.executeCommand(
-        "vscode.openFolder",
-        vscode.Uri.file(localPath),
-        { forceNewWindow: true },
+export async function reopenInHostHandler(_ctx: CommandContext): Promise<void> {
+  if (isInDevContainerWindow()) {
+    const localPath = getHostWorkspaceFolder();
+    if (!localPath) {
+      await vscode.window.showInformationMessage(
+        "Return to Host is not available for this container.",
       );
-      await new Promise((r) => setTimeout(r, 2000));
+      return;
     }
-    await vscode.commands.executeCommand("workbench.action.closeWindow");
-  } else if (ctx.orchestrator.state === "connected") {
-    ctx.orchestrator.beginDisconnect();
-    ctx.orchestrator.disconnectComplete();
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri;
-    if (workspaceFolder) {
-      await vscode.commands.executeCommand(
-        "vscode.openFolder",
-        workspaceFolder,
-      );
-    }
+    const uri = localPath.startsWith("vscode-remote://")
+      ? vscode.Uri.parse(localPath)
+      : vscode.Uri.file(localPath);
+    await vscode.commands.executeCommand("vscode.openFolder", uri, {
+      forceReuseWindow: true,
+    });
+    return;
   }
+  // On an SSH remote host (not inside a container): delegate to VS Code's
+  // built-in "Close Remote Connection". We can't recover the apex folder
+  // the user had open before connecting (no cross-host state channel), so
+  // land them on the apex with no folder open. They pick from recents.
+  await vscode.commands.executeCommand("workbench.action.remote.close");
+}
+
+/**
+ * Backward-compat shim: delegates to reopenInHostHandler. The separate
+ * command is kept for keybindings but no longer surfaced in our UI.
+ */
+export async function closeRemoteConnectionHandler(
+  ctx: CommandContext,
+): Promise<void> {
+  await reopenInHostHandler(ctx);
 }
 
 /** Register all core command handlers. */
@@ -420,7 +468,9 @@ export function registerCoreCommands(
       guardLocal: true,
       guardDocker: true,
       workspaceRequired: true,
-      handler: (ctxC, ws) => reopenInContainerHandler(ctxC, ws),
+      handler: withHostReady(ctx, (ctxC, ws) =>
+        reopenInContainerHandler(ctxC, ws),
+      ),
     },
     {
       id: "artizo.rebuildAndReopenInContainer",
@@ -428,7 +478,9 @@ export function registerCoreCommands(
       guardLocal: true,
       guardDocker: true,
       workspaceRequired: true,
-      handler: (ctxC, ws) => rebuildAndReopenInContainerHandler(ctxC, ws),
+      handler: withHostReady(ctx, (ctxC, ws) =>
+        rebuildAndReopenInContainerHandler(ctxC, ws),
+      ),
     },
   ];
 
@@ -439,7 +491,7 @@ export function registerCoreCommands(
       guardLocal: true,
       guardDocker: true,
       workspaceRequired: false,
-      handler: (ctxC) => cloneInVolumeHandler(ctxC),
+      handler: withHostReady(ctx, (ctxC) => cloneInVolumeHandler(ctxC)),
     },
     {
       id: "artizo.attachToRunningContainer",
@@ -447,7 +499,9 @@ export function registerCoreCommands(
       guardLocal: true,
       guardDocker: true,
       workspaceRequired: false,
-      handler: (ctxC) => attachToRunningContainerHandler(ctxC),
+      handler: withHostReady(ctx, (ctxC, _ws, ...args) =>
+        attachToRunningContainerHandler(ctxC, _ws, ...args),
+      ),
     },
     {
       id: "artizo.cleanUpContainers",
@@ -496,7 +550,17 @@ export function registerCoreCommands(
       guardLocal: false,
       guardDocker: false,
       workspaceRequired: false,
-      handler: (ctxC) => openFolderInContainerHandler(ctxC),
+      handler: withHostReady(ctx, (ctxC) => openFolderInContainerHandler(ctxC)),
+    },
+    {
+      id: "artizo.openFolderInContainerNewWindow",
+      label: "Open Folder in Container (New Window)",
+      guardLocal: false,
+      guardDocker: false,
+      workspaceRequired: false,
+      handler: withHostReady(ctx, (ctxC) =>
+        openFolderInContainerNewWindowHandler(ctxC),
+      ),
     },
   ];
 
@@ -529,17 +593,31 @@ export function registerCoreCommands(
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("artizo.reopenLocally", async () => {
+    vscode.commands.registerCommand("artizo.reopenInHost", async () => {
       try {
-        await reopenLocallyHandler(ctx);
+        await reopenInHostHandler(ctx);
       } catch (err: unknown) {
         const error = wrapError(err);
-        getLogger().error("Reopen locally failed", error);
+        getLogger().error("Return to Host failed", error);
         vscode.window.showErrorMessage(
-          `Failed to reopen locally: ${error.message}`,
+          `Failed to return to host: ${error.message}`,
         );
       }
     }),
+    vscode.commands.registerCommand(
+      "artizo.closeRemoteConnection",
+      async () => {
+        try {
+          await closeRemoteConnectionHandler(ctx);
+        } catch (err: unknown) {
+          const error = wrapError(err);
+          getLogger().error("Close remote connection failed", error);
+          vscode.window.showErrorMessage(
+            `Failed to close remote connection: ${error.message}`,
+          );
+        }
+      },
+    ),
   );
 
   context.subscriptions.push(

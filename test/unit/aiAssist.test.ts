@@ -72,6 +72,13 @@ describe("KiroAiAssist", () => {
     const count = await ai.pollPendingQuestions!();
     expect(count).toBe(0);
   });
+
+  it("returns 0 when result is not an array", async () => {
+    executeCommand.mockResolvedValueOnce("not an array");
+    const ai = new KiroAiAssist();
+    const count = await ai.pollPendingQuestions!();
+    expect(count).toBe(0);
+  });
 });
 
 describe("TraeAiAssist", () => {

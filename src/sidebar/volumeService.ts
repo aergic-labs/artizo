@@ -11,11 +11,8 @@
  */
 
 import * as vscode from "vscode";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import type { Host } from "../host/host";
 import { MANAGED_LABEL } from "../utils/constants";
-
-const execFileAsync = promisify(execFile);
 
 export interface VolumeInfo {
   name: string;
@@ -24,13 +21,13 @@ export interface VolumeInfo {
 }
 
 export class VolumeService {
-  constructor(private readonly dockerPath: string) {}
+  constructor(private readonly host: Host) {}
 
   /** Fetch all managed Docker volumes. */
   async refreshVolumes(): Promise<VolumeInfo[]> {
-    const { stdout } = await execFileAsync(
-      this.dockerPath,
-      [
+    const result = await this.host.exec({
+      cmd: this.host.dockerPath,
+      args: [
         "volume",
         "ls",
         "--filter",
@@ -38,10 +35,9 @@ export class VolumeService {
         "--format",
         "{{json .}}",
       ],
-      { timeout: 10000, maxBuffer: 1024 * 1024 },
-    );
+    });
 
-    const lines = stdout.trim().split("\n").filter(Boolean);
+    const lines = result.stdout.trim().split("\n").filter(Boolean);
     return lines.map((line) => {
       const v = JSON.parse(line);
       return {
@@ -58,12 +54,11 @@ export class VolumeService {
     volumeName: string,
   ): Promise<void> {
     try {
-      const { stdout } = await execFileAsync(
-        this.dockerPath,
-        ["volume", "inspect", volumeName],
-        { timeout: 10000, maxBuffer: 1024 * 1024 },
-      );
-      const info = JSON.parse(stdout);
+      const result = await this.host.exec({
+        cmd: this.host.dockerPath,
+        args: ["volume", "inspect", volumeName],
+      });
+      const info = JSON.parse(result.stdout);
       const details = JSON.stringify(info, null, 2);
 
       if (action === "inspect") {
@@ -84,8 +79,9 @@ export class VolumeService {
           "Remove",
         );
         if (confirmed === "Remove") {
-          await execFileAsync(this.dockerPath, ["volume", "rm", volumeName], {
-            timeout: 30000,
+          await this.host.exec({
+            cmd: this.host.dockerPath,
+            args: ["volume", "rm", volumeName],
           });
         }
       }

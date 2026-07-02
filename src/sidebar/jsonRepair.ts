@@ -1,7 +1,17 @@
+/*
+ * Copyright (c) 2026 Aergic Labs, LLC
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+/**
+ * Best-effort repair of malformed devcontainer.json. The heuristics here
+ * (bracket balancing, missing-comma insertion, bare-value fixing) are
+ * inherently approximate; callers must back up the original first.
+ */
+
 import { parse as cjParse, stringify as cjStringify } from "comment-json";
 
-// ── Bracket balancer (comment + string aware) ──────────────────
-
+// Bracket balancer (comment + string aware)
 function balanceBrackets(text: string): string {
   let result = "";
   const stack = [];
@@ -92,8 +102,7 @@ function balanceBrackets(text: string): string {
   return result;
 }
 
-// ── Bare value fixer (comment-safe) ───────────────────────────
-
+// Bare value fixer (comment-safe)
 function fixBareValues(text: string): string {
   const comments: string[] = [];
   text = text
@@ -139,8 +148,7 @@ function fixBareValues(text: string): string {
   return text;
 }
 
-// ── Full repair pipeline ──────────────────────────────────────
-
+// Full repair pipeline
 export function repairDevcontainerJson(rawInput: string): string {
   let text = rawInput;
   // Replace smart/curly quotes with straight ASCII quotes

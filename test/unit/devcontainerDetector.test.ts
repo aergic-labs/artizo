@@ -15,7 +15,7 @@ vi.mock("vscode", () => {
       remoteName: undefined,
     },
     workspace: {
-      workspaceFolders: [{ uri: { fsPath: "/workspace" } }],
+      workspaceFolders: [{ uri: { fsPath: "/workspace", authority: "" } }],
     },
     window: {
       showInformationMessage: vi.fn().mockResolvedValue(undefined),
@@ -23,6 +23,10 @@ vi.mock("vscode", () => {
     commands: {
       executeCommand: vi.fn().mockResolvedValue(undefined),
     },
+    Uri: {
+      file: (s: string) => ({ fsPath: s }),
+    },
+    ExtensionKind: { UI: 1, Workspace: 2 },
   };
 });
 
@@ -30,7 +34,7 @@ function createMockConfigManager(
   overrides?: Partial<IConfigManager>,
 ): IConfigManager {
   return {
-    readConfig: vi.fn().mockReturnValue({
+    readConfig: vi.fn().mockResolvedValue({
       config: { image: "node:18" },
       configPath: "/workspace/.devcontainer/devcontainer.json",
       parseErrors: [],
@@ -38,9 +42,9 @@ function createMockConfigManager(
     validateConfig: vi
       .fn()
       .mockReturnValue({ valid: true, errors: [], warnings: [] }),
-    getConfigPath: vi
-      .fn()
-      .mockReturnValue("/workspace/.devcontainer/devcontainer.json"),
+    getConfigPath: vi.fn().mockResolvedValue({
+      fsPath: "/workspace/.devcontainer/devcontainer.json",
+    }),
     ...overrides,
   };
 }
@@ -70,11 +74,11 @@ describe("DevcontainerDetector", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset vscode.env.remoteName to undefined (local)
+    // Reset vscode.env.remoteName to undefined (host)
     (vscode.env as any).remoteName = undefined;
     // Reset workspace folders
     (vscode.workspace as any).workspaceFolders = [
-      { uri: { fsPath: "/workspace" } },
+      { uri: { fsPath: "/workspace", authority: "" } },
     ];
 
     configManager = createMockConfigManager();
@@ -82,7 +86,7 @@ describe("DevcontainerDetector", () => {
     detector = new DevcontainerDetector(configManager);
   });
 
-  it("shows notification when devcontainer.json exists and not connected to remote", async () => {
+  it("shows notification when devcontainer.json exists on host", async () => {
     await detector.checkAndPrompt(context);
 
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
@@ -92,8 +96,8 @@ describe("DevcontainerDetector", () => {
     );
   });
 
-  it("skips notification when already connected to a remote", async () => {
-    (vscode.env as any).remoteName = "dev-container";
+  it("skips notification when already in a managed container", async () => {
+    (vscode.env as any).remoteName = "artizo-container";
 
     await detector.checkAndPrompt(context);
 
@@ -122,7 +126,7 @@ describe("DevcontainerDetector", () => {
 
   it("skips notification when no devcontainer.json is found", async () => {
     configManager = createMockConfigManager({
-      getConfigPath: vi.fn().mockReturnValue(null),
+      getConfigPath: vi.fn().mockResolvedValue(null),
     });
     detector = new DevcontainerDetector(configManager);
 
@@ -188,6 +192,9 @@ describe("DevcontainerDetector", () => {
   it("uses ConfigManager.getConfigPath to find devcontainer.json", async () => {
     await detector.checkAndPrompt(context);
 
-    expect(configManager.getConfigPath).toHaveBeenCalledWith("/workspace");
+    expect(configManager.getConfigPath).toHaveBeenCalledWith({
+      fsPath: "/workspace",
+      authority: "",
+    });
   });
 });

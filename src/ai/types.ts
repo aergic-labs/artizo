@@ -43,7 +43,7 @@ export interface AiAssist {
    * Returns the number of questions awaiting a user response.
    *
    * Implemented only by platforms with an observable agent (Kiro). Its absence
-   * is the signal that progress cannot be tracked — no capability boolean needed.
+   * is the signal that progress cannot be tracked - no capability boolean needed.
    */
   pollPendingQuestions?(): Promise<number>;
 }

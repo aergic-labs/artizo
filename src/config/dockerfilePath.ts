@@ -13,7 +13,7 @@ import * as path from "node:path";
  * Recognizes: `build.dockerfile`, `build.dockerFile`, top-level `dockerFile`
  * (legacy), and `dockerComposeFile` (string or string[]).
  *
- * Pure function — no filesystem access — so it is easy to unit test.
+ * Pure function - no filesystem access - so it is easy to unit test.
  */
 export function resolveDockerfilePath(
   config: Record<string, unknown>,

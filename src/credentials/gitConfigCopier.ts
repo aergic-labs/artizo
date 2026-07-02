@@ -11,7 +11,7 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { dockerExec, type DockerExecOptions } from "../utils/dockerUtils";
+import type { Host } from "../host/host";
 import { escapeShellArg } from "../utils/shellUtils";
 
 export interface IGitConfigCopier {
@@ -27,15 +27,16 @@ export interface GitConfigCopierOptions {
   enabled?: boolean;
   /** Override for testing. Defaults to ~/.gitconfig. */
   hostGitConfigPath?: string;
+  host?: Host;
 }
 
 export class GitConfigCopier implements IGitConfigCopier {
-  private readonly dockerPath: string;
+  private readonly host: Host;
   private readonly enabled: boolean;
   private readonly hostGitConfigPath: string;
 
   constructor(options?: GitConfigCopierOptions) {
-    this.dockerPath = options?.dockerPath ?? "docker";
+    this.host = options?.host!;
     this.enabled = options?.enabled ?? true;
     this.hostGitConfigPath =
       options?.hostGitConfigPath ?? join(homedir(), ".gitconfig");
@@ -63,13 +64,10 @@ export class GitConfigCopier implements IGitConfigCopier {
       return;
     }
 
-    const execOptions: DockerExecOptions = { dockerPath: this.dockerPath };
-
-    const homeResult = await dockerExec(
-      containerId,
-      ["printenv", "HOME"],
-      execOptions,
-    );
+    const homeResult = await this.host.dockerExec(containerId, [
+      "printenv",
+      "HOME",
+    ]);
 
     const remoteHome = homeResult.stdout.trim() || "/root";
 
@@ -77,14 +75,10 @@ export class GitConfigCopier implements IGitConfigCopier {
     const base64Content = Buffer.from(gitConfigContent, "utf-8").toString(
       "base64",
     );
-    await dockerExec(
-      containerId,
-      [
-        "sh",
-        "-c",
-        `echo '${escapeShellArg(base64Content)}' | base64 -d > ${escapeShellArg(remoteHome)}/.gitconfig`,
-      ],
-      execOptions,
-    );
+    await this.host.dockerExec(containerId, [
+      "sh",
+      "-c",
+      `echo '${escapeShellArg(base64Content)}' | base64 -d > ${escapeShellArg(remoteHome)}/.gitconfig`,
+    ]);
   }
 }

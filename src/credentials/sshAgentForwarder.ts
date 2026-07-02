@@ -12,14 +12,14 @@
 
 import type { ChildProcess } from "node:child_process";
 import { createConnection } from "node:net";
-import {
-  dockerExec,
-  dockerSpawn,
-  type DockerExecOptions,
-} from "../utils/dockerUtils";
+import type { Host } from "../host/host";
+import { dockerSpawn } from "../utils/dockerUtils";
 
 export interface ISshAgentForwarder {
-  setupSshAgentForwarding(containerId: string): Promise<void>;
+  setupSshAgentForwarding(
+    containerId: string,
+    installPath: string,
+  ): Promise<void>;
   dispose(): void;
 }
 
@@ -30,6 +30,7 @@ export interface SshAgentForwarderOptions {
    * If not provided, reads from process.env.SSH_AUTH_SOCK.
    */
   hostSshAuthSock?: string;
+  host?: Host;
 }
 
 /** Path inside the container where the forwarded SSH agent socket will be placed */
@@ -56,53 +57,51 @@ process.stdin.resume();
 
 export class SshAgentForwarder implements ISshAgentForwarder {
   private readonly dockerPath: string;
+  private readonly host: Host;
   private readonly hostSshAuthSock: string | undefined;
   private relayProcess: ChildProcess | null = null;
 
   constructor(options?: SshAgentForwarderOptions) {
     this.dockerPath = options?.dockerPath ?? "docker";
+    this.host = options?.host!;
     this.hostSshAuthSock =
       options?.hostSshAuthSock ?? process.env.SSH_AUTH_SOCK;
   }
 
-  async setupSshAgentForwarding(containerId: string): Promise<void> {
+  async setupSshAgentForwarding(
+    containerId: string,
+    installPath: string,
+  ): Promise<void> {
     if (!this.hostSshAuthSock) {
       return;
     }
 
-    const execOptions: DockerExecOptions = { dockerPath: this.dockerPath };
+    await this.host.dockerExec(containerId, [
+      "sh",
+      "-c",
+      `echo 'export SSH_AUTH_SOCK="${CONTAINER_SSH_AUTH_SOCK}"' > /etc/profile.d/artizo-ssh.sh`,
+    ]);
 
-    await dockerExec(
-      containerId,
-      [
-        "sh",
-        "-c",
-        `echo 'export SSH_AUTH_SOCK="${CONTAINER_SSH_AUTH_SOCK}"' > /etc/profile.d/artizo-ssh.sh`,
-      ],
-      execOptions,
-    );
+    await this.host.dockerExec(containerId, [
+      "git",
+      "config",
+      "--global",
+      "core.sshCommand",
+      `SSH_AUTH_SOCK=${CONTAINER_SSH_AUTH_SOCK} ssh`,
+    ]);
 
-    await dockerExec(
-      containerId,
-      [
-        "git",
-        "config",
-        "--global",
-        "core.sshCommand",
-        `SSH_AUTH_SOCK=${CONTAINER_SSH_AUTH_SOCK} ssh`,
-      ],
-      execOptions,
-    );
-
-    // Start the socket relay connecting container Unix socket to host SSH agent
-    await this.startRelay(containerId);
+    // Start the socket relay connecting container Unix socket to host SSH agent.
+    // Use the server's bundled node by full path: a system `node` is almost
+    // never present in a container image (the relay daemon learned this the
+    // hard way), so bare `node` is not an option.
+    await this.startRelay(containerId, `${installPath}/node`);
   }
 
-  private startRelay(containerId: string): Promise<void> {
+  private startRelay(containerId: string, nodePath: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const child = dockerSpawn(
         this.dockerPath,
-        ["exec", "-i", containerId, "node", "-e", CONTAINER_RELAY_SCRIPT],
+        ["exec", "-i", containerId, nodePath, "-e", CONTAINER_RELAY_SCRIPT],
         { stdio: ["pipe", "pipe", "pipe"] },
       );
 

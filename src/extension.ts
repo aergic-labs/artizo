@@ -11,7 +11,7 @@
 import * as vscode from "vscode";
 import { getLogger } from "./utils/logger";
 import { BRAND } from "./utils/constants";
-import { configureDockerPath } from "./docker/execPolicy";
+import { Host } from "./host/host";
 import {
   initializeLogger,
   validatePlatformRuntime,
@@ -23,23 +23,137 @@ import {
   autoDetectDevcontainer,
 } from "./host/services";
 import { registerCoreCommands, type CommandContext } from "./host/commands";
-import type { LogOutputTerminal } from "./workflows/logOutputTerminal";
+import { bootstrapRemoteSideLoad } from "./remote/sideload";
 
-/** Called when the extension is activated. */
+import type { LogOutputTerminal } from "./workflows/logOutputTerminal";
+import {
+  initTier,
+  isDevContainerTier,
+  isAttachedContainerWindow,
+  ExecutionTier,
+  canDriveDocker,
+  type DetectedTier,
+} from "./host/state";
+
+/**
+ * Called when the extension is activated.
+ *
+ * Activation guard: under extensionKind ["workspace","ui"], both sides may
+ * activate. The workspace-side extension inside a devcontainer can't drive
+ * Docker (it's trapped in the container) and would loop trying to do host
+ * things - bail before any services are wired. UI-side handles devcontainer
+ * states from the parent host, which is where Docker lives.
+ */
 export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
-  // 1. Validate platform first — before any commands are registered, so a
+  // 0. Detect execution tier and cache it. Must happen before any code
+  //    queries isInDevContainer()/canDriveDocker()/getTier().
+  //    Logger isn't initialized yet; use console so the diagnostic survives.
+  const detected = initTier(context.extension.extensionKind);
+  console.log(
+    `[artizo] tier=${detected.tier} owner=${detected.owner} ` +
+      `remoteName=${detected.remoteName ?? "none"} ` +
+      `kind=${detected.extensionKind ?? "none"} ` +
+      `authority=${detected.remoteAuthority ?? "none"}`,
+  );
+
+  // Workspace-side inside a devcontainer: can't drive Docker, would loop.
+  if (
+    detected.extensionKind === vscode.ExtensionKind.Workspace &&
+    isDevContainerTier(detected.tier)
+  ) {
+    console.log(
+      "[artizo] skipping activation: workspace-side inside devcontainer",
+    );
+    return;
+  }
+
+  // Unsupported remotes (wsl/codespaces/tunnel): no-op on both sides.
+  if (detected.tier === ExecutionTier.UnknownRemote) {
+    console.log(
+      `[artizo] skipping activation: unsupported remote ${detected.remoteName}`,
+    );
+    return;
+  }
+
+  // Bootstrap branch: UI-side on the apex in an SSH-remote window. The
+  // vendor SSH extension didn't install us onto the remote, so we
+  // side-load ourselves there (tar stream via ssh + extensions.json
+  // mutation + reloadWindow). After reload, we activate workspace-side
+  // on the SSH host with `owner === "workspace"` and skip this branch.
+  // Must run before validatePlatformRuntime - we're about to reload into
+  // the right context, and platform validation would bail on the UI side.
+  // See plans/remaining-work.md (State 4 side-load).
+  if (detected.tier === ExecutionTier.RemoteSSH && detected.owner === "none") {
+    const status = vscode.window.createStatusBarItem(
+      vscode.StatusBarAlignment.Right,
+      0,
+    );
+    status.text = "$(loading~spin) Artizo: setting up on remote host...";
+    status.tooltip =
+      "Artizo is installing itself onto the SSH remote host. " +
+      "The window will reload when done.";
+    status.show();
+    context.subscriptions.push(status);
+
+    const progress = vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: "Artizo: setting up on remote host",
+        cancellable: false,
+      },
+      (p) =>
+        bootstrapRemoteSideLoad(context, detected, status, p).catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          try {
+            getLogger().error(
+              `Remote side-load failed: ${msg}`,
+              err instanceof Error ? err : new Error(msg),
+            );
+          } catch {
+            // Logger may not be initialized; console is the last resort.
+            console.error(`[artizo] remote side-load failed: ${msg}`);
+          }
+          // Also write to the diag log so we see the failure even when the
+          // logger isn't up yet.
+          try {
+            const fs = require("node:fs");
+            const os = require("node:os");
+            const path = require("node:path");
+            fs.appendFileSync(
+              path.join(os.tmpdir(), "artizo-sideload.log"),
+              `[${new Date().toISOString()}] CATCH in activate: ${msg}\n`,
+            );
+          } catch {
+            // Ignore
+          }
+          status.text = "$(error) Artizo: setup failed - see log";
+          status.tooltip = msg;
+          vscode.window.showErrorMessage(
+            "Artizo remote setup failed. Check the log for details.",
+          );
+          throw err;
+        }),
+    );
+    context.subscriptions.push({ dispose: () => void progress });
+    return;
+  }
+
+  // 1. Validate platform first - before any commands are registered, so a
   //    mismatch can bail cleanly without duplicate-command collisions.
   if (!(await validatePlatformRuntime(context))) {
     return;
   }
 
+  // 1b. Set context key for package.json when clauses (host vs managed).
+  // Deferred to activateInternal after reading productInfo.
+
   // 2. Init logger
   const { buildLogPty, buildLogTerminal } = initializeLogger(context);
 
   try {
-    await activateInternal(context, buildLogPty, buildLogTerminal);
+    await activateInternal(context, buildLogPty, buildLogTerminal, detected);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     const stack = err instanceof Error ? err.stack : undefined;
@@ -52,8 +166,9 @@ export async function activate(
     } catch {
       // Logger may not work either
     }
-    // Keep the terminal visible so the user can see the error
-    buildLogTerminal.show();
+    // Reveal the diagnostics channel (where the error was just logged) so
+    // the user can see it. The build terminal would be empty here.
+    getLogger().show();
     vscode.window.showErrorMessage(`Artizo failed to activate: ${message}`);
   }
 }
@@ -62,17 +177,69 @@ async function activateInternal(
   context: vscode.ExtensionContext,
   buildLogPty: LogOutputTerminal,
   buildLogTerminal: { show(preserveFocus?: boolean): void },
+  detected: DetectedTier,
 ): Promise<void> {
-  // 2. Read settings, configure Docker path
+  // 2. Read settings, read productInfo, create Host
   const settings = readSettings();
-  configureDockerPath(settings.dockerPath);
 
-  // Set initial context for menu when clauses
+  // 3. Read product.json for commit and platform info (used by ServerManager)
+  const productInfo = await loadProductInfo();
+
+  const host = Host.create({
+    dockerPath: settings.dockerPath,
+  });
+
+  // Set context keys
+  // artizo.hostContext: true when this host can drive Docker (states 1/3,
+  // and UI-side in states 2/4). Drives command visibility in package.json.
+  vscode.commands.executeCommand(
+    "setContext",
+    "artizo.hostContext",
+    canDriveDocker(),
+  );
   vscode.commands.executeCommand(
     "setContext",
     "artizo.hasDevcontainerConfig",
     false,
   );
+
+  // artizo.inAttachedContainer: true when inside an attached-container
+  // window (not our managed container). Gates "Return to Host" visibility -
+  // attached containers have no host path to return to.
+  vscode.commands.executeCommand(
+    "setContext",
+    "artizo.inAttachedContainer",
+    isAttachedContainerWindow(),
+  );
+
+  // artizo.onRemote: true when this extension host is the workspace side
+  // on an SSH-class remote (post-side-load, or a future auto-install).
+  // Drives activity-bar visibility in package.json so the sidebar only
+  // appears on the remote where it belongs, not on the UI-side Windows
+  // host during the pre-reload bootstrap window.
+  const onRemote =
+    detected.extensionKind === vscode.ExtensionKind.Workspace &&
+    (detected.tier === ExecutionTier.RemoteSSH ||
+      detected.tier === ExecutionTier.RemoteSSHDevContainer);
+  vscode.commands.executeCommand("setContext", "artizo.onRemote", onRemote);
+
+  // State 4 housekeeping: when we're workspace-side on an SSH host, sweep
+  // stale relay daemons left over from a crashed extension host. The relay
+  // is detached (outlives us), so a crash leaves orphaned `artizo-relay-*.pid`
+  // files + processes. Safe no-op if none exist.
+  if (
+    detected.extensionKind === vscode.ExtensionKind.Workspace &&
+    detected.tier === ExecutionTier.RemoteSSH
+  ) {
+    try {
+      const { sweepStaleRelays } = await import("./remote/containerProxy.js");
+      sweepStaleRelays();
+    } catch (err) {
+      getLogger().info(
+        `[artizo] stale relay sweep failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   // 4. Ensure resolvers available (may prompt restart)
   if (await ensureResolversAvailable()) {
@@ -82,16 +249,14 @@ async function activateInternal(
   // 5. Register authority resolver early (before any async work)
   const resolver = registerResolverEarly(context, settings);
 
-  // 6. Read product.json
-  const productInfo = await loadProductInfo();
-
-  // 7. Create services
+  // 6. Create services with Host
   const services = createServices(
     context,
     settings,
     resolver,
     productInfo,
     buildLogPty,
+    host,
   );
 
   // 8. Register commands
@@ -100,10 +265,10 @@ async function activateInternal(
     ui: services.ui,
     configManager: services.configManager,
     containerLifecycle: services.containerLifecycle,
-    orchestrator: services.orchestrator,
     buildLogTerminal,
     buildLogPty,
     dockerPath: settings.dockerPath,
+    host,
     sidebarProvider: services.sidebarProvider,
     extensionUri: context.extensionUri,
   };

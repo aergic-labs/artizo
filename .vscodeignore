@@ -17,6 +17,7 @@ tools/**
 
 # Build configuration
 tsconfig.json
+tsconfig.test.json
 vitest.config.ts
 esbuild.config.mjs
 
@@ -43,5 +44,6 @@ dist/**/*.map
 .gitmodules
 tmp/
 .knip.json
+.zed/
 AGENTS.md
 artizo-summary.md

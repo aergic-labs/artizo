@@ -8,8 +8,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("vscode", () => {
   class MockEventEmitter {
     private listeners: Array<(data: any) => void> = [];
+    // Expose hasListeners on _eventEmitter to match the real VS Code API
+    // shape that LogOutputTerminal.safeFire probes.
+    _eventEmitter = {
+      hasListeners: false as boolean,
+    };
     event = (listener: (data: any) => void) => {
       this.listeners.push(listener);
+      this._eventEmitter.hasListeners = true;
       return { dispose: () => {} };
     };
     fire(data: any) {
@@ -19,6 +25,7 @@ vi.mock("vscode", () => {
     }
     dispose() {
       this.listeners = [];
+      this._eventEmitter.hasListeners = false;
     }
   }
   return { EventEmitter: MockEventEmitter };
@@ -28,12 +35,10 @@ vi.mock("node:fs", () => ({
   existsSync: vi.fn().mockReturnValue(true),
   mkdirSync: vi.fn(),
   appendFileSync: vi.fn(),
+  unlinkSync: vi.fn(),
 }));
 
-import {
-  LogOutputTerminal,
-  LogLevel,
-} from "../../src/workflows/logOutputTerminal";
+import { LogOutputTerminal } from "../../src/workflows/logOutputTerminal";
 
 describe("LogOutputTerminal", () => {
   let terminal: LogOutputTerminal;
@@ -109,12 +114,14 @@ describe("LogOutputTerminal", () => {
   });
 
   describe("buffer before open", () => {
-    it("buffers writes and flushes on open", () => {
+    it("buffers writes when no listener attached and flushes on open", () => {
       const closed = new LogOutputTerminal();
       const listener = vi.fn();
-      closed.onDidWrite(listener);
+      // Write before any listener is attached - should buffer.
       closed.write("buffered");
       expect(listener).not.toHaveBeenCalled();
+      // Attach listener and open - buffered write flushes.
+      closed.onDidWrite(listener);
       closed.open();
       expect(listener).toHaveBeenCalledTimes(1);
       expect(listener.mock.calls[0][0]).toContain("buffered");
@@ -133,16 +140,6 @@ describe("LogOutputTerminal", () => {
     });
   });
 
-  describe("raw", () => {
-    it("writes without converting line endings", () => {
-      const listener = vi.fn();
-      terminal.onDidWrite(listener);
-      terminal.raw("binary\ndata");
-      expect(listener.mock.calls[0][0]).toContain("binary");
-      expect(listener.mock.calls[0][0]).toContain("data");
-    });
-  });
-
   describe("writeLine", () => {
     it("appends newline and delegates to write", () => {
       const listener = vi.fn();
@@ -152,97 +149,18 @@ describe("LogOutputTerminal", () => {
     });
   });
 
-  describe("done", () => {
-    it("writes the press-any-key message", () => {
-      const listener = vi.fn();
-      terminal.onDidWrite(listener);
-      terminal.done();
-      expect(listener.mock.calls[0][0]).toContain("Press any key");
-    });
-  });
-
-  describe("end", () => {
-    it("fires the close emitter with exit code", () => {
-      const listener = vi.fn();
-      terminal.onDidClose(listener);
-      terminal.end(42);
-      expect(listener).toHaveBeenCalledWith(42);
+  describe("getRecentText", () => {
+    it("returns recent output with ANSI stripped", () => {
+      terminal.write("\x1b[31mred\x1b[0m text\n");
+      const recent = terminal.getRecentText();
+      expect(recent).toContain("red text");
+      expect(recent).not.toContain("\x1b[");
     });
   });
 
   describe("dispose", () => {
     it("does not throw when called", () => {
       expect(() => terminal.dispose()).not.toThrow();
-    });
-  });
-
-  describe("log level filtering", () => {
-    it("info writes when log level is Info", () => {
-      const listener = vi.fn();
-      terminal.onDidWrite(listener);
-      terminal.setLogLevel(LogLevel.Info);
-      terminal.info("message");
-      expect(listener).toHaveBeenCalledTimes(1);
-      expect(listener.mock.calls[0][0]).toContain("[INFO]");
-      expect(listener.mock.calls[0][0]).toContain("message");
-    });
-
-    it("debug does NOT write when log level is Info", () => {
-      const listener = vi.fn();
-      terminal.onDidWrite(listener);
-      terminal.setLogLevel(LogLevel.Info);
-      terminal.debug("message");
-      expect(listener).not.toHaveBeenCalled();
-    });
-
-    it("debug writes when log level is Debug", () => {
-      const listener = vi.fn();
-      terminal.onDidWrite(listener);
-      terminal.setLogLevel(LogLevel.Debug);
-      terminal.debug("message");
-      expect(listener).toHaveBeenCalledTimes(1);
-      expect(listener.mock.calls[0][0]).toContain("[DEBUG]");
-      expect(listener.mock.calls[0][0]).toContain("message");
-    });
-
-    it("trace writes when log level is Trace", () => {
-      const listener = vi.fn();
-      terminal.onDidWrite(listener);
-      terminal.setLogLevel(LogLevel.Trace);
-      terminal.trace("message");
-      expect(listener).toHaveBeenCalledTimes(1);
-      expect(listener.mock.calls[0][0]).toContain("[TRACE]");
-      expect(listener.mock.calls[0][0]).toContain("message");
-    });
-
-    it("trace does NOT write when log level is Debug", () => {
-      const listener = vi.fn();
-      terminal.onDidWrite(listener);
-      terminal.setLogLevel(LogLevel.Debug);
-      terminal.trace("message");
-      expect(listener).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("error and warn", () => {
-    it("error always writes regardless of log level", () => {
-      const listener = vi.fn();
-      terminal.onDidWrite(listener);
-      terminal.setLogLevel(LogLevel.Info);
-      terminal.error("fail");
-      expect(listener).toHaveBeenCalledTimes(1);
-      expect(listener.mock.calls[0][0]).toContain("[ERROR]");
-      expect(listener.mock.calls[0][0]).toContain("fail");
-    });
-
-    it("warn writes at Info level", () => {
-      const listener = vi.fn();
-      terminal.onDidWrite(listener);
-      terminal.setLogLevel(LogLevel.Info);
-      terminal.warn("caution");
-      expect(listener).toHaveBeenCalledTimes(1);
-      expect(listener.mock.calls[0][0]).toContain("[WARN]");
-      expect(listener.mock.calls[0][0]).toContain("caution");
     });
   });
 });

@@ -3,18 +3,56 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import * as vscode from "vscode";
+
+vi.mock("../../src/host/state", () => ({
+  isInDevContainerWindow: vi.fn(),
+  isAttachedContainerWindow: vi.fn(),
+  getTier: vi.fn(),
+  ExecutionTier: {
+    LocalHost: "LocalHost",
+    LocalDevContainer: "LocalDevContainer",
+    RemoteSSH: "RemoteSSH",
+    RemoteSSHDevContainer: "RemoteSSHDevContainer",
+    UnknownRemote: "UnknownRemote",
+  },
+}));
+
+import {
+  isInDevContainerWindow,
+  isAttachedContainerWindow,
+  getTier,
+  ExecutionTier,
+} from "../../src/host/state";
 import { computeCommands } from "../../src/sidebar/commandRegistry";
 
-describe("computeCommands", () => {
-  describe("local, workspace, has config", () => {
-    const commands = computeCommands(undefined, true, true);
+function setEnvKind(kind: "host" | "managed" | "foreign"): void {
+  // host and foreign both mean "not in devcontainer" under the new model
+  vi.mocked(isInDevContainerWindow).mockReturnValue(kind === "managed");
+  vi.mocked(isAttachedContainerWindow).mockReturnValue(false);
+  vi.mocked(getTier).mockReturnValue({
+    tier:
+      kind === "managed"
+        ? ExecutionTier.LocalDevContainer
+        : ExecutionTier.LocalHost,
+    owner: "workspace",
+    remoteName: undefined,
+    remoteAuthority: undefined,
+    extensionKind: undefined,
+    parentRemote: undefined,
+  });
+}
 
-    it("includes reopen, rebuild, open config commands", () => {
+describe("computeCommands", () => {
+  describe("host, workspace, has config", () => {
+    setEnvKind("host");
+    const commands = computeCommands(true, true);
+
+    it("includes reopen and rebuild commands", () => {
       const ids = commands.map((c) => c.id);
       expect(ids).toContain("artizo.reopenInContainer");
-      expect(ids).toContain("artizo.configureDevContainer");
-      expect(ids).toContain("artizo.openDevContainerFile");
+      expect(ids).toContain("artizo.openFolderInContainer");
     });
 
     it("groups rebuild variants into a submenu", () => {
@@ -27,11 +65,13 @@ describe("computeCommands", () => {
       expect(childIds).toContain("artizo.rebuildAndReopenInContainer");
     });
 
-    it("does not include remote-only commands", () => {
+    it("does not include managed-only or removed commands", () => {
       const ids = commands.map((c) => c.id);
-      expect(ids).not.toContain("artizo.reopenLocally");
-      expect(ids).not.toContain("workbench.action.remote.close");
+      expect(ids).not.toContain("artizo.reopenInHost");
+      expect(ids).not.toContain("artizo.closeRemoteConnection");
       expect(ids).not.toContain("artizo.addConfiguration");
+      expect(ids).not.toContain("artizo.configureDevContainer");
+      expect(ids).not.toContain("artizo.openDevContainerFile");
     });
 
     it("always includes Show Log", () => {
@@ -40,84 +80,92 @@ describe("computeCommands", () => {
     });
   });
 
-  describe("local, no workspace", () => {
-    const commands = computeCommands(undefined, false, false);
+  describe("host, no workspace", () => {
+    setEnvKind("host");
+    const commands = computeCommands(false, false);
 
-    it("includes open folder and attach commands", () => {
+    it("includes open folder command", () => {
       const ids = commands.map((c) => c.id);
       expect(ids).toContain("artizo.openFolderInContainer");
-      expect(ids).toContain("artizo.attachToRunningContainer");
-      expect(ids).toContain("artizo.cloneInVolume");
-    });
-
-    it("does not include workspace-required commands", () => {
-      const ids = commands.map((c) => c.id);
-      expect(ids).not.toContain("artizo.reopenInContainer");
-      expect(ids).not.toContain("artizo.configureDevContainer");
     });
   });
 
-  describe("local, workspace, no config", () => {
-    const commands = computeCommands(undefined, true, false);
-
-    it("includes add configuration command", () => {
-      const ids = commands.map((c) => c.id);
-      expect(ids).toContain("artizo.addConfiguration");
-    });
+  describe("host, workspace, no config", () => {
+    setEnvKind("host");
+    const commands = computeCommands(true, false);
 
     it("does not include config-required commands", () => {
       const ids = commands.map((c) => c.id);
       expect(ids).not.toContain("artizo.reopenInContainer");
-      expect(ids).not.toContain("artizo.openDevContainerFile");
+    });
+
+    it("labels open-folder as 'different' when workspace is open", () => {
+      const cmd = commands.find((c) => c.id === "artizo.openFolderInContainer");
+      expect(cmd).toBeDefined();
+      expect(cmd!.label).toBe("Open Different Folder in Container");
     });
   });
 
-  describe("artizo-container remote", () => {
-    const commands = computeCommands("artizo-container", true, true);
+  describe("managed (artizo-container)", () => {
+    setEnvKind("managed");
+    const commands = computeCommands(true, true);
 
-    it("includes remote-only commands", () => {
+    it("includes managed-only commands", () => {
       const ids = commands.map((c) => c.id);
-      expect(ids).toContain("artizo.reopenLocally");
-      expect(ids).toContain("workbench.action.remote.close");
+      expect(ids).toContain("artizo.reopenInHost");
     });
 
-    it("does not include local-only commands", () => {
+    it("does not include host-only commands", () => {
       const ids = commands.map((c) => c.id);
       expect(ids).not.toContain("artizo.reopenInContainer");
       expect(ids).not.toContain("artizo.cloneInVolume");
-      expect(ids).not.toContain("artizo.attachToRunningContainer");
+      expect(ids).not.toContain("artizo.openFolderInContainer");
     });
   });
 
-  describe("attached-container remote", () => {
-    const commands = computeCommands("attached-container", true, true);
+  describe("managed (attached-container)", () => {
+    setEnvKind("managed");
+    vi.mocked(isAttachedContainerWindow).mockReturnValue(true);
+    const commands = computeCommands(true, true);
 
-    it("includes remote-only commands", () => {
+    it("does not include Return to Host (no host path for attached)", () => {
       const ids = commands.map((c) => c.id);
-      expect(ids).toContain("artizo.reopenLocally");
-      expect(ids).toContain("workbench.action.remote.close");
+      expect(ids).not.toContain("artizo.reopenInHost");
     });
   });
 
-  describe("non-artizo remote (ssh-remote)", () => {
-    const commands = computeCommands("ssh-remote+hostname", true, true);
+  describe("foreign (ssh-remote)", () => {
+    setEnvKind("foreign");
+    vi.mocked(getTier).mockReturnValue({
+      tier: ExecutionTier.RemoteSSH,
+      owner: "workspace",
+      remoteName: "ssh-remote",
+      remoteAuthority: "ssh-remote+test",
+      extensionKind: undefined,
+      parentRemote: undefined,
+    });
+    const commands = computeCommands(true, true);
 
-    it("does not include artizo remote commands", () => {
+    it("includes Return to Host (SSH host case)", () => {
       const ids = commands.map((c) => c.id);
-      expect(ids).not.toContain("artizo.reopenLocally");
-      expect(ids).not.toContain("workbench.action.remote.close");
+      expect(ids).toContain("artizo.reopenInHost");
     });
 
-    it("does not include local-only commands", () => {
+    it("does not include closeRemoteConnection (removed)", () => {
       const ids = commands.map((c) => c.id);
-      expect(ids).not.toContain("artizo.reopenInContainer");
-      expect(ids).not.toContain("artizo.cloneInVolume");
+      expect(ids).not.toContain("artizo.closeRemoteConnection");
+    });
+
+    it("includes host commands (foreign acts like host)", () => {
+      const ids = commands.map((c) => c.id);
+      expect(ids).toContain("artizo.reopenInContainer");
     });
   });
 
   describe("Rebuild submenu does not duplicate rebuild entries", () => {
     it("does not list rebuild variants alongside the submenu", () => {
-      const commands = computeCommands(undefined, true, true);
+      setEnvKind("host");
+      const commands = computeCommands(true, true);
       const ids = commands.map((c) => c.id);
       // rebuildContainerNoCache should only appear inside children, not at top level
       expect(ids).not.toContain("artizo.rebuildContainerNoCache");

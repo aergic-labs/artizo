@@ -51,6 +51,42 @@ export interface ContainerInfo {
   };
 }
 
+/** Image-level architecture fields from `docker inspect <image>`. */
+export interface ImagePlatformInfo {
+  architecture: string;
+  os: string;
+  variant?: string;
+}
+
+/**
+ * Inspect an image by ID or name. Returns architecture fields that
+ * container inspect does not provide. These are the resolved platform
+ * of the built image - accounts for Dockerfile FROM, --platform, and
+ * daemon defaults.
+ */
+export async function dockerInspectImage(
+  imageRef: string,
+  options?: { dockerPath?: string },
+): Promise<ImagePlatformInfo> {
+  const docker = options?.dockerPath ?? "docker";
+  const result = await execFilePromise(docker, ["inspect", imageRef]);
+
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `docker inspect (image) failed (exit ${result.exitCode}): ${result.stderr}`,
+    );
+  }
+
+  const parsed = JSON.parse(result.stdout);
+  const raw = Array.isArray(parsed) ? parsed[0] : parsed;
+
+  return {
+    architecture: raw.Architecture ?? "",
+    os: raw.Os ?? "",
+    variant: raw.Variant || undefined,
+  };
+}
+
 export async function dockerExec(
   containerId: string,
   command: string[],

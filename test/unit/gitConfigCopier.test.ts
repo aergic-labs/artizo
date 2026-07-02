@@ -14,16 +14,26 @@ vi.mock("../../src/utils/dockerUtils", () => ({
 }));
 
 import { readFile } from "node:fs/promises";
-import { dockerExec } from "../../src/utils/dockerUtils";
 import { GitConfigCopier } from "../../src/credentials/gitConfigCopier";
 
 const mockReadFile = vi.mocked(readFile);
-const mockDockerExec = vi.mocked(dockerExec);
+
+function createMockHost() {
+  return {
+    dockerExec: vi
+      .fn()
+      .mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
+    dockerPath: "docker",
+  };
+}
 
 describe("GitConfigCopier", () => {
+  let mockHost: ReturnType<typeof createMockHost>;
+
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDockerExec.mockResolvedValue({
+    mockHost = createMockHost();
+    mockHost.dockerExec.mockResolvedValue({
       exitCode: 0,
       stdout: "/home/devuser\n",
       stderr: "",
@@ -35,17 +45,21 @@ describe("GitConfigCopier", () => {
 
   describe("copyGitConfig", () => {
     it("skips when enabled is false", async () => {
-      const copier = new GitConfigCopier({ enabled: false });
+      const copier = new GitConfigCopier({
+        enabled: false,
+        host: mockHost as any,
+      });
 
       await copier.copyGitConfig("test-container");
 
       expect(mockReadFile).not.toHaveBeenCalled();
-      expect(mockDockerExec).not.toHaveBeenCalled();
+      expect(mockHost.dockerExec).not.toHaveBeenCalled();
     });
 
     it("reads the host gitconfig file", async () => {
       const copier = new GitConfigCopier({
         hostGitConfigPath: "/home/user/.gitconfig",
+        host: mockHost as any,
       });
 
       await copier.copyGitConfig("test-container");
@@ -61,13 +75,14 @@ describe("GitConfigCopier", () => {
 
       const copier = new GitConfigCopier({
         hostGitConfigPath: "/nonexistent/.gitconfig",
+        host: mockHost as any,
       });
 
       // Should not throw
       await expect(
         copier.copyGitConfig("test-container"),
       ).resolves.toBeUndefined();
-      expect(mockDockerExec).not.toHaveBeenCalled();
+      expect(mockHost.dockerExec).not.toHaveBeenCalled();
     });
 
     it("skips when host gitconfig is empty", async () => {
@@ -75,36 +90,37 @@ describe("GitConfigCopier", () => {
 
       const copier = new GitConfigCopier({
         hostGitConfigPath: "/home/user/.gitconfig",
+        host: mockHost as any,
       });
 
       await copier.copyGitConfig("test-container");
 
       // Should only read the file, not exec into container
-      expect(mockDockerExec).not.toHaveBeenCalled();
+      expect(mockHost.dockerExec).not.toHaveBeenCalled();
     });
 
     it("determines the remote user home directory", async () => {
       const copier = new GitConfigCopier({
         hostGitConfigPath: "/home/user/.gitconfig",
+        host: mockHost as any,
       });
 
       await copier.copyGitConfig("test-container");
 
       // First docker exec call should be to get $HOME
-      expect(mockDockerExec).toHaveBeenCalledWith(
-        "test-container",
-        ["printenv", "HOME"],
-        expect.objectContaining({ dockerPath: "docker" }),
-      );
+      expect(mockHost.dockerExec).toHaveBeenCalledWith("test-container", [
+        "printenv",
+        "HOME",
+      ]);
     });
 
     it("writes gitconfig to the remote user home directory", async () => {
-      mockDockerExec.mockResolvedValueOnce({
+      mockHost.dockerExec.mockResolvedValueOnce({
         exitCode: 0,
         stdout: "/home/devuser\n",
         stderr: "",
       });
-      mockDockerExec.mockResolvedValueOnce({
+      mockHost.dockerExec.mockResolvedValueOnce({
         exitCode: 0,
         stdout: "",
         stderr: "",
@@ -112,22 +128,23 @@ describe("GitConfigCopier", () => {
 
       const copier = new GitConfigCopier({
         hostGitConfigPath: "/home/user/.gitconfig",
+        host: mockHost as any,
       });
 
       await copier.copyGitConfig("test-container");
 
-      const writeCall = mockDockerExec.mock.calls[1];
+      const writeCall = mockHost.dockerExec.mock.calls[1];
       const command = writeCall[1][2]; // sh -c argument
       expect(command).toContain("'/home/devuser'/.gitconfig");
     });
 
     it("falls back to /root when HOME is empty", async () => {
-      mockDockerExec.mockResolvedValueOnce({
+      mockHost.dockerExec.mockResolvedValueOnce({
         exitCode: 0,
         stdout: "\n",
         stderr: "",
       });
-      mockDockerExec.mockResolvedValueOnce({
+      mockHost.dockerExec.mockResolvedValueOnce({
         exitCode: 0,
         stdout: "",
         stderr: "",
@@ -135,27 +152,26 @@ describe("GitConfigCopier", () => {
 
       const copier = new GitConfigCopier({
         hostGitConfigPath: "/home/user/.gitconfig",
+        host: mockHost as any,
       });
 
       await copier.copyGitConfig("test-container");
 
-      const writeCall = mockDockerExec.mock.calls[1];
+      const writeCall = mockHost.dockerExec.mock.calls[1];
       const command = writeCall[1][2];
       expect(command).toContain("'/root'/.gitconfig");
     });
 
-    it("uses custom docker path", async () => {
+    it("routes dockerExec through the host", async () => {
       const copier = new GitConfigCopier({
-        dockerPath: "/custom/docker",
         hostGitConfigPath: "/home/user/.gitconfig",
+        host: mockHost as any,
       });
 
       await copier.copyGitConfig("test-container");
 
-      for (const call of mockDockerExec.mock.calls) {
-        expect(call[2]).toEqual(
-          expect.objectContaining({ dockerPath: "/custom/docker" }),
-        );
+      for (const call of mockHost.dockerExec.mock.calls) {
+        expect(call[0]).toBe("test-container");
       }
     });
 
@@ -163,12 +179,12 @@ describe("GitConfigCopier", () => {
       mockReadFile.mockResolvedValue(
         "[alias]\n\tco = checkout\n\tst = status\n\tl = log --oneline --graph\n",
       );
-      mockDockerExec.mockResolvedValueOnce({
+      mockHost.dockerExec.mockResolvedValueOnce({
         exitCode: 0,
         stdout: "/home/user\n",
         stderr: "",
       });
-      mockDockerExec.mockResolvedValueOnce({
+      mockHost.dockerExec.mockResolvedValueOnce({
         exitCode: 0,
         stdout: "",
         stderr: "",
@@ -176,24 +192,26 @@ describe("GitConfigCopier", () => {
 
       const copier = new GitConfigCopier({
         hostGitConfigPath: "/home/user/.gitconfig",
+        host: mockHost as any,
       });
 
       await copier.copyGitConfig("test-container");
 
       // Should have written the content
-      expect(mockDockerExec).toHaveBeenCalledTimes(2);
+      expect(mockHost.dockerExec).toHaveBeenCalledTimes(2);
     });
 
     it("is enabled by default", async () => {
       const copier = new GitConfigCopier({
         hostGitConfigPath: "/home/user/.gitconfig",
+        host: mockHost as any,
       });
 
       await copier.copyGitConfig("test-container");
 
       // Should have read the file and executed docker commands
       expect(mockReadFile).toHaveBeenCalled();
-      expect(mockDockerExec).toHaveBeenCalled();
+      expect(mockHost.dockerExec).toHaveBeenCalled();
     });
   });
 });

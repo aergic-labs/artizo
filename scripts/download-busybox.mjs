@@ -27,7 +27,7 @@ const ALPINE_TO_RUNTIME = {
   aarch64: "arm64",
 };
 
-// ── CLI args ────────────────────────────────────────────────────────
+// CLI args
 
 const args = process.argv.slice(2);
 const alpineVer = parseArg("--alpine") ?? "3.23";
@@ -44,7 +44,7 @@ function parseArg(flag) {
   return undefined;
 }
 
-// ── HTTP helper ─────────────────────────────────────────────────────
+// HTTP helper
 
 function download(url) {
   return new Promise((resolve, reject) => {
@@ -66,7 +66,7 @@ function download(url) {
   });
 }
 
-// ── APK / tar.gz extraction ─────────────────────────────────────────
+// APK / tar.gz extraction
 
 /**
  * Extract a single named file from a gzipped tar (APK format).
@@ -119,7 +119,7 @@ function parseBusyboxVersion(indexTarGz) {
   throw new Error("busybox-static not found in APKINDEX");
 }
 
-// ── Main ────────────────────────────────────────────────────────────
+// Main
 
 async function main() {
   await mkdir(DEST_DIR, { recursive: true });
@@ -128,7 +128,7 @@ async function main() {
 
   for (const alpineArch of archList) {
     const runtimeArch = ALPINE_TO_RUNTIME[alpineArch] ?? alpineArch;
-    console.log(`── ${alpineArch} → bb-${runtimeArch}`);
+    console.log(`${alpineArch} -> bb-${runtimeArch}`);
 
     if (alpineArch === "x86_64") {
       await resolveLocal(runtimeArch);

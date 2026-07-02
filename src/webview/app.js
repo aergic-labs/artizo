@@ -1,7 +1,6 @@
 const vscode = acquireVsCodeApi();
 
-// ── State ────────────────────────────────────────────────────────
-
+// State
 const state = {
   toggles: null,
   configPath: null,
@@ -9,11 +8,10 @@ const state = {
   containers: [],
   volumes: [],
   commands: [],
-  isRemote: false,
+  isManaged: false,
 };
 
-// ── Helpers ───────────────────────────────────────────────────────
-
+// Helpers
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 const el = (tag, className, attrs) => {
@@ -27,8 +25,7 @@ function post(msg) {
   vscode.postMessage(msg);
 }
 
-// ── Constants ─────────────────────────────────────────────────────
-
+// Constants
 const COMMON_IMAGES = [
   { label: "Ubuntu", image: "mcr.microsoft.com/devcontainers/base:ubuntu" },
   { label: "Python 3", image: "mcr.microsoft.com/devcontainers/python:3" },
@@ -68,8 +65,7 @@ const TOGGLES = [
   },
 ];
 
-// ── Accordion ────────────────────────────────────────────────────
-
+// Accordion
 function expandAccordionFromHost(section) {
   const header = document.querySelector(
     `.accordion-header[data-section="${section}"]`,
@@ -79,8 +75,7 @@ function expandAccordionFromHost(section) {
   }
 }
 
-// ── Section visibility ──────────────────────────────────────────
-
+// Section visibility
 function showConfigSection(hasConfig) {
   const config = document.getElementById("config-section");
   const wizard = document.getElementById("empty-config");
@@ -100,8 +95,32 @@ function showNoWorkspace() {
     "Open a workspace folder to configure a dev container.";
 }
 
-// ── Rendering ────────────────────────────────────────────────────
+/**
+ * Inside a managed devcontainer window. Hide the config editor, the
+ * "add devcontainer.json" wizard, and the Containers/Volumes accordions -
+ * none of these make sense when you're already running inside a
+ * container (you can't reopen-in-container, stop the container you're
+ * in, or attach to another one from here). The Commands section is
+ * kept: it correctly trims to "Reopen in Host" / "Close Remote Connection"
+ * / "Show Log" / "Remote Menu" when managed.
+ */
+function showManaged() {
+  document.getElementById("config-section").classList.add("hidden");
+  document.getElementById("empty-config").classList.add("hidden");
+  // The Containers and Volumes sections don't have ids; target them via
+  // their accordion-header data-section attributes and hide the parent
+  // .section.
+  document
+    .querySelectorAll(
+      '.accordion-header[data-section="containers"], .accordion-header[data-section="volumes"]',
+    )
+    .forEach((header) => {
+      const section = header.closest(".section");
+      if (section) section.classList.add("hidden");
+    });
+}
 
+// Rendering
 function renderWizardImages() {
   const list = document.getElementById("wizard-images");
   if (!list) return;
@@ -151,10 +170,6 @@ function renderToggles(toggles) {
 
     list.appendChild(wrapper);
   });
-
-  const homeMount = document.querySelector(
-    '[data-action="toggleOption"][data-feature="homeMount"]',
-  );
 }
 
 function renderPorts(ports) {
@@ -286,7 +301,7 @@ function renderContainers(containers) {
       connBtn.dataset.action = "containerAction";
       connBtn.dataset.containerAction = c.localFolder
         ? "connectCurrentWindow"
-        : "connectCurrentWindow";
+        : "connectNewWindow";
       connBtn.dataset.containerId = c.id;
       connBtn.dataset.containerName = c.name;
       actions.appendChild(connBtn);
@@ -412,9 +427,9 @@ function renderCommands(cmdList) {
 function updateStatusBar() {
   const el = document.getElementById("status-bar");
   if (!el) return;
-  if (state.isRemote) {
-    el.textContent = "Connected to container";
-    el.className = "status-remote";
+  if (state.isManaged) {
+    el.textContent = "Connected to dev container";
+    el.className = "status-managed";
   } else {
     el.textContent = "";
     el.className = "";
@@ -425,13 +440,24 @@ function esc(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-// ── Event delegation ──────────────────────────────────────────────
-
+// Event delegation
 // Top-level accordion toggles (Containers, Volumes, Config, Wizard)
 document.querySelectorAll(".accordion-header").forEach((header) => {
   header.addEventListener("click", (e) => {
     if (e.target.closest(".refresh-btn")) return;
+    const wasOpen = header.classList.contains("open");
     header.classList.toggle("open");
+    if (!wasOpen) {
+      const section = header.dataset.section;
+      if (section === "containers" || section === "volumes") {
+        post({ type: "refreshSection", section });
+      }
+      // Open devcontainer.json in the editor when the config accordion
+      // expands, if it's not already the active tab.
+      if (section === "config") {
+        post({ type: "openConfigFile" });
+      }
+    }
   });
 });
 
@@ -467,8 +493,7 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// ── Click handlers ────────────────────────────────────────────────
-
+// Click handlers
 const handlers = {
   toggleAccordion(target) {
     const row = target;
@@ -673,7 +698,7 @@ function gateAiContent(available) {
       )
       .forEach((b) => (b.style.display = "none"));
 
-    // Rename manual tabs — "Manually" is redundant when AI is gone
+    // Rename manual tabs - "Manually" is redundant when AI is gone
     document
       .querySelectorAll(
         ".tab-btn[data-tab='manual'], .tab-btn[data-tab='config-manual']",
@@ -692,8 +717,7 @@ document.getElementById("extension-filter")?.addEventListener("input", () => {
   }
 });
 
-// ── Host message dispatch ─────────────────────────────────────────
-
+// Host message dispatch
 const messageHandlers = {
   configLoaded(msg) {
     state.toggles = msg.toggles;
@@ -741,12 +765,12 @@ const messageHandlers = {
 
     if (msg.noWorkspace) {
       showNoWorkspace();
-    } else if (msg.remote) {
-      state.isRemote = true;
+    } else if (msg.managed) {
+      state.isManaged = true;
       updateStatusBar();
-      showConfigSection(false);
+      showManaged();
     } else {
-      state.isRemote = false;
+      state.isManaged = false;
       showConfigSection(false);
       renderWizardImages();
       document.getElementById("wizard-image-input")?.focus();
@@ -791,6 +815,7 @@ const messageHandlers = {
     const btn = document.getElementById(btnId);
     const statusEl = document.getElementById(statusId);
     if (!btn) return;
+    const idleLabel = target === "config" ? "Update with AI" : "Create with AI";
     switch (msg.status) {
       case "generating":
         btn.disabled = true;
@@ -804,20 +829,20 @@ const messageHandlers = {
         break;
       case "submitted":
         btn.disabled = false;
-        btn.textContent = "Generate with AI";
+        btn.textContent = idleLabel;
         if (statusEl)
           statusEl.textContent =
-            msg.message || "Sent to the AI chat — continue there.";
+            msg.message || "Sent to the AI chat - continue there.";
         break;
       case "done":
       case "timeout":
         btn.disabled = false;
-        btn.textContent = "Generate with AI";
+        btn.textContent = idleLabel;
         if (statusEl) statusEl.textContent = msg.message || "";
         break;
       case "error":
         btn.disabled = false;
-        btn.textContent = "Generate with AI";
+        btn.textContent = idleLabel;
         if (statusEl)
           statusEl.textContent = msg.message || "Something went wrong.";
         break;
@@ -831,15 +856,13 @@ window.addEventListener("message", (event) => {
   if (handler) handler(msg);
 });
 
-// Open config file on any deliberate action inside the config manual content
-let _configFileOpened = false;
-const configManual = document.getElementById("config-manual-content");
-if (configManual) {
-  configManual.addEventListener("click", () => {
-    if (!_configFileOpened) {
-      _configFileOpened = true;
-      post({ type: "openConfigFile" });
-    }
+// Auto-open devcontainer.json in the editor when the user enters the
+// config widget area, if the file exists and isn't already the active
+// editor tab. The host-side handler does the active-tab check.
+const configSection = document.getElementById("config-section");
+if (configSection) {
+  configSection.addEventListener("mouseenter", () => {
+    post({ type: "openConfigFile" });
   });
 }
 

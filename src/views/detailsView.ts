@@ -12,9 +12,7 @@
 import * as vscode from "vscode";
 import type { ContainerInfo } from "../utils/dockerUtils";
 
-/**
- * A detail entry shown in the details tree.
- */
+/** A detail entry shown in the details tree. */
 export interface DetailEntry {
   label: string;
   value?: string;
@@ -24,9 +22,7 @@ export interface DetailEntry {
 
 type DetailsTreeItem = DetailCategoryItem | DetailValueItem;
 
-/**
- * Tree item for a category (e.g., "Mounts", "Ports").
- */
+/** Tree item for a category (e.g., "Mounts", "Ports"). */
 export class DetailCategoryItem extends vscode.TreeItem {
   constructor(public readonly entry: DetailEntry) {
     super(
@@ -45,9 +41,7 @@ export class DetailCategoryItem extends vscode.TreeItem {
   }
 }
 
-/**
- * Tree item for a single detail value (leaf node).
- */
+/** Tree item for a single detail value (leaf node). */
 export class DetailValueItem extends vscode.TreeItem {
   constructor(public readonly entry: DetailEntry) {
     super(entry.label, vscode.TreeItemCollapsibleState.None);
@@ -73,17 +67,13 @@ export class DetailsViewProvider implements vscode.TreeDataProvider<DetailsTreeI
 
   private containerInfo: ContainerInfo | null = null;
 
-  /**
-   * Update the view with new container info.
-   */
+  /** Update the view with new container info. */
   setContainerInfo(info: ContainerInfo | null): void {
     this.containerInfo = info;
     this._onDidChangeTreeData.fire();
   }
 
-  /**
-   * Refresh the tree view.
-   */
+  /** Refresh the tree view. */
   refresh(): void {
     this._onDidChangeTreeData.fire();
   }
@@ -183,9 +173,7 @@ export class DetailsViewProvider implements vscode.TreeDataProvider<DetailsTreeI
     );
   }
 
-  /**
-   * Register the details view.
-   */
+  /** Register the details view. */
   static register(context: vscode.ExtensionContext): DetailsViewProvider {
     const provider = new DetailsViewProvider();
 
@@ -204,9 +192,7 @@ export class DetailsViewProvider implements vscode.TreeDataProvider<DetailsTreeI
   }
 }
 
-/**
- * Build port detail entries from Docker network settings.
- */
+/** Build port detail entries from Docker network settings. */
 function buildPortEntries(
   ports: Record<string, Array<{ hostIp: string; hostPort: string }> | null>,
 ): DetailEntry[] {

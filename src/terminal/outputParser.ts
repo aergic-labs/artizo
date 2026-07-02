@@ -17,9 +17,7 @@
  * for container metadata (containerId, remoteUser, remoteWorkspaceFolder).
  */
 
-/**
- * Structured event types from devcontainer CLI JSON output.
- */
+/** Structured event types from devcontainer CLI JSON output. */
 export type CliOutputEvent =
   | { type: "text"; level: number; timestamp: number; text: string }
   | { type: "raw"; level: number; timestamp: number; text: string }
@@ -110,5 +108,29 @@ export function formatEventForTerminal(event: CliOutputEvent): string {
     }
     case "progress":
       return `… ${event.text}\r\n`;
+  }
+}
+
+/**
+ * Format a CLI output event for an OutputChannel (plain text, no ANSI, LF
+ * line endings). Build content (`text`/`raw`) passes through verbatim so
+ * docker build output and Dockerfile errors read familiarly; concise
+ * markers are used only for the CLI's own lifecycle lines.
+ */
+export function formatEventForChannel(event: CliOutputEvent): string {
+  switch (event.type) {
+    case "text":
+      return `${event.text}\n`;
+    case "raw":
+      return `${event.text}\n`;
+    case "start":
+      return `▶ ${event.text}\n`;
+    case "stop": {
+      const elapsedMs = event.timestamp - event.startTimestamp;
+      const elapsedSec = (elapsedMs / 1000).toFixed(1);
+      return `✓ ${event.text} (${elapsedSec}s)\n`;
+    }
+    case "progress":
+      return `… ${event.text}\n`;
   }
 }

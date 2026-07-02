@@ -3,11 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-/**
- * Dotfiles manager for cloning and installing dotfiles in containers.
- */
+/** Dotfiles manager for cloning and installing dotfiles in containers. */
 
-import { dockerExec, type DockerExecOptions } from "../utils/dockerUtils";
+import type { Host } from "../host/host";
 
 export interface DotfilesConfig {
   /** Repository URL to clone. */
@@ -27,6 +25,7 @@ export interface DotfilesResult {
 
 export interface DotfilesManagerOptions {
   dockerPath?: string;
+  host?: Host;
 }
 
 export interface IDotfilesManager {
@@ -34,10 +33,10 @@ export interface IDotfilesManager {
 }
 
 export class DotfilesManager implements IDotfilesManager {
-  private readonly dockerPath: string;
+  private readonly host: Host;
 
   constructor(options?: DotfilesManagerOptions) {
-    this.dockerPath = options?.dockerPath ?? "docker";
+    this.host = options?.host!;
   }
 
   /** Clone dotfiles and run install command. Failures are non-blocking. */
@@ -50,13 +49,11 @@ export class DotfilesManager implements IDotfilesManager {
     }
 
     const targetPath = config.targetPath ?? "~/dotfiles";
-    const execOptions: DockerExecOptions = { dockerPath: this.dockerPath };
 
     const cloneResult = await this.cloneRepository(
       containerId,
       config.repository,
       targetPath,
-      execOptions,
     );
 
     if (!cloneResult.success) {
@@ -73,7 +70,6 @@ export class DotfilesManager implements IDotfilesManager {
         containerId,
         config.installCommand,
         targetPath,
-        execOptions,
       );
 
       return {
@@ -87,7 +83,6 @@ export class DotfilesManager implements IDotfilesManager {
     const defaultInstallResult = await this.tryDefaultInstallScripts(
       containerId,
       targetPath,
-      execOptions,
     );
 
     return {
@@ -101,16 +96,18 @@ export class DotfilesManager implements IDotfilesManager {
     containerId: string,
     repository: string,
     targetPath: string,
-    execOptions: DockerExecOptions,
   ): Promise<{ success: boolean; error?: string }> {
-    await dockerExec(containerId, ["rm", "-rf", targetPath], execOptions);
+    await this.host.dockerExec(containerId, ["rm", "-rf", targetPath]);
     // Ignore rm errors; directory may not exist.
 
-    const cloneResult = await dockerExec(
-      containerId,
-      ["git", "clone", "--depth", "1", repository, targetPath],
-      execOptions,
-    );
+    const cloneResult = await this.host.dockerExec(containerId, [
+      "git",
+      "clone",
+      "--depth",
+      "1",
+      repository,
+      targetPath,
+    ]);
 
     if (cloneResult.exitCode !== 0) {
       return {
@@ -126,11 +123,9 @@ export class DotfilesManager implements IDotfilesManager {
     containerId: string,
     installCommand: string,
     targetPath: string,
-    execOptions: DockerExecOptions,
   ): Promise<{ success: boolean; error?: string }> {
     const cmd = ["sh", "-c", installCommand];
-    const result = await dockerExec(containerId, cmd, {
-      ...execOptions,
+    const result = await this.host.dockerExec(containerId, cmd, {
       workdir: targetPath,
     });
 
@@ -148,7 +143,6 @@ export class DotfilesManager implements IDotfilesManager {
   private async tryDefaultInstallScripts(
     containerId: string,
     targetPath: string,
-    execOptions: DockerExecOptions,
   ): Promise<boolean> {
     const scripts = [
       "install.sh",
@@ -160,24 +154,24 @@ export class DotfilesManager implements IDotfilesManager {
     ];
 
     for (const script of scripts) {
-      const testFile = await dockerExec(
-        containerId,
-        ["test", "-f", `${targetPath}/${script}`],
-        execOptions,
-      );
+      const testFile = await this.host.dockerExec(containerId, [
+        "test",
+        "-f",
+        `${targetPath}/${script}`,
+      ]);
       if (testFile.exitCode !== 0) continue;
 
-      const testExec = await dockerExec(
-        containerId,
-        ["test", "-x", `${targetPath}/${script}`],
-        execOptions,
-      );
+      const testExec = await this.host.dockerExec(containerId, [
+        "test",
+        "-x",
+        `${targetPath}/${script}`,
+      ]);
       if (testExec.exitCode !== 0) continue;
 
-      const runResult = await dockerExec(
+      const runResult = await this.host.dockerExec(
         containerId,
         ["sh", "-c", `./${script}`],
-        { ...execOptions, workdir: targetPath },
+        { workdir: targetPath },
       );
       return runResult.exitCode === 0;
     }

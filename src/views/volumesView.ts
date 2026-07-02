@@ -12,17 +12,13 @@ import * as vscode from "vscode";
 import { dockerExecPolicy } from "../docker/execPolicy.js";
 import { MANAGED_LABEL } from "../utils/constants";
 
-/**
- * Represents a Docker volume entry.
- */
+/** Represents a Docker volume entry. */
 export interface VolumeEntry {
   name: string;
   driver: string;
 }
 
-/**
- * Tree item representing a Docker volume.
- */
+/** Tree item representing a Docker volume. */
 export class VolumeViewItem extends vscode.TreeItem {
   constructor(public readonly volume: VolumeEntry) {
     super(volume.name, vscode.TreeItemCollapsibleState.None);
@@ -42,9 +38,7 @@ export class VolumesViewProvider implements vscode.TreeDataProvider<VolumeViewIt
     VolumeViewItem | undefined | void
   > = this._onDidChangeTreeData.event;
 
-  /**
-   * Refresh the tree view.
-   */
+  /** Refresh the tree view. */
   refresh(): void {
     this._onDidChangeTreeData.fire();
   }
@@ -62,14 +56,13 @@ export class VolumesViewProvider implements vscode.TreeDataProvider<VolumeViewIt
     return volumes.map((v) => new VolumeViewItem(v));
   }
 
-  /**
-   * List Docker volumes.
-   */
+  /** List Docker volumes. */
   async listVolumes(): Promise<VolumeEntry[]> {
     try {
       const result = await dockerExecPolicy([
         "volume",
         "ls",
+        "--no-trunc",
         "--filter",
         `label=${MANAGED_LABEL}`,
         "--format",
@@ -93,9 +86,7 @@ export class VolumesViewProvider implements vscode.TreeDataProvider<VolumeViewIt
     }
   }
 
-  /**
-   * Inspect a volume and show the result in an output channel.
-   */
+  /** Inspect a volume and show the result in an output channel. */
   async inspectVolume(volume: VolumeEntry): Promise<void> {
     try {
       const result = await dockerExecPolicy(["volume", "inspect", volume.name]);
@@ -118,9 +109,7 @@ export class VolumesViewProvider implements vscode.TreeDataProvider<VolumeViewIt
     }
   }
 
-  /**
-   * Remove a volume after user confirmation.
-   */
+  /** Remove a volume after user confirmation. */
   async removeVolume(volume: VolumeEntry): Promise<void> {
     const confirm = await vscode.window.showWarningMessage(
       `Remove volume "${volume.name}"? This cannot be undone.`,
@@ -150,9 +139,7 @@ export class VolumesViewProvider implements vscode.TreeDataProvider<VolumeViewIt
     }
   }
 
-  /**
-   * Register the volumes view and associated commands.
-   */
+  /** Register the volumes view and associated commands. */
   static register(context: vscode.ExtensionContext): VolumesViewProvider {
     const provider = new VolumesViewProvider();
 

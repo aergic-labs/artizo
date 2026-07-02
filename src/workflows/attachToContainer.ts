@@ -14,9 +14,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { encodeAuthority } from "../utils/uriUtils";
 import { BRAND, BRAND_PREFIX } from "../utils/constants";
 import type { WorkflowDependencies, WorkflowUI } from "./types";
+import {
+  buildAuthorityAndOpen,
+  throwIfCancelled,
+  CancelledError,
+} from "./postLaunch";
 
 /**
  * Information about a running container for selection.
@@ -90,6 +94,8 @@ export function saveAttachConfig(config: AttachConfig): void {
 export interface AttachToContainerParams {
   /** Pre-selected container ID. If not provided, user picks from list. */
   containerId?: string;
+  /** Open the container in a new window instead of reusing the current one. */
+  forceNewWindow?: boolean;
 }
 
 /**
@@ -102,7 +108,8 @@ export async function attachToContainer(
   docker: DockerListDependency,
   params: AttachToContainerParams,
 ): Promise<void> {
-  const { serverManager, bridge, orchestrator, gitConfigCopier } = deps;
+  const forceNewWindow = params.forceNewWindow ?? false;
+  const { serverManager, gitConfigCopier } = deps;
 
   try {
     let selectedContainer: RunningContainer | undefined;
@@ -132,29 +139,42 @@ export async function attachToContainer(
     const existingConfig = loadAttachConfig(selectedContainer.name);
     const workspaceFolder = existingConfig?.workspaceFolder ?? "/";
 
-    orchestrator.beginAttachPhase();
+    // Captured from the progress callback so we can build the authority
+    // with the server port + installPath + connectionToken afterwards.
+    let serverPort = 0;
+    let serverInstallPath = "";
+    let serverConnectionToken: string | undefined;
 
     await ui.showProgress(
       `${BRAND}: Attaching to Container`,
-      async (progress) => {
+      async (progress, token) => {
         progress.report({ message: "Installing server..." });
 
         await serverManager.ensureInstalled(selectedContainer!.id);
+
+        // Install extensions declared in the attach config (if any).
+        // Downloads on the host, then docker cp + unzip into the
+        // server's extensions directory.
+        if (
+          existingConfig?.extensions &&
+          existingConfig.extensions.length > 0
+        ) {
+          progress.report({ message: "Installing extensions..." });
+          await deps.extensionInstaller.installExtensions(
+            selectedContainer!.id,
+            existingConfig.extensions,
+          );
+        }
+
         const serverInfo = await serverManager.start(selectedContainer!.id);
+        serverPort = serverInfo.port;
+        serverInstallPath = serverInfo.installPath;
+        serverConnectionToken = serverInfo.connectionToken;
 
         await gitConfigCopier.copyGitConfig(selectedContainer!.id);
-
-        orchestrator.beginConnectionPhase();
-        progress.report({ message: "Connecting..." });
-        await bridge.connect(
-          selectedContainer!.id,
-          serverInfo.port,
-          serverInfo.installPath,
-        );
+        throwIfCancelled(token);
       },
     );
-
-    orchestrator.connectionEstablished();
 
     const attachConfig: AttachConfig = {
       containerName: selectedContainer.name,
@@ -167,21 +187,34 @@ export async function attachToContainer(
     };
     saveAttachConfig(attachConfig);
 
-    // Open window with attached-container authority
-    const authority = encodeAuthority(
-      "attached-container",
-      selectedContainer.id,
-    );
-    // URI path must start with / and use forward slashes
-    const uriPath = workspaceFolder.startsWith("/")
-      ? workspaceFolder
-      : "/" + workspaceFolder.replace(/\\/g, "/");
-    await ui.openWindow(`vscode-remote://${authority}${uriPath}`);
+    // Build the container authority. In State 4 (workspace-side on SSH host),
+    // this starts the relay daemon and encodes a proxy payload so the apex
+    // host can reach the container through an ssh -L tunnel. In States 1-3
+    // it emits a plain attached-container+<containerId> authority.
+    await buildAuthorityAndOpen({
+      deps,
+      ui,
+      scheme: "attached-container",
+      id: selectedContainer.id,
+      containerId: selectedContainer.id,
+      containerPort: serverPort,
+      installPath: serverInstallPath,
+      connectionToken: serverConnectionToken,
+      workspaceFolder,
+      workspacePath: workspaceFolder,
+      // URI path must start with / and use forward slashes
+      uriPath: workspaceFolder.startsWith("/")
+        ? workspaceFolder
+        : "/" + workspaceFolder.replace(/\\/g, "/"),
+      windowOptions: forceNewWindow
+        ? { forceNewWindow: true }
+        : { forceReuseWindow: true },
+    });
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
 
-    if (orchestrator.state !== "error") {
-      orchestrator.fail(error);
+    if (error instanceof CancelledError) {
+      return;
     }
 
     await ui.showError(

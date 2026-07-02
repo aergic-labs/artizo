@@ -4,11 +4,13 @@
  */
 
 import * as vscode from "vscode";
-import type { WorkflowUI, ProgressReport } from "./types";
+import type { WorkflowUI, ProgressReport, CancellationSignal } from "./types";
 import { LogOutputTerminal } from "./logOutputTerminal";
+import { getLogger } from "../utils/logger";
 import {
   parseCliOutputLine,
   formatEventForTerminal,
+  formatEventForChannel,
 } from "../terminal/outputParser";
 
 export class VscodeWorkflowUI implements WorkflowUI {
@@ -20,21 +22,24 @@ export class VscodeWorkflowUI implements WorkflowUI {
 
   async showProgress(
     title: string,
-    task: (report: ProgressReport) => Promise<void>,
+    task: (
+      report: ProgressReport,
+      token?: CancellationSignal,
+    ) => Promise<void>,
   ): Promise<void> {
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
         title,
-        cancellable: false,
+        cancellable: true,
       },
-      async (progress) => {
+      async (progress, token) => {
         const report: ProgressReport = {
           report(value) {
             progress.report(value);
           },
         };
-        await task(report);
+        await task(report, token);
       },
     );
   }
@@ -55,18 +60,17 @@ export class VscodeWorkflowUI implements WorkflowUI {
 
   async openWindow(
     uri: string,
-    options?: { forceNewWindow?: boolean },
+    options?: { forceNewWindow?: boolean; forceReuseWindow?: boolean },
   ): Promise<void> {
     const parsedUri = vscode.Uri.parse(uri);
-    // forceNewWindow is a runtime property not in the TS type definitions.
     await vscode.commands.executeCommand(
       "vscode.openFolder",
       vscode.Uri.from({
         scheme: parsedUri.scheme,
         authority: parsedUri.authority,
         path: parsedUri.path,
-        forceNewWindow: options?.forceNewWindow ?? false,
-      } as any),
+      }),
+      options,
     );
   }
 
@@ -80,11 +84,15 @@ export class VscodeWorkflowUI implements WorkflowUI {
   }
 
   showBuildLog(content: string): void {
+    const logger = getLogger();
     const lines = content.split("\n");
     for (const line of lines) {
       const event = parseCliOutputLine(line);
       if (event) {
+        // Colored pty view (familiar docker build terminal)...
         this.buildLogPty.write(formatEventForTerminal(event));
+        // ...and the authoritative record in the OutputChannel (plain).
+        logger.append(formatEventForChannel(event));
       }
     }
   }

@@ -43,12 +43,35 @@ export class KiroAdapter implements IPlatformAdapter {
     );
   }
 
+  getArgvDataFolderNames(): string[] {
+    return [
+      this.config.hostDataFolderName ?? this.dataFolderName,
+      ...(this.config.argvDataFolderNames ?? []),
+    ];
+  }
+
   needsArgvPatch(): boolean {
     return this.config.needsArgvPatch;
   }
 
   getAdditionalDockerRunArgs(): string[] {
     return this.config.additionalDockerRunArgs;
+  }
+
+  getRemoteExtensionsDirCandidates(): string[] {
+    // Kiro's remote server dir is ~/.kiro-server/extensions.
+    // dataFolderName (.kiro) is the *client* data folder; the server
+    // folder follows the <name>-server convention.
+    return [".kiro-server/extensions"];
+  }
+
+  getApexExtensionsDir(): string {
+    // Client extensions dir: ~/.kiro/extensions.
+    return path.join(
+      os.homedir(),
+      this.config.hostDataFolderName ?? this.dataFolderName,
+      "extensions",
+    );
   }
 
   isValidRuntime(): boolean {

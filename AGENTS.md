@@ -17,14 +17,14 @@ and ask before reverting.
 The shell environment is **configurable** and may not be what you expect.
 On this machine it is git-bash, but don't hardcode that assumption in general.
 Before running shell commands, probe with `echo $SHELL` or `echo $0` if unsure.
-Never assume PowerShell on Windows or bash on macOS — verify first.
+Never assume PowerShell on Windows or bash on macOS  -  verify first.
 
 ## Command quick reference
 
 | Task | Command | Notes |
 |------|---------|-------|
-| Type-check | `npm run typecheck` | TypeScript only, ~3s |
-| Lint (full) | `npm run lint` | Types + dead-code (knip), ~3s |
+| Type-check | `npm run typecheck` | TypeScript only (src + test), ~3s |
+| Lint (full) | `npm run lint` | Types (src + test) + dead-code (knip), ~3s |
 | Unit + property tests | `npm test` | No Docker, no coverage, ~5s |
 | Coverage report | `npm run test:coverage` | Same tests, with coverage, ~10s |
 | Integration tests | `npm run test:integration` | Needs Docker, ~20s |

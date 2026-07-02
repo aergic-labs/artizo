@@ -15,9 +15,9 @@ import * as vscode from "vscode";
 import { getLogger } from "../utils/logger";
 import { BRAND_PREFIX } from "../utils/constants";
 import {
-  guardLocalContext,
+  guardHostContext,
   checkDockerAvailable,
-  getLocalWorkspaceFolder,
+  getHostWorkspaceFolder,
 } from "./guards";
 import { ProvisionFailedError } from "../devcontainer/provisionError";
 import { reportProvisionFailure } from "./reportProvisionFailure";
@@ -29,7 +29,11 @@ export interface CommandSpec {
   guardLocal: boolean;
   guardDocker: boolean;
   workspaceRequired: boolean;
-  handler: (ctx: CommandContext, workspaceFolder?: string) => Promise<void>;
+  handler: (
+    ctx: CommandContext,
+    workspaceFolder: string | undefined,
+    ...args: unknown[]
+  ) => Promise<void>;
 }
 
 /**
@@ -46,11 +50,11 @@ export function registerCommand(
   const logger = getLogger();
 
   context.subscriptions.push(
-    vscode.commands.registerCommand(spec.id, async () => {
+    vscode.commands.registerCommand(spec.id, async (...args: unknown[]) => {
       let workspaceFolder: string | undefined;
 
       if (spec.workspaceRequired) {
-        workspaceFolder = getLocalWorkspaceFolder();
+        workspaceFolder = getHostWorkspaceFolder();
         if (!workspaceFolder) {
           vscode.window.showErrorMessage("No workspace folder open.");
           return;
@@ -58,10 +62,10 @@ export function registerCommand(
       }
 
       try {
-        if (spec.guardLocal) guardLocalContext();
+        if (spec.guardLocal) guardHostContext();
         if (spec.guardDocker) await checkDockerAvailable(ctx.dockerPath);
         // Double-guard for workflows that need it (matching existing behavior)
-        if (spec.guardLocal && spec.guardDocker) guardLocalContext();
+        if (spec.guardLocal && spec.guardDocker) guardHostContext();
 
         logger.info(`=== ${spec.label} starting ===`);
         if (workspaceFolder) logger.info(`Workspace: ${workspaceFolder}`);
@@ -72,7 +76,7 @@ export function registerCommand(
             `${BRAND_PREFIX} Workspace: ${workspaceFolder}`,
           );
 
-        await spec.handler(ctx, workspaceFolder);
+        await spec.handler(ctx, workspaceFolder, ...args);
 
         logger.info(`=== ${spec.label} completed ===`);
         ctx.buildLogPty.writeLine(`${BRAND_PREFIX} Done.`);

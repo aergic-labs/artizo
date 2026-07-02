@@ -4,11 +4,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  findForbidden,
-  FORBIDDEN_TERMS,
-  // @ts-expect-error - plain ESM script without type declarations
-} from "../../scripts/guard-bundle.mjs";
+import { findForbidden, FORBIDDEN_TERMS } from "../../scripts/guard-bundle.mjs";
 
 describe("findForbidden", () => {
   it("detects case-insensitive substrings with counts", () => {
@@ -19,19 +15,21 @@ describe("findForbidden", () => {
   });
 
   it("returns empty for a clean string", () => {
-    expect(findForbidden("icube chat open with query", ["kiro", "devin"])).toEqual(
-      [],
-    );
+    expect(
+      findForbidden("icube chat open with query", ["kiro", "devin"]),
+    ).toEqual([]);
   });
 
   it("ignores innocent substrings (trae inside reportExtraError)", () => {
-    expect(findForbidden("exports.reportExtraError = reportExtraError", ["trae"])).toEqual(
-      [],
-    );
+    expect(
+      findForbidden("exports.reportExtraError = reportExtraError", ["trae"]),
+    ).toEqual([]);
   });
 
   it("still catches a brand embedded at a token start (kiroAgent)", () => {
-    const hits = findForbidden('executeCommand("kiroAgent.agent.askAgent")', ["kiro"]);
+    const hits = findForbidden('executeCommand("kiroAgent.agent.askAgent")', [
+      "kiro",
+    ]);
     expect(hits).toHaveLength(1);
     expect(hits[0].count).toBe(1);
   });
@@ -47,7 +45,9 @@ describe("findForbidden", () => {
   it("flags the historical kiro leak (comment + poll string)", () => {
     const leak = `Returns "kiro" for full interactive agent ... kiroAgent.executions.getPendingQuestions`;
     const hits = findForbidden(leak, FORBIDDEN_TERMS.trae);
-    expect(hits.find((h: { term: string }) => h.term === "kiro")?.count).toBe(2);
+    expect(hits.find((h: { term: string }) => h.term === "kiro")?.count).toBe(
+      2,
+    );
   });
 });
 

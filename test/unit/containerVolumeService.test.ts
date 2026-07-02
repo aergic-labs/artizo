@@ -5,18 +5,9 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockExecFileAsync } = vi.hoisted(() => ({
-  mockExecFileAsync: vi.fn(),
+const { mockHostExec } = vi.hoisted(() => ({
+  mockHostExec: vi.fn(),
 }));
-
-// Mock promisify to return our controllable mock
-vi.mock("node:util", async () => {
-  const actual = await vi.importActual("node:util");
-  return {
-    ...actual,
-    promisify: () => mockExecFileAsync,
-  };
-});
 
 vi.mock("vscode", () => ({
   window: {
@@ -47,6 +38,15 @@ vi.mock("vscode", () => ({
 import { ContainerService } from "../../src/sidebar/containerService";
 import { VolumeService } from "../../src/sidebar/volumeService";
 
+function createMockHost() {
+  return {
+    kind: "local" as const,
+    dockerPath: "docker",
+    exec: mockHostExec,
+    onReady: vi.fn(() => ({ dispose: vi.fn() })),
+  } as any;
+}
+
 describe("ContainerService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -54,7 +54,8 @@ describe("ContainerService", () => {
 
   describe("refreshContainers", () => {
     it("parses docker ps output into container info", async () => {
-      mockExecFileAsync.mockResolvedValue({
+      mockHostExec.mockResolvedValue({
+        exitCode: 0,
         stdout: JSON.stringify({
           ID: "abc123def456",
           Names: "/my-devcontainer",
@@ -65,7 +66,8 @@ describe("ContainerService", () => {
         stderr: "",
       });
 
-      const service = new ContainerService("docker");
+      const host = createMockHost();
+      const service = new ContainerService(host);
       const containers = await service.refreshContainers();
 
       expect(containers).toHaveLength(1);
@@ -75,22 +77,78 @@ describe("ContainerService", () => {
         status: "running",
         image: "ubuntu:22.04",
         localFolder: "/home/user/project",
+        configFile: "",
       });
     });
 
+    it("recognizes artizo.local_folder labels too", async () => {
+      mockHostExec.mockResolvedValue({
+        exitCode: 0,
+        stdout: JSON.stringify({
+          ID: "artizo1",
+          Names: "/artizo-container",
+          State: "running",
+          Image: "ubuntu:22.04",
+          Labels:
+            "artizo.local_folder=/home/user/project,artizo.config_file=/path/devcontainer.json",
+        }),
+        stderr: "",
+      });
+
+      const host = createMockHost();
+      const service = new ContainerService(host);
+      const containers = await service.refreshContainers();
+
+      expect(containers).toHaveLength(1);
+      expect(containers[0].localFolder).toBe("/home/user/project");
+      expect(containers[0].configFile).toBe("/path/devcontainer.json");
+    });
+
+    it("filters out non-dev containers", async () => {
+      mockHostExec.mockResolvedValue({
+        exitCode: 0,
+        stdout: [
+          JSON.stringify({
+            ID: "dev1",
+            Names: "/dev-container",
+            State: "running",
+            Image: "ubuntu:22.04",
+            Labels: "devcontainer.local_folder=/home/user/project",
+          }),
+          JSON.stringify({
+            ID: "other1",
+            Names: "/random-container",
+            State: "running",
+            Image: "redis",
+            Labels: "",
+          }),
+        ].join("\n"),
+        stderr: "",
+      });
+
+      const host = createMockHost();
+      const service = new ContainerService(host);
+      const containers = await service.refreshContainers();
+
+      expect(containers).toHaveLength(1);
+      expect(containers[0].id).toBe("dev1");
+    });
+
     it("handles stopped containers", async () => {
-      mockExecFileAsync.mockResolvedValue({
+      mockHostExec.mockResolvedValue({
+        exitCode: 0,
         stdout: JSON.stringify({
           ID: "stopped1",
           Names: "/stopped-container",
           State: "exited",
           Image: "alpine",
-          Labels: "",
+          Labels: "devcontainer.local_folder=/home/user/project",
         }),
         stderr: "",
       });
 
-      const service = new ContainerService("docker");
+      const host = createMockHost();
+      const service = new ContainerService(host);
       const containers = await service.refreshContainers();
 
       expect(containers[0].status).toBe("stopped");
@@ -105,12 +163,14 @@ describe("VolumeService", () => {
 
   describe("refreshVolumes", () => {
     it("parses docker volume ls output", async () => {
-      mockExecFileAsync.mockResolvedValue({
+      mockHostExec.mockResolvedValue({
+        exitCode: 0,
         stdout: JSON.stringify({ Name: "my-volume", Driver: "local" }),
         stderr: "",
       });
 
-      const service = new VolumeService("docker");
+      const host = createMockHost();
+      const service = new VolumeService(host);
       const volumes = await service.refreshVolumes();
 
       expect(volumes).toHaveLength(1);

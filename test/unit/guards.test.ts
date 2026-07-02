@@ -11,10 +11,11 @@ const { mockExecFilePromise } = vi.hoisted(() => ({
 
 vi.mock("vscode", () => ({
   env: { remoteName: undefined },
+  ExtensionKind: { UI: 1, Workspace: 2 },
 }));
 
 vi.mock("../../src/utils/uriUtils", () => ({
-  getLocalWorkspaceFolder: vi.fn(),
+  getHostWorkspaceFolder: vi.fn(),
 }));
 
 vi.mock("../../src/utils/dockerUtils.js", () => ({
@@ -22,35 +23,37 @@ vi.mock("../../src/utils/dockerUtils.js", () => ({
 }));
 
 import * as vscode from "vscode";
-import { getLocalWorkspaceFolder as uriUtilsGetWs } from "../../src/utils/uriUtils";
+import { getHostWorkspaceFolder as uriUtilsGetWs } from "../../src/utils/uriUtils";
 import {
-  guardLocalContext,
+  guardHostContext,
   checkDockerAvailable,
-  getLocalWorkspaceFolder,
+  getHostWorkspaceFolder,
 } from "../../src/host/guards";
 
 describe("guards", () => {
-  describe("guardLocalContext", () => {
-    it("does not throw when not in a remote", () => {
+  describe("guardHostContext", () => {
+    it("does not throw when not in a managed container (host)", () => {
       (vscode.env as any).remoteName = undefined;
-      expect(() => guardLocalContext()).not.toThrow();
+      expect(() => guardHostContext()).not.toThrow();
     });
 
-    it("throws when in a remote context", () => {
+    it("does not throw when in a foreign remote (ssh-remote)", () => {
+      (vscode.env as any).remoteName = "ssh-remote+host";
+      expect(() => guardHostContext()).not.toThrow();
+    });
+
+    it("throws when in a managed container (artizo-container)", () => {
       (vscode.env as any).remoteName = "artizo-container";
-      expect(() => guardLocalContext()).toThrow(
-        /Dev container commands must run from a local window/,
+      expect(() => guardHostContext()).toThrow(
+        /Dev container commands must run from a host window/,
       );
     });
 
-    it("includes the remote name in the error message", () => {
+    it("throws when in a managed container (attached-container)", () => {
       (vscode.env as any).remoteName = "attached-container";
-      expect(() => guardLocalContext()).toThrow(/attached-container/);
-    });
-
-    it("throws for any non-empty remote name", () => {
-      (vscode.env as any).remoteName = "ssh-remote+host";
-      expect(() => guardLocalContext()).toThrow(/ssh-remote\+host/);
+      expect(() => guardHostContext()).toThrow(
+        /Dev container commands must run from a host window/,
+      );
     });
   });
 
@@ -101,15 +104,15 @@ describe("guards", () => {
     });
   });
 
-  describe("getLocalWorkspaceFolder", () => {
+  describe("getHostWorkspaceFolder", () => {
     it("returns the workspace folder from uriUtils", () => {
       vi.mocked(uriUtilsGetWs).mockReturnValue("/my/project");
-      expect(getLocalWorkspaceFolder()).toBe("/my/project");
+      expect(getHostWorkspaceFolder()).toBe("/my/project");
     });
 
     it("returns undefined when no workspace", () => {
       vi.mocked(uriUtilsGetWs).mockReturnValue(undefined);
-      expect(getLocalWorkspaceFolder()).toBeUndefined();
+      expect(getHostWorkspaceFolder()).toBeUndefined();
     });
   });
 });

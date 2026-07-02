@@ -6,15 +6,15 @@
 /**
  * Devcontainer API: direct programmatic access to the vendored CLI.
  *
- * All vendor access is lazy-loaded. require() only happens when
- * a function is actually called, not at module load time. This
- * prevents the bundled vendor code's unresolvable requires (tar,
- * shell-quote, etc.) from crashing the extension at startup.
+ * The vendored CLI is loaded in-process via require(). Under
+ * extensionKind ["workspace","ui"], the activating side always has Docker
+ * locally, so there is no remote-dispatch path - the CLI runs wherever
+ * the extension runs.
  */
 
-let _vendor: any;
-
 import { ProvisionFailedError } from "./provisionError";
+
+let _vendor: any;
 
 function vendor() {
   if (!_vendor) {
@@ -29,17 +29,16 @@ export async function launch(...args: any[]): Promise<any> {
 
 /**
  * Run a provision (`launch`) and normalize failures to ProvisionFailedError,
- * carrying the devcontainer.json path. Centralizes the try/catch that every
- * building workflow previously duplicated, and is the single throw point for
- * the "Diagnose with AI on build failure" flow.
+ * carrying the devcontainer.json path.
  */
 export async function launchProvision(
   options: ProvisionOptions,
   configPath: string | null | undefined,
   failureMessage = "Build failed",
+  idLabels?: string[],
 ): Promise<any> {
   try {
-    return await launch(options, undefined, []);
+    return await launch(options, idLabels, []);
   } catch (err: unknown) {
     const containerErr = err as { description?: string };
     if (containerErr?.description) {

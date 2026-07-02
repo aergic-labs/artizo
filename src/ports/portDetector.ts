@@ -18,11 +18,7 @@
  */
 
 import { EventEmitter } from "node:events";
-import {
-  type ExecResult,
-  dockerExec,
-  type DockerExecOptions,
-} from "../utils/dockerUtils";
+import type { Host, ExecResult } from "../host/host";
 
 export interface IPortDetector {
   start(): void;
@@ -36,6 +32,7 @@ export interface PortDetectorOptions {
   dockerPath?: string;
   pollIntervalMs?: number;
   knownPorts?: Set<number>;
+  host?: Host;
 }
 
 const IGNORED_PORTS = new Set([0]);
@@ -93,7 +90,7 @@ export function parseProcNetTcp(content: string): number[] {
 
 export class PortDetector implements IPortDetector {
   private readonly containerId: string;
-  private readonly dockerPath: string;
+  private readonly host: Host;
   private readonly pollIntervalMs: number;
   private readonly emitter = new EventEmitter();
   private readonly knownPorts: Set<number>;
@@ -103,7 +100,7 @@ export class PortDetector implements IPortDetector {
 
   constructor(options: PortDetectorOptions) {
     this.containerId = options.containerId;
-    this.dockerPath = options.dockerPath ?? "docker";
+    this.host = options.host!;
     this.pollIntervalMs = options.pollIntervalMs ?? 3000;
     this.knownPorts = new Set(options.knownPorts ?? []);
   }
@@ -181,9 +178,6 @@ export class PortDetector implements IPortDetector {
   }
 
   private readProcNetTcp(): Promise<ExecResult> {
-    const options: DockerExecOptions = {
-      dockerPath: this.dockerPath,
-    };
-    return dockerExec(this.containerId, ["cat", "/proc/net/tcp"], options);
+    return this.host.dockerExec(this.containerId, ["cat", "/proc/net/tcp"]);
   }
 }

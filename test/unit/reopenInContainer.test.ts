@@ -33,14 +33,20 @@ vi.mock("vscode", () => {
       dispose: vi.fn(),
     })),
     ProgressLocation: { Notification: 15 },
-    Uri: { parse: (s: string) => ({ toString: () => s }) },
+    // ExtensionKind.Workspace so detectTier reports LocalHost/workspace owner,
+    // taking the States 1-3 authority path (no relay daemon).
+    ExtensionKind: { UI: 1, Workspace: 2 },
+    env: { remoteAuthority: undefined, remoteName: undefined },
+    Uri: {
+      parse: (s: string) => ({ toString: () => s }),
+      file: (s: string) => ({ fsPath: s }),
+    },
   };
 });
 
 vi.mock("../../src/devcontainer/api", async () => {
-  const { ProvisionFailedError } = await import(
-    "../../src/devcontainer/provisionError"
-  );
+  const { ProvisionFailedError } =
+    await import("../../src/devcontainer/provisionError");
   const launch = vi.fn();
   const launchProvision = vi.fn(
     async (
@@ -74,16 +80,26 @@ vi.mock("../../src/utils/dockerUtils.js", () => ({
   execFilePromise: vi.fn().mockResolvedValue({ stdout: "", stderr: "" }),
 }));
 
+// Mock containerProxy so the State 4 path doesn't spawn a real relay daemon.
+const { mockStartRelayDaemon, mockDecodeSshAuthority } = vi.hoisted(() => ({
+  mockStartRelayDaemon: vi.fn(),
+  mockDecodeSshAuthority: vi.fn(),
+}));
+vi.mock("../../src/remote/containerProxy", () => ({
+  startRelayDaemon: mockStartRelayDaemon,
+  decodeSshAuthority: mockDecodeSshAuthority,
+}));
+
 import { launch } from "../../src/devcontainer/api";
 import { reopenInContainer } from "../../src/workflows/reopenInContainer";
-import { WorkflowOrchestrator } from "../../src/workflows/orchestrator";
+import { initTier } from "../../src/host/state";
+import * as vscode from "vscode";
 import type {
   WorkflowDependencies,
   WorkflowUI,
 } from "../../src/workflows/types";
 import type { IConfigManager } from "../../src/config/configManager";
 import type { IServerManager } from "../../src/remote/serverManager";
-import type { ICommunicationBridge } from "../../src/remote/communicationBridge";
 import type { IGitConfigCopier } from "../../src/credentials/gitConfigCopier";
 import { BRAND } from "../../src/utils/constants";
 
@@ -99,9 +115,9 @@ function createMockConfigManager(
     validateConfig: vi
       .fn()
       .mockReturnValue({ valid: true, errors: [], warnings: [] }),
-    getConfigPath: vi
-      .fn()
-      .mockReturnValue("/workspace/.devcontainer/devcontainer.json"),
+    getConfigPath: vi.fn().mockReturnValue({
+      fsPath: "/workspace/.devcontainer/devcontainer.json",
+    }),
     ...overrides,
   };
 }
@@ -126,20 +142,7 @@ function createMockServerManager(
     stop: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockResolvedValue(null),
     getCompatibleVersion: vi.fn().mockReturnValue("1.96.0"),
-    ...overrides,
-  };
-}
-
-function createMockBridge(
-  overrides?: Partial<ICommunicationBridge>,
-): ICommunicationBridge {
-  return {
-    connect: vi
-      .fn()
-      .mockResolvedValue({ send: vi.fn(), onData: vi.fn(), onClose: vi.fn() }),
-    disconnect: vi.fn().mockResolvedValue(undefined),
-    isConnected: vi.fn().mockReturnValue(false),
-    onDidDisconnect: vi.fn(),
+    getExtensionsDir: vi.fn().mockResolvedValue("/tmp/test-extensions"),
     ...overrides,
   };
 }
@@ -163,13 +166,14 @@ function createMockGitConfigCopier(): IGitConfigCopier {
 }
 
 describe("reopenInContainer", () => {
-  let orchestrator: WorkflowOrchestrator;
   let deps: WorkflowDependencies;
   let ui: WorkflowUI;
 
   beforeEach(() => {
     // Don't call vi.clearAllMocks(); it breaks vi.mock factory exports
     // for dynamic imports.
+    mockStartRelayDaemon.mockReset();
+    mockDecodeSshAuthority.mockReset();
     vi.stubGlobal(
       "setTimeout",
       vi.fn((fn: any) => {
@@ -182,13 +186,15 @@ describe("reopenInContainer", () => {
       remoteUser: "vscode",
       remoteWorkspaceFolder: "/workspaces/test-project",
     });
-    orchestrator = new WorkflowOrchestrator();
     deps = {
       configManager: createMockConfigManager(),
       serverManager: createMockServerManager(),
-      bridge: createMockBridge(),
-      orchestrator,
       gitConfigCopier: createMockGitConfigCopier(),
+      dockerPath: "docker",
+      extensionInstaller: {
+        installFromConfig: vi.fn().mockResolvedValue([]),
+        installExtensions: vi.fn().mockResolvedValue([]),
+      } as any,
     };
     ui = createMockUI();
   });
@@ -201,28 +207,28 @@ describe("reopenInContainer", () => {
   });
 
   it("completes the full workflow successfully", async () => {
-    await reopenInContainer(deps, ui, { workspaceFolder: "/workspace" });
+    await reopenInContainer(deps, ui, { workspaceFolder: "/workspace", workspaceUri: vscode.Uri.file("/workspace") });
 
-    expect(orchestrator.state).toBe("connected");
     expect(launch).toHaveBeenCalled();
     expect(deps.serverManager.ensureInstalled).toHaveBeenCalledWith("abc123");
-    expect(deps.bridge.connect).toHaveBeenCalled();
+    expect(deps.serverManager.start).toHaveBeenCalledWith("abc123");
     expect(ui.openWindow).toHaveBeenCalled();
   });
 
-  it("transitions through correct states", async () => {
-    const states: string[] = [];
-    orchestrator.onDidChangeState((s) => states.push(s));
+  it("aborts silently when cancelled during the progress task", async () => {
+    ui = createMockUI({
+      showProgress: vi.fn(async (_title: string, task: any) => {
+        await task({ report: vi.fn() }, { isCancellationRequested: true });
+      }),
+    });
 
-    await reopenInContainer(deps, ui, { workspaceFolder: "/workspace" });
+    await reopenInContainer(deps, ui, {
+      workspaceFolder: "/workspace",
+      workspaceUri: vscode.Uri.file("/workspace"),
+    });
 
-    expect(states).toEqual([
-      "parsing-config",
-      "building-container",
-      "installing-server",
-      "connecting",
-      "connected",
-    ]);
+    expect(ui.openWindow).not.toHaveBeenCalled();
+    expect(ui.showError).not.toHaveBeenCalled();
   });
 
   it("prompts to create config when none found", async () => {
@@ -235,11 +241,10 @@ describe("reopenInContainer", () => {
     ui = createMockUI({ promptCreateConfig: promptMock });
 
     await expect(
-      reopenInContainer(deps, ui, { workspaceFolder: "/workspace" }),
+      reopenInContainer(deps, ui, { workspaceFolder: "/workspace", workspaceUri: vscode.Uri.file("/workspace") }),
     ).rejects.toThrow("No devcontainer.json. User cancelled");
 
     expect(promptMock).toHaveBeenCalled();
-    expect(orchestrator.state).toBe("error");
   });
 
   it("throws on config parse errors", async () => {
@@ -260,10 +265,8 @@ describe("reopenInContainer", () => {
     });
 
     await expect(
-      reopenInContainer(deps, ui, { workspaceFolder: "/workspace" }),
+      reopenInContainer(deps, ui, { workspaceFolder: "/workspace", workspaceUri: vscode.Uri.file("/workspace") }),
     ).rejects.toThrow("devcontainer.json has parse errors");
-
-    expect(orchestrator.state).toBe("error");
   });
 
   it("throws when launch fails", async () => {
@@ -272,10 +275,8 @@ describe("reopenInContainer", () => {
     );
 
     await expect(
-      reopenInContainer(deps, ui, { workspaceFolder: "/workspace" }),
+      reopenInContainer(deps, ui, { workspaceFolder: "/workspace", workspaceUri: vscode.Uri.file("/workspace") }),
     ).rejects.toThrow("Build failed: Docker build error");
-
-    expect(orchestrator.state).toBe("error");
   });
 
   it("throws when launch returns no container ID", async () => {
@@ -286,10 +287,8 @@ describe("reopenInContainer", () => {
     });
 
     await expect(
-      reopenInContainer(deps, ui, { workspaceFolder: "/workspace" }),
+      reopenInContainer(deps, ui, { workspaceFolder: "/workspace", workspaceUri: vscode.Uri.file("/workspace") }),
     ).rejects.toThrow("CLI did not return a container ID");
-
-    expect(orchestrator.state).toBe("error");
   });
 
   it("throws when server installation fails", async () => {
@@ -298,26 +297,12 @@ describe("reopenInContainer", () => {
     });
 
     await expect(
-      reopenInContainer(deps, ui, { workspaceFolder: "/workspace" }),
+      reopenInContainer(deps, ui, { workspaceFolder: "/workspace", workspaceUri: vscode.Uri.file("/workspace") }),
     ).rejects.toThrow("Disk full");
-
-    expect(orchestrator.state).toBe("error");
-  });
-
-  it("throws when bridge connection fails", async () => {
-    deps.bridge = createMockBridge({
-      connect: vi.fn().mockRejectedValue(new Error("Connection refused")),
-    });
-
-    await expect(
-      reopenInContainer(deps, ui, { workspaceFolder: "/workspace" }),
-    ).rejects.toThrow("Connection refused");
-
-    expect(orchestrator.state).toBe("error");
   });
 
   it("shows progress during reopen", async () => {
-    await reopenInContainer(deps, ui, { workspaceFolder: "/workspace" });
+    await reopenInContainer(deps, ui, { workspaceFolder: "/workspace", workspaceUri: vscode.Uri.file("/workspace") });
 
     expect(ui.showProgress).toHaveBeenCalledWith(
       `${BRAND}: Reopen in Container`,
@@ -333,17 +318,16 @@ describe("reopenInContainer", () => {
     ui = createMockUI({ showError: showErrorMock });
 
     await expect(
-      reopenInContainer(deps, ui, { workspaceFolder: "/workspace" }),
+      reopenInContainer(deps, ui, { workspaceFolder: "/workspace", workspaceUri: vscode.Uri.file("/workspace") }),
     ).rejects.toThrow("Build error");
 
     // Build/provision failures are now reported once at the command layer
     // (with "Diagnose with AI"), so the workflow does not show its own toast.
     expect(showErrorMock).not.toHaveBeenCalled();
-    expect(orchestrator.state).toBe("error");
   });
 
   it("shows build log messages during server setup", async () => {
-    await reopenInContainer(deps, ui, { workspaceFolder: "/workspace" });
+    await reopenInContainer(deps, ui, { workspaceFolder: "/workspace", workspaceUri: vscode.Uri.file("/workspace") });
 
     expect(ui.showBuildLog).toHaveBeenCalledWith(
       expect.stringContaining("Installing"),
@@ -352,10 +336,92 @@ describe("reopenInContainer", () => {
       expect.stringContaining("Starting"),
     );
     expect(ui.showBuildLog).toHaveBeenCalledWith(
-      expect.stringContaining("Connecting to container"),
+      expect.stringContaining("Copying Git config"),
     );
-    expect(ui.showBuildLog).toHaveBeenCalledWith(
-      expect.stringContaining("Connected."),
-    );
+  });
+
+  it("State 4: starts relay daemon and encodes proxy payload in authority", async () => {
+    // Force the State 4 tier: workspace-side on an SSH remote.
+    (vscode.env as any).remoteName = "ssh-remote";
+    initTier(vscode.ExtensionKind.Workspace);
+
+    // Server returns a port + token + installPath (for nodePath).
+    deps.serverManager = createMockServerManager({
+      start: vi.fn().mockResolvedValue({
+        commit: "abc",
+        arch: "x64",
+        installPath: "/tmp/.trae-server",
+        port: 38517,
+        connectionToken: "token-xyz",
+      }),
+    });
+    mockDecodeSshAuthority.mockReturnValue({
+      sshHost: "34.136.190.14",
+      sshUser: "kerry",
+    });
+    mockStartRelayDaemon.mockResolvedValue({
+      relayPort: 9888,
+      pidFile: "/tmp/artizo-relay.pid",
+      pid: 12345,
+    });
+
+    try {
+      await reopenInContainer(deps, ui, { workspaceFolder: "/workspace", workspaceUri: vscode.Uri.file("/workspace") });
+
+      // Relay daemon was started with container + port + node path.
+      expect(mockStartRelayDaemon).toHaveBeenCalledWith({
+        containerId: "abc123",
+        containerPort: 38517,
+        nodePath: "/tmp/.trae-server/node",
+        dockerPath: "docker",
+      });
+
+      // openWindow was called with a proxy-payload authority.
+      expect(ui.openWindow).toHaveBeenCalledTimes(1);
+      const url = (ui.openWindow as ReturnType<typeof vi.fn>).mock
+        .calls[0][0] as string;
+      expect(url).toContain("artizo-container+");
+      // Decode the hex payload and confirm it carries proxy + SSH info.
+      const hex = url.split("artizo-container+")[1].split("/")[0];
+      const json = JSON.parse(
+        Buffer.from(hex, "hex").toString("utf-8"),
+      ) as Record<string, unknown>;
+      expect(json.proxy).toBe(true);
+      expect(json.sshHost).toBe("34.136.190.14");
+      expect(json.sshUser).toBe("kerry");
+      expect(json.relayPort).toBe(9888);
+      expect(json.connectionToken).toBe("token-xyz");
+      expect(json.workspacePath).toBe("/workspaces/test-project");
+    } finally {
+      // Reset tier back to local for subsequent tests.
+      (vscode.env as any).remoteName = undefined;
+      initTier(vscode.ExtensionKind.Workspace);
+    }
+  });
+
+  it("State 4: throws when SSH authority can't be decoded", async () => {
+    (vscode.env as any).remoteName = "ssh-remote";
+    initTier(vscode.ExtensionKind.Workspace);
+
+    deps.serverManager = createMockServerManager({
+      start: vi.fn().mockResolvedValue({
+        commit: "abc",
+        arch: "x64",
+        installPath: "/tmp/.trae-server",
+        port: 38517,
+        connectionToken: "token-xyz",
+      }),
+    });
+    mockDecodeSshAuthority.mockReturnValue(undefined);
+
+    try {
+      await expect(
+        reopenInContainer(deps, ui, { workspaceFolder: "/workspace", workspaceUri: vscode.Uri.file("/workspace") }),
+      ).rejects.toThrow("could not decode SSH authority");
+      expect(mockStartRelayDaemon).not.toHaveBeenCalled();
+    } finally {
+      (vscode.env as any).remoteName = undefined;
+      initTier(vscode.ExtensionKind.Workspace);
+    }
   });
 });

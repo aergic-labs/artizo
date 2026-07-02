@@ -104,9 +104,7 @@ export class PortForwarder implements IPortForwarder {
     return forwardedPort;
   }
 
-  /**
-   * Stop forwarding a container port.
-   */
+  /** Stop forwarding a container port. */
   async unforwardPort(containerPort: number): Promise<void> {
     const forward = this.forwards.get(containerPort);
     if (!forward) {
@@ -128,30 +126,22 @@ export class PortForwarder implements IPortForwarder {
     this.emitter.emit('didUnforwardPort', containerPort);
   }
 
-  /**
-   * Get all currently forwarded ports.
-   */
+  /** Get all currently forwarded ports. */
   getForwardedPorts(): ForwardedPort[] {
     return Array.from(this.forwards.values()).map((f) => f.port);
   }
 
-  /**
-   * Register a listener for port forward events.
-   */
+  /** Register a listener for port forward events. */
   onDidForwardPort(listener: (port: ForwardedPort) => void): void {
     this.emitter.on('didForwardPort', listener);
   }
 
-  /**
-   * Register a listener for port unforward events.
-   */
+  /** Register a listener for port unforward events. */
   onDidUnforwardPort(listener: (containerPort: number) => void): void {
     this.emitter.on('didUnforwardPort', listener);
   }
 
-  /**
-   * Dispose all forwarded ports and clean up resources.
-   */
+  /** Dispose all forwarded ports and clean up resources. */
   dispose(): void {
     if (this.disposed) {
       return;
@@ -230,9 +220,7 @@ export class PortForwarder implements IPortForwarder {
     });
   }
 
-  /**
-   * Close a server, returning a promise that resolves when closed.
-   */
+  /** Close a server, returning a promise that resolves when closed. */
   private closeServer(server: Server): Promise<void> {
     return new Promise<void>((resolve) => {
       server.close(() => resolve());

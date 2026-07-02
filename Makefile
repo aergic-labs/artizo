@@ -23,8 +23,8 @@
 #   make distclean        Nuclear clean (auto-recovers on next make)
 #
 # Make uses sentinel files to auto-resolve dependencies:
-#   node_modules/.package-lock.json   ← tracks root npm install
-#   vendor/.../devContainersSpecCLI.js ← tracks vendored CLI build
+#   node_modules/.package-lock.json   tracks root npm install
+#   vendor/devcontainers-cli/.git      tracks the vendored submodule checkout
 # If either is missing or out-of-date, Make rebuilds it automatically.
 #
 # Publishing requires:
@@ -36,7 +36,7 @@
 # ── Sentinel files ─────────────────────────────────────────────
 
 NODE_MODULES := node_modules/.package-lock.json
-VENDOR_CLI   := vendor/devcontainers-cli/dist/spec-node/devContainersSpecCLI.js
+VENDOR_CLI   := vendor/devcontainers-cli/src/spec-node/devContainers.ts
 
 # Change this to update the vendored CLI. make does the rest.
 VENDOR_CLI_VERSION := v0.87.0
@@ -54,7 +54,6 @@ $(VENDOR_CLI):
 		git -C vendor/devcontainers-cli checkout -f $(VENDOR_CLI_VERSION) --quiet; \
 		rm -rf vendor/devcontainers-cli/node_modules vendor/devcontainers-cli/dist; \
 	fi
-	cd vendor/devcontainers-cli && npm install --ignore-scripts && npm run compile-prod && rm -f package-lock.json
 
 # ── Explicit setup (convenience, equivalent to the chain above) ─
 
@@ -85,7 +84,6 @@ test-coverage:
 build: $(NODE_MODULES) $(VENDOR_CLI)
 	npm run package:kiro
 	npm run package:trae
-	npm run package:windsurf
 	npm run package:devin
 	npm run package:vscodium
 
@@ -109,7 +107,6 @@ publish:
 	@test -n "$$OVSX_PAT" || (echo "Set OVSX_PAT environment variable" && exit 1)
 	npx ovsx publish artizo-kiro-*.vsix
 	npx ovsx publish artizo-trae-*.vsix
-	npx ovsx publish artizo-windsurf-*.vsix
 	npx ovsx publish artizo-devin-*.vsix
 	npx ovsx publish artizo-vscodium-*.vsix
 

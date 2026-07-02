@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import * as vscode from "vscode";
 
 vi.mock("vscode", () => ({
   window: {
@@ -21,13 +22,18 @@ vi.mock("vscode", () => ({
     dispose: vi.fn(),
   })),
   ProgressLocation: { Notification: 15 },
-  Uri: { parse: (s: string) => ({ toString: () => s }) },
+  ExtensionKind: { UI: 1, Workspace: 2 },
+  env: { remoteAuthority: undefined, remoteName: undefined },
+  workspace: { workspaceFolders: [] },
+  Uri: {
+    parse: (s: string) => ({ toString: () => s }),
+    file: (s: string) => ({ fsPath: s }),
+  },
 }));
 
 vi.mock("../../src/devcontainer/api", async () => {
-  const { ProvisionFailedError } = await import(
-    "../../src/devcontainer/provisionError"
-  );
+  const { ProvisionFailedError } =
+    await import("../../src/devcontainer/provisionError");
   const launch = vi.fn();
   const launchProvision = vi.fn(
     async (
@@ -59,7 +65,6 @@ vi.mock("../../src/devcontainer/api", async () => {
 
 import { launch, withDefaults } from "../../src/devcontainer/api";
 import { rebuildContainer } from "../../src/workflows/rebuildContainer";
-import { WorkflowOrchestrator } from "../../src/workflows/orchestrator";
 import type {
   WorkflowDependencies,
   WorkflowUI,
@@ -67,7 +72,6 @@ import type {
 import { BRAND } from "../../src/utils/constants";
 import type { IConfigManager } from "../../src/config/configManager";
 import type { IServerManager } from "../../src/remote/serverManager";
-import type { ICommunicationBridge } from "../../src/remote/communicationBridge";
 import type { IGitConfigCopier } from "../../src/credentials/gitConfigCopier";
 
 function createMockConfigManager(
@@ -82,9 +86,9 @@ function createMockConfigManager(
     validateConfig: vi
       .fn()
       .mockReturnValue({ valid: true, errors: [], warnings: [] }),
-    getConfigPath: vi
-      .fn()
-      .mockReturnValue("/workspace/.devcontainer/devcontainer.json"),
+    getConfigPath: vi.fn().mockReturnValue({
+      fsPath: "/workspace/.devcontainer/devcontainer.json",
+    }),
     ...overrides,
   };
 }
@@ -109,20 +113,7 @@ function createMockServerManager(
     stop: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockResolvedValue(null),
     getCompatibleVersion: vi.fn().mockReturnValue("1.96.0"),
-    ...overrides,
-  };
-}
-
-function createMockBridge(
-  overrides?: Partial<ICommunicationBridge>,
-): ICommunicationBridge {
-  return {
-    connect: vi
-      .fn()
-      .mockResolvedValue({ send: vi.fn(), onData: vi.fn(), onClose: vi.fn() }),
-    disconnect: vi.fn().mockResolvedValue(undefined),
-    isConnected: vi.fn().mockReturnValue(false),
-    onDidDisconnect: vi.fn(),
+    getExtensionsDir: vi.fn().mockResolvedValue("/tmp/test-extensions"),
     ...overrides,
   };
 }
@@ -146,7 +137,6 @@ function createMockGitConfigCopier(): IGitConfigCopier {
 }
 
 describe("rebuildContainer", () => {
-  let orchestrator: WorkflowOrchestrator;
   let deps: WorkflowDependencies;
   let ui: WorkflowUI;
 
@@ -166,13 +156,15 @@ describe("rebuildContainer", () => {
       remoteUser: "vscode",
       remoteWorkspaceFolder: "/workspaces/test-project",
     });
-    orchestrator = new WorkflowOrchestrator();
     deps = {
       configManager: createMockConfigManager(),
       serverManager: createMockServerManager(),
-      bridge: createMockBridge(),
-      orchestrator,
       gitConfigCopier: createMockGitConfigCopier(),
+      dockerPath: "docker",
+      extensionInstaller: {
+        installFromConfig: vi.fn().mockResolvedValue([]),
+        installExtensions: vi.fn().mockResolvedValue([]),
+      } as any,
     };
     ui = createMockUI();
   });
@@ -184,10 +176,10 @@ describe("rebuildContainer", () => {
   it("completes build-only workflow successfully", async () => {
     await rebuildContainer(deps, ui, {
       workspaceFolder: "/workspace",
+      workspaceUri: vscode.Uri.file("/workspace"),
       reconnect: false,
     });
 
-    expect(orchestrator.state).toBe("idle");
     expect(launch).toHaveBeenCalledTimes(1);
     expect(ui.showInfo).toHaveBeenCalledWith(
       expect.stringContaining("rebuilt successfully"),
@@ -195,79 +187,23 @@ describe("rebuildContainer", () => {
     expect(deps.serverManager.ensureInstalled).not.toHaveBeenCalled();
   });
 
-  it("transitions through correct states for build-only", async () => {
-    const states: string[] = [];
-    orchestrator.onDidChangeState((s) => states.push(s));
-
-    await rebuildContainer(deps, ui, {
-      workspaceFolder: "/workspace",
-      reconnect: false,
-    });
-
-    expect(states).toEqual([
-      "parsing-config",
-      "building-container",
-      "installing-server",
-      "idle",
-    ]);
-  });
-
   it("completes the full rebuild+reconnect workflow", async () => {
     await rebuildContainer(deps, ui, {
       workspaceFolder: "/workspace",
+      workspaceUri: vscode.Uri.file("/workspace"),
       reconnect: true,
     });
 
-    expect(orchestrator.state).toBe("connected");
     expect(launch).toHaveBeenCalled();
     expect(deps.serverManager.ensureInstalled).toHaveBeenCalledWith("abc123");
-    expect(deps.bridge.connect).toHaveBeenCalled();
+    expect(deps.serverManager.start).toHaveBeenCalledWith("abc123");
     expect(ui.openWindow).toHaveBeenCalled();
-  });
-
-  it("transitions through correct states for reconnect", async () => {
-    const states: string[] = [];
-    orchestrator.onDidChangeState((s) => states.push(s));
-
-    await rebuildContainer(deps, ui, {
-      workspaceFolder: "/workspace",
-      reconnect: true,
-    });
-
-    expect(states).toEqual([
-      "parsing-config",
-      "building-container",
-      "installing-server",
-      "connecting",
-      "connected",
-    ]);
-  });
-
-  it("disconnects bridge if currently connected", async () => {
-    deps.bridge = createMockBridge({
-      isConnected: vi.fn().mockReturnValue(true),
-    });
-
-    await rebuildContainer(deps, ui, {
-      workspaceFolder: "/workspace",
-      reconnect: false,
-    });
-
-    expect(deps.bridge.disconnect).toHaveBeenCalled();
-  });
-
-  it("does not disconnect if bridge is not connected", async () => {
-    await rebuildContainer(deps, ui, {
-      workspaceFolder: "/workspace",
-      reconnect: false,
-    });
-
-    expect(deps.bridge.disconnect).not.toHaveBeenCalled();
   });
 
   it("passes buildNoCache flag via withDefaults", async () => {
     await rebuildContainer(deps, ui, {
       workspaceFolder: "/workspace",
+      workspaceUri: vscode.Uri.file("/workspace"),
       noCache: true,
       reconnect: false,
     });
@@ -280,6 +216,7 @@ describe("rebuildContainer", () => {
   it("defaults buildNoCache to false", async () => {
     await rebuildContainer(deps, ui, {
       workspaceFolder: "/workspace",
+      workspaceUri: vscode.Uri.file("/workspace"),
       reconnect: false,
     });
 
@@ -298,11 +235,10 @@ describe("rebuildContainer", () => {
     await expect(
       rebuildContainer(deps, ui, {
         workspaceFolder: "/workspace",
+      workspaceUri: vscode.Uri.file("/workspace"),
         reconnect: false,
       }),
     ).rejects.toThrow("No devcontainer.json found");
-
-    expect(orchestrator.state).toBe("error");
   });
 
   it("throws on config parse errors", async () => {
@@ -325,11 +261,10 @@ describe("rebuildContainer", () => {
     await expect(
       rebuildContainer(deps, ui, {
         workspaceFolder: "/workspace",
+      workspaceUri: vscode.Uri.file("/workspace"),
         reconnect: false,
       }),
     ).rejects.toThrow("devcontainer.json has parse errors");
-
-    expect(orchestrator.state).toBe("error");
   });
 
   it("propagates build failures without offering recovery (reported at command layer)", async () => {
@@ -342,6 +277,7 @@ describe("rebuildContainer", () => {
     await expect(
       rebuildContainer(deps, ui, {
         workspaceFolder: "/workspace",
+      workspaceUri: vscode.Uri.file("/workspace"),
         reconnect: false,
       }),
     ).rejects.toThrow("Dockerfile error at line 5");
@@ -349,7 +285,6 @@ describe("rebuildContainer", () => {
     // Provision failures are reported at the command layer now, so the
     // workflow neither shows its own toast nor offers the recovery prompt.
     expect(showErrorMock).not.toHaveBeenCalled();
-    expect(orchestrator.state).toBe("error");
   });
 
   it("throws when launch fails and user retries", async () => {
@@ -361,16 +296,16 @@ describe("rebuildContainer", () => {
     await expect(
       rebuildContainer(deps, ui, {
         workspaceFolder: "/workspace",
+      workspaceUri: vscode.Uri.file("/workspace"),
         reconnect: false,
       }),
     ).rejects.toThrow("Build error");
-
-    expect(orchestrator.state).toBe("error");
   });
 
   it("shows progress during rebuild", async () => {
     await rebuildContainer(deps, ui, {
       workspaceFolder: "/workspace",
+      workspaceUri: vscode.Uri.file("/workspace"),
       reconnect: false,
     });
 
@@ -390,16 +325,16 @@ describe("rebuildContainer", () => {
     await expect(
       rebuildContainer(deps, ui, {
         workspaceFolder: "/workspace",
+      workspaceUri: vscode.Uri.file("/workspace"),
         reconnect: true,
       }),
     ).rejects.toThrow("CLI did not return a container ID");
-
-    expect(orchestrator.state).toBe("error");
   });
 
   it("shows build log messages during server setup", async () => {
     await rebuildContainer(deps, ui, {
       workspaceFolder: "/workspace",
+      workspaceUri: vscode.Uri.file("/workspace"),
       reconnect: true,
     });
 
@@ -410,7 +345,7 @@ describe("rebuildContainer", () => {
       expect.stringContaining("Starting"),
     );
     expect(ui.showBuildLog).toHaveBeenCalledWith(
-      expect.stringContaining("Connecting to container"),
+      expect.stringContaining("Copying Git config"),
     );
   });
 });

@@ -4,6 +4,8 @@
  */
 
 import * as vscode from "vscode";
+import { isInDevContainerWindow } from "../host/state";
+import { getHostWorkspaceFolder } from "../utils/uriUtils";
 import type { IConfigManager } from "../config/configManager";
 
 /**
@@ -23,11 +25,11 @@ export class DevcontainerDetector {
   }
 
   async checkAndPrompt(context: vscode.ExtensionContext): Promise<void> {
-    if (vscode.env.remoteName) {
+    if (isInDevContainerWindow()) {
       return;
     }
 
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const workspaceFolder = getHostWorkspaceFolder();
     if (!workspaceFolder) {
       return;
     }
@@ -40,7 +42,9 @@ export class DevcontainerDetector {
       return;
     }
 
-    const configPath = this.configManager.getConfigPath(workspaceFolder);
+    const configPath = await this.configManager.getConfigPath(
+      vscode.workspace.workspaceFolders![0].uri,
+    );
     await vscode.commands.executeCommand(
       "setContext",
       "artizo.hasDevcontainerConfig",

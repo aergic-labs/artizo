@@ -93,4 +93,12 @@ describe("DevinAdapter", () => {
       expect(argvPath).toContain("argv.json");
     });
   });
+
+  describe("isValidRuntime", () => {
+    it("returns true when product.json cannot be read (catch branch)", () => {
+      // The mock appRoot /mock/app/root doesn't have a product.json,
+      // so readFileSync throws and the catch returns true.
+      expect(adapter.isValidRuntime()).toBe(true);
+    });
+  });
 });

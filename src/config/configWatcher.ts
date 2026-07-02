@@ -117,13 +117,13 @@ export class ConfigWatcher implements vscode.Disposable {
     }
   }
 
-  private handleFileDelete(uri: vscode.Uri): void {
+  private async handleFileDelete(uri: vscode.Uri): Promise<void> {
     this.diagnosticCollection.delete(uri);
     this._onDidConfigChange.fire(uri);
     // Check if any config still exists after deletion
     const wsFolder = vscode.workspace.workspaceFolders?.[0];
     const hasConfig = wsFolder
-      ? !!this.configManager.getConfigPath(wsFolder.uri.fsPath)
+      ? !!(await this.configManager.getConfigPath(wsFolder.uri))
       : false;
     vscode.commands.executeCommand(
       "setContext",

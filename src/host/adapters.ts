@@ -4,14 +4,9 @@
  */
 
 import * as vscode from "vscode";
+import { normalizeFsPath } from "../utils/uriUtils";
 import type { VscodeWorkflowUI } from "../workflows/vscodeUI";
 import type { OpenFolderUI } from "../workflows/openFolder";
-import type {
-  ConfigWizardUI,
-  DevContainerTemplate,
-  DevContainerFeature,
-} from "../workflows/configWizard";
-import { isValidImageRef } from "../workflows/configWizard";
 import type { CloneInVolumeUI } from "../workflows/cloneInVolume";
 import type { RunningContainer } from "../workflows/attachToContainer";
 
@@ -31,87 +26,13 @@ export function buildOpenFolderUI(ui: VscodeWorkflowUI): OpenFolderUI {
         canSelectMany: false,
         openLabel: "Open in Container",
       });
-      return result?.[0]?.fsPath;
+      return result?.[0] ? normalizeFsPath(result[0]) : undefined;
     },
     async pickConfig(configs: string[]) {
       const picked = await vscode.window.showQuickPick(configs, {
         placeHolder: "Select a devcontainer configuration",
       });
       return picked;
-    },
-  };
-}
-
-/** Build a ConfigWizardUI adapter. */
-export function buildConfigWizardUI(ui: VscodeWorkflowUI): ConfigWizardUI {
-  return {
-    showProgress: ui.showProgress.bind(ui),
-    showError: ui.showError.bind(ui),
-    showInfo: ui.showInfo.bind(ui),
-    openWindow: ui.openWindow.bind(ui),
-    promptCreateConfig: ui.promptCreateConfig.bind(ui),
-    showBuildLog: ui.showBuildLog.bind(ui),
-    async pickTemplate(templates: DevContainerTemplate[]) {
-      const items: (vscode.QuickPickItem & {
-        template?: DevContainerTemplate;
-      })[] = [
-        ...templates.map((t) => ({
-          label: t.name,
-          description: t.description,
-          template: t,
-        })),
-        {
-          label: "$(edit) Custom image...",
-          description: "Enter a Docker image reference directly",
-          template: undefined,
-        },
-      ];
-      const picked = await vscode.window.showQuickPick(items, {
-        placeHolder: "Select a dev container template",
-      });
-      if (!picked) {
-        return undefined;
-      }
-      if (picked.template) {
-        return picked.template;
-      }
-      return { id: "__custom__", name: "Custom", description: "" };
-    },
-    async pickCustomImage() {
-      const image = await vscode.window.showInputBox({
-        prompt:
-          "Enter a Docker image reference (e.g. alpine, ubuntu:22.04, ghcr.io/owner/image:tag)",
-        placeHolder: "alpine",
-        validateInput: (value) => isValidImageRef(value),
-      });
-      return image || undefined;
-    },
-    async pickFeatures(features: DevContainerFeature[]) {
-      const items = features.map((f) => ({
-        label: f.name,
-        description: f.description,
-        picked: false,
-      }));
-      const picked = await vscode.window.showQuickPick(items, {
-        placeHolder: "Select features to include (ESC to skip)",
-        canPickMany: true,
-      });
-      return features.filter((f) => picked?.some((p) => p.label === f.name));
-    },
-    async confirmAfterCreate() {
-      const choice = await vscode.window.showInformationMessage(
-        "Configuration created. What would you like to do?",
-        "Reopen in Container",
-        "Edit Config",
-        "Done",
-      );
-      if (choice === "Reopen in Container") {
-        return "reopen";
-      }
-      if (choice === "Edit Config") {
-        return "edit";
-      }
-      return "done";
     },
   };
 }
@@ -172,6 +93,7 @@ export function buildDockerLister() {
       const { dockerExecPolicy } = await import("../docker/execPolicy.js");
       const result = await dockerExecPolicy([
         "ps",
+        "--no-trunc",
         "--format",
         "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}",
       ]);

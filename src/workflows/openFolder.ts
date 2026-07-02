@@ -3,13 +3,21 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+import * as vscode from "vscode";
 import { URI } from "vscode-uri";
-import { encodeAuthority } from "../utils/uriUtils";
 import { BRAND, BRAND_PREFIX } from "../utils/constants";
-import type { WorkflowDependencies, WorkflowUI } from "./types";
+import type { BuildResult, WorkflowDependencies, WorkflowUI } from "./types";
 import { launchProvision, withDefaults } from "../devcontainer/api";
 import { ProvisionFailedError } from "../devcontainer/provisionError";
-import { connectToContainer } from "./postLaunch";
+import { getPlatformAdapter } from "../platform";
+import {
+  connectToContainer,
+  buildIdentityLabels,
+  finishBackgroundTasks,
+  buildAuthorityAndOpen,
+  throwIfCancelled,
+  CancelledError,
+} from "./postLaunch";
 import type { ReadConfigResult } from "../config/configManager";
 
 export interface OpenFolderUI extends WorkflowUI {
@@ -19,6 +27,7 @@ export interface OpenFolderUI extends WorkflowUI {
 
 export interface OpenFolderParams {
   folder?: string;
+  folderUri?: vscode.Uri;
   configFile?: string;
   forceNewWindow?: boolean;
 }
@@ -28,7 +37,7 @@ export async function openFolderInContainer(
   ui: OpenFolderUI,
   params: OpenFolderParams,
 ): Promise<void> {
-  const { configManager, orchestrator } = deps;
+  const { configManager } = deps;
 
   let configResult: ReadConfigResult;
   let perContainerDisable = false;
@@ -38,114 +47,125 @@ export async function openFolderInContainer(
     if (!folder) {
       return;
     }
+    const folderUri = params.folderUri ?? vscode.Uri.file(folder);
 
-    // Resolve config file before the orchestrator phase (UI dependency).
+    // Resolve config file before the build phase (UI dependency).
     let configFile = params.configFile;
     if (!configFile) {
-      const existingConfigPath = configManager.getConfigPath(folder);
+      const existingConfigPath = await configManager.getConfigPath(folderUri);
       if (existingConfigPath) {
-        configFile = existingConfigPath;
+        configFile = existingConfigPath.fsPath;
       } else {
         const shouldCreate = await ui.promptCreateConfig();
         if (!shouldCreate) {
-          orchestrator.reset();
           return;
         }
-        const newConfigPath = configManager.getConfigPath(folder);
+        const newConfigPath = await configManager.getConfigPath(folderUri);
         if (!newConfigPath) {
-          orchestrator.reset();
           return;
         }
-        configFile = newConfigPath;
+        configFile = newConfigPath.fsPath;
       }
     }
 
-    const buildResult = await orchestrator.run({
-      name: "Open Folder in Container",
+    // Config phase
+    configResult = await configManager.readConfig(folderUri);
+    if (configResult.config && configResult.parseErrors.length > 0) {
+      const errorMessages = configResult.parseErrors
+        .map((e) => `Line ${e.line}: ${e.message}`)
+        .join("\n");
+      throw new Error(`devcontainer.json has parse errors:\n${errorMessages}`);
+    }
+    perContainerDisable = !!(
+      configResult.config as Record<string, unknown> | undefined
+    )?.["disableCopyGitConfig"];
 
-      config: async () => {
-        configResult = configManager.readConfig(folder);
-        if (configResult.config && configResult.parseErrors.length > 0) {
-          const errorMessages = configResult.parseErrors
-            .map((e) => `Line ${e.line}: ${e.message}`)
-            .join("\n");
-          throw new Error(
-            `devcontainer.json has parse errors:\n${errorMessages}`,
-          );
+    // Build phase
+    let result:
+      | {
+          containerId: string;
+          remoteUser: string;
+          remoteWorkspaceFolder: string;
+          finishBackgroundTasks?: () => Promise<void>;
         }
-        perContainerDisable = !!(
-          configResult.config as Record<string, unknown> | undefined
-        )?.["disableCopyGitConfig"];
+      | undefined;
+
+    await ui.showProgress(
+      `${BRAND}: Open Folder in Container`,
+      async (progress, token) => {
+        progress.report({ message: "Building container..." });
+
+        const platformTarget = (await getPlatformAdapter()).name.toLowerCase();
+        const idLabels = buildIdentityLabels({
+          platformTarget,
+          workspaceFolder: folder,
+          configPath: configFile,
+        });
+        const options = withDefaults({
+          workspaceFolder: folder,
+          configFile: configFile ? URI.file(configFile) : undefined,
+          additionalLabels: idLabels,
+          log: (text: string) => ui.showBuildLog(text),
+        });
+
+        result = await launchProvision(
+          options,
+          configResult.configPath,
+          undefined,
+          idLabels,
+        );
+        throwIfCancelled(token);
       },
+    );
 
-      build: {
-        label: `${BRAND}: Open Folder in Container`,
+    await finishBackgroundTasks(result);
 
-        run: async (_progress) => {
-          let result:
-            | {
-                containerId: string;
-                remoteUser: string;
-                remoteWorkspaceFolder: string;
-              }
-            | undefined;
+    if (!result?.containerId) {
+      throw new Error("CLI did not return a container ID");
+    }
 
-          await ui.showProgress(
-            `${BRAND}: Open Folder in Container`,
-            async (progress) => {
-              progress.report({ message: "Building container..." });
+    const buildResult: BuildResult = {
+      containerId: result.containerId,
+      remoteUser: result.remoteUser,
+      remoteWorkspaceFolder: result.remoteWorkspaceFolder,
+    };
 
-              const options = withDefaults({
-                workspaceFolder: folder,
-                configFile: configFile ? URI.file(configFile) : undefined,
-                log: (text: string) => ui.showBuildLog(text),
-              });
-
-              result = await launchProvision(
-                options,
-                configResult.configPath,
-              );
-            },
-          );
-
-          await (result as any)?.finishBackgroundTasks?.();
-
-          if (!result?.containerId) {
-            throw new Error("CLI did not return a container ID");
-          }
-
-          return {
-            containerId: result.containerId,
-            remoteUser: result.remoteUser,
-            remoteWorkspaceFolder: result.remoteWorkspaceFolder,
-          };
-        },
-      },
-    });
-
-    if (!buildResult) return;
-
-    await connectToContainer(
+    const connectInfo = await connectToContainer(
       deps,
       ui,
       buildResult.containerId,
       perContainerDisable,
+      configResult!.config as Record<string, unknown> | undefined,
     );
 
     ui.showInfo(
       `${BRAND_PREFIX} Container ready. Opening workspace in a new window.`,
     );
 
-    const authority = encodeAuthority("artizo-container", folder);
-    const uriPath = folder.startsWith("/")
-      ? folder
-      : "/" + folder.replace(/\\/g, "/");
-    await ui.openWindow(`vscode-remote://${authority}${uriPath}`, {
-      forceNewWindow: true,
+    await buildAuthorityAndOpen({
+      deps,
+      ui,
+      scheme: "artizo-container",
+      id: folder,
+      containerId: buildResult.containerId,
+      containerPort: connectInfo.port,
+      installPath: connectInfo.installPath,
+      connectionToken: connectInfo.connectionToken,
+      workspaceFolder: folder,
+      workspacePath: folder,
+      uriPath: folder.startsWith("/")
+        ? folder
+        : "/" + folder.replace(/\\/g, "/"),
+      windowOptions: params.forceNewWindow
+        ? { forceNewWindow: true }
+        : { forceReuseWindow: true },
     });
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
-    orchestrator.fail(error);
+
+    if (error instanceof CancelledError) {
+      return;
+    }
 
     if (error instanceof ProvisionFailedError) {
       throw error;

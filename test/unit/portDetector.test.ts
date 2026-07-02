@@ -3,16 +3,24 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock('../../src/utils/dockerUtils', () => ({
+vi.mock("../../src/utils/dockerUtils", () => ({
   dockerExec: vi.fn(),
 }));
 
-import { dockerExec } from '../../src/utils/dockerUtils';
-import { PortDetector, parseProcNetTcp } from '../../src/ports/portDetector';
+import { PortDetector, parseProcNetTcp } from "../../src/ports/portDetector";
 
-const mockDockerExec = vi.mocked(dockerExec);
+function createMockHost() {
+  return {
+    dockerExec: vi
+      .fn()
+      .mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
+    dockerPath: "docker",
+  };
+}
+
+let mockHost = createMockHost();
 
 // Sample /proc/net/tcp content
 const SAMPLE_PROC_NET_TCP = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
@@ -22,21 +30,21 @@ const SAMPLE_PROC_NET_TCP = `  sl  local_address rem_address   st tx_queue rx_qu
    3: 0100007F:7A69 0100007F:0050 01 00000000:00000000 00:00000000 00000000  1000        0 45678 1 0000000000000000 100 0 0 10 0
    4: AC110002:9C40 AC110001:1F90 01 00000000:00000000 00:00000000 00000000  1000        0 56789 1 0000000000000000 100 0 0 10 0`;
 
-describe('parseProcNetTcp', () => {
-  it('extracts listening ports on all interfaces (00000000)', () => {
+describe("parseProcNetTcp", () => {
+  it("extracts listening ports on all interfaces (00000000)", () => {
     const ports = parseProcNetTcp(SAMPLE_PROC_NET_TCP);
     // 0x0050 = 80, 0x1F90 = 8080 are on 00000000 with state 0A
     expect(ports).toContain(80);
     expect(ports).toContain(8080);
   });
 
-  it('extracts listening ports on localhost (0100007F)', () => {
+  it("extracts listening ports on localhost (0100007F)", () => {
     const ports = parseProcNetTcp(SAMPLE_PROC_NET_TCP);
     // 0x0CEA = 3306 is on 0100007F with state 0A
     expect(ports).toContain(3306);
   });
 
-  it('ignores non-LISTEN connections (state != 0A)', () => {
+  it("ignores non-LISTEN connections (state != 0A)", () => {
     const ports = parseProcNetTcp(SAMPLE_PROC_NET_TCP);
     // 0x7A69 = 31337 is state 01 (ESTABLISHED), should not be included
     expect(ports).not.toContain(31337);
@@ -44,7 +52,7 @@ describe('parseProcNetTcp', () => {
     expect(ports).not.toContain(40000);
   });
 
-  it('ignores ports on non-local addresses', () => {
+  it("ignores ports on non-local addresses", () => {
     const content = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
    0: AC110002:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 12345 1 0000000000000000 100 0 0 10 0`;
     const ports = parseProcNetTcp(content);
@@ -52,16 +60,16 @@ describe('parseProcNetTcp', () => {
     expect(ports).toHaveLength(0);
   });
 
-  it('returns empty array for empty content', () => {
-    expect(parseProcNetTcp('')).toEqual([]);
+  it("returns empty array for empty content", () => {
+    expect(parseProcNetTcp("")).toEqual([]);
   });
 
-  it('returns empty array for header-only content', () => {
+  it("returns empty array for header-only content", () => {
     const content = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode`;
     expect(parseProcNetTcp(content)).toEqual([]);
   });
 
-  it('handles malformed lines gracefully', () => {
+  it("handles malformed lines gracefully", () => {
     const content = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
    0: bad_data
    1: 00000000:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12345 1 0000000000000000 100 0 0 10 0`;
@@ -69,7 +77,7 @@ describe('parseProcNetTcp', () => {
     expect(ports).toEqual([80]);
   });
 
-  it('parses multiple listening ports correctly', () => {
+  it("parses multiple listening ports correctly", () => {
     const content = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
    0: 00000000:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 12345 1 0000000000000000 100 0 0 10 0
    1: 00000000:01BB 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 23456 1 0000000000000000 100 0 0 10 0
@@ -83,14 +91,16 @@ describe('parseProcNetTcp', () => {
   });
 });
 
-describe('PortDetector', () => {
+describe("PortDetector", () => {
   let detector: PortDetector;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockHost = createMockHost();
     detector = new PortDetector({
-      containerId: 'test-container',
+      containerId: "test-container",
       pollIntervalMs: 3000,
+      host: mockHost as any,
     });
   });
 
@@ -98,29 +108,28 @@ describe('PortDetector', () => {
     detector.dispose();
   });
 
-  describe('start and polling', () => {
-    it('calls dockerExec with correct arguments on poll', async () => {
-      mockDockerExec.mockResolvedValue({
+  describe("start and polling", () => {
+    it("calls dockerExec with correct arguments on poll", async () => {
+      mockHost.dockerExec.mockResolvedValue({
         exitCode: 0,
         stdout: SAMPLE_PROC_NET_TCP,
-        stderr: '',
+        stderr: "",
       });
 
       // Use triggerPoll directly to test polling logic without timers
       await detector.triggerPoll();
 
-      expect(mockDockerExec).toHaveBeenCalledWith(
-        'test-container',
-        ['cat', '/proc/net/tcp'],
-        { dockerPath: 'docker' }
-      );
+      expect(mockHost.dockerExec).toHaveBeenCalledWith("test-container", [
+        "cat",
+        "/proc/net/tcp",
+      ]);
     });
 
-    it('emits didDetectPort for newly detected ports', async () => {
-      mockDockerExec.mockResolvedValue({
+    it("emits didDetectPort for newly detected ports", async () => {
+      mockHost.dockerExec.mockResolvedValue({
         exitCode: 0,
         stdout: SAMPLE_PROC_NET_TCP,
-        stderr: '',
+        stderr: "",
       });
 
       const listener = vi.fn();
@@ -134,17 +143,18 @@ describe('PortDetector', () => {
       expect(listener).toHaveBeenCalledWith(8080);
     });
 
-    it('does not emit for already known ports', async () => {
+    it("does not emit for already known ports", async () => {
       const detectorWithKnown = new PortDetector({
-        containerId: 'test-container',
+        containerId: "test-container",
         pollIntervalMs: 3000,
         knownPorts: new Set([80, 3306]),
+        host: mockHost as any,
       });
 
-      mockDockerExec.mockResolvedValue({
+      mockHost.dockerExec.mockResolvedValue({
         exitCode: 0,
         stdout: SAMPLE_PROC_NET_TCP,
-        stderr: '',
+        stderr: "",
       });
 
       const listener = vi.fn();
@@ -159,11 +169,11 @@ describe('PortDetector', () => {
       detectorWithKnown.dispose();
     });
 
-    it('does not emit the same port twice across polls', async () => {
-      mockDockerExec.mockResolvedValue({
+    it("does not emit the same port twice across polls", async () => {
+      mockHost.dockerExec.mockResolvedValue({
         exitCode: 0,
         stdout: SAMPLE_PROC_NET_TCP,
-        stderr: '',
+        stderr: "",
       });
 
       const listener = vi.fn();
@@ -180,41 +190,41 @@ describe('PortDetector', () => {
       expect(listener.mock.calls.length).toBe(firstCallCount);
     });
 
-    it('start sets up interval and does initial poll', () => {
-      mockDockerExec.mockResolvedValue({
+    it("start sets up interval and does initial poll", () => {
+      mockHost.dockerExec.mockResolvedValue({
         exitCode: 0,
         stdout: SAMPLE_PROC_NET_TCP,
-        stderr: '',
+        stderr: "",
       });
 
       // Just verify start doesn't throw and calls poll
       detector.start();
 
       // dockerExec should have been called (initial poll)
-      expect(mockDockerExec).toHaveBeenCalledTimes(1);
+      expect(mockHost.dockerExec).toHaveBeenCalledTimes(1);
     });
 
-    it('start does nothing if already started', () => {
-      mockDockerExec.mockResolvedValue({
+    it("start does nothing if already started", () => {
+      mockHost.dockerExec.mockResolvedValue({
         exitCode: 0,
         stdout: SAMPLE_PROC_NET_TCP,
-        stderr: '',
+        stderr: "",
       });
 
       detector.start();
       detector.start(); // Should not create a second interval
 
       // Only one initial poll
-      expect(mockDockerExec).toHaveBeenCalledTimes(1);
+      expect(mockHost.dockerExec).toHaveBeenCalledTimes(1);
     });
   });
 
-  describe('stop', () => {
-    it('clears the interval allowing restart', async () => {
-      mockDockerExec.mockResolvedValue({
+  describe("stop", () => {
+    it("clears the interval allowing restart", async () => {
+      mockHost.dockerExec.mockResolvedValue({
         exitCode: 0,
         stdout: SAMPLE_PROC_NET_TCP,
-        stderr: '',
+        stderr: "",
       });
 
       // Start and let the initial poll complete
@@ -226,21 +236,21 @@ describe('PortDetector', () => {
       detector.stop();
 
       // After stop, start can be called again (proves interval was cleared)
-      mockDockerExec.mockClear();
+      mockHost.dockerExec.mockClear();
       detector.start();
       // start() calls poll() which calls dockerExec
-      expect(mockDockerExec).toHaveBeenCalledTimes(1);
+      expect(mockHost.dockerExec).toHaveBeenCalledTimes(1);
     });
   });
 
-  describe('addKnownPort / removeKnownPort', () => {
-    it('addKnownPort prevents detection of that port', async () => {
+  describe("addKnownPort / removeKnownPort", () => {
+    it("addKnownPort prevents detection of that port", async () => {
       detector.addKnownPort(80);
 
-      mockDockerExec.mockResolvedValue({
+      mockHost.dockerExec.mockResolvedValue({
         exitCode: 0,
         stdout: SAMPLE_PROC_NET_TCP,
-        stderr: '',
+        stderr: "",
       });
 
       const listener = vi.fn();
@@ -255,19 +265,20 @@ describe('PortDetector', () => {
       expect(detectedPorts).toContain(8080);
     });
 
-    it('removeKnownPort allows re-detection of that port', async () => {
+    it("removeKnownPort allows re-detection of that port", async () => {
       const detectorWithKnown = new PortDetector({
-        containerId: 'test-container',
+        containerId: "test-container",
         pollIntervalMs: 3000,
         knownPorts: new Set([80]),
+        host: mockHost as any,
       });
 
       detectorWithKnown.removeKnownPort(80);
 
-      mockDockerExec.mockResolvedValue({
+      mockHost.dockerExec.mockResolvedValue({
         exitCode: 0,
         stdout: SAMPLE_PROC_NET_TCP,
-        stderr: '',
+        stderr: "",
       });
 
       const listener = vi.fn();
@@ -282,12 +293,12 @@ describe('PortDetector', () => {
     });
   });
 
-  describe('error handling', () => {
-    it('silently handles docker exec failures', async () => {
-      mockDockerExec.mockResolvedValue({
+  describe("error handling", () => {
+    it("silently handles docker exec failures", async () => {
+      mockHost.dockerExec.mockResolvedValue({
         exitCode: 1,
-        stdout: '',
-        stderr: 'container not running',
+        stdout: "",
+        stderr: "container not running",
       });
 
       const listener = vi.fn();
@@ -298,8 +309,8 @@ describe('PortDetector', () => {
       expect(listener).not.toHaveBeenCalled();
     });
 
-    it('silently handles docker exec rejections', async () => {
-      mockDockerExec.mockRejectedValue(new Error('spawn ENOENT'));
+    it("silently handles docker exec rejections", async () => {
+      mockHost.dockerExec.mockRejectedValue(new Error("spawn ENOENT"));
 
       const listener = vi.fn();
       detector.onDidDetectPort(listener);
@@ -310,20 +321,20 @@ describe('PortDetector', () => {
       expect(listener).not.toHaveBeenCalled();
     });
 
-    it('continues polling after an error', async () => {
+    it("continues polling after an error", async () => {
       const listener = vi.fn();
       detector.onDidDetectPort(listener);
 
       // First poll fails
-      mockDockerExec.mockRejectedValueOnce(new Error('network error'));
+      mockHost.dockerExec.mockRejectedValueOnce(new Error("network error"));
       await detector.triggerPoll();
       expect(listener).not.toHaveBeenCalled();
 
       // Second poll succeeds
-      mockDockerExec.mockResolvedValueOnce({
+      mockHost.dockerExec.mockResolvedValueOnce({
         exitCode: 0,
         stdout: SAMPLE_PROC_NET_TCP,
-        stderr: '',
+        stderr: "",
       });
       await detector.triggerPoll();
 
@@ -331,12 +342,12 @@ describe('PortDetector', () => {
     });
   });
 
-  describe('dispose', () => {
-    it('stops polling and removes listeners', async () => {
-      mockDockerExec.mockResolvedValue({
+  describe("dispose", () => {
+    it("stops polling and removes listeners", async () => {
+      mockHost.dockerExec.mockResolvedValue({
         exitCode: 0,
         stdout: SAMPLE_PROC_NET_TCP,
-        stderr: '',
+        stderr: "",
       });
 
       const listener = vi.fn();
@@ -348,53 +359,53 @@ describe('PortDetector', () => {
       detector.dispose();
 
       // After dispose, triggerPoll should not emit
-      mockDockerExec.mockClear();
+      mockHost.dockerExec.mockClear();
       await detector.triggerPoll();
-      expect(mockDockerExec).not.toHaveBeenCalled();
+      expect(mockHost.dockerExec).not.toHaveBeenCalled();
       expect(listener).not.toHaveBeenCalled();
     });
 
-    it('is idempotent', () => {
+    it("is idempotent", () => {
       detector.dispose();
       detector.dispose(); // Should not throw
     });
 
-    it('prevents start after dispose', () => {
+    it("prevents start after dispose", () => {
       detector.dispose();
 
-      mockDockerExec.mockResolvedValue({
+      mockHost.dockerExec.mockResolvedValue({
         exitCode: 0,
         stdout: SAMPLE_PROC_NET_TCP,
-        stderr: '',
+        stderr: "",
       });
 
       detector.start();
 
-      expect(mockDockerExec).not.toHaveBeenCalled();
+      expect(mockHost.dockerExec).not.toHaveBeenCalled();
     });
   });
 
-  describe('custom docker path', () => {
-    it('passes custom docker path to dockerExec', async () => {
+  describe("custom host", () => {
+    it("routes dockerExec through the host", async () => {
+      const customHost = createMockHost();
       const customDetector = new PortDetector({
-        containerId: 'test-container',
-        dockerPath: '/usr/local/bin/docker',
+        containerId: "test-container",
         pollIntervalMs: 3000,
+        host: customHost as any,
       });
 
-      mockDockerExec.mockResolvedValue({
+      customHost.dockerExec.mockResolvedValue({
         exitCode: 0,
         stdout: SAMPLE_PROC_NET_TCP,
-        stderr: '',
+        stderr: "",
       });
 
       await customDetector.triggerPoll();
 
-      expect(mockDockerExec).toHaveBeenCalledWith(
-        'test-container',
-        ['cat', '/proc/net/tcp'],
-        { dockerPath: '/usr/local/bin/docker' }
-      );
+      expect(customHost.dockerExec).toHaveBeenCalledWith("test-container", [
+        "cat",
+        "/proc/net/tcp",
+      ]);
 
       customDetector.dispose();
     });

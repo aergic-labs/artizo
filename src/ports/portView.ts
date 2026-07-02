@@ -28,9 +28,7 @@ export interface IPortForwarderView {
   onDidUnforwardPort(listener: (containerPort: number) => void): void;
 }
 
-/**
- * Tree item representing a single forwarded port in the Ports view.
- */
+/** Tree item representing a single forwarded port in the Ports view. */
 export class PortTreeItem extends vscode.TreeItem {
   constructor(public readonly port: ForwardedPort) {
     const label = port.label
@@ -80,9 +78,7 @@ export class PortViewProvider implements vscode.TreeDataProvider<ForwardedPort> 
     this.portForwarder.onDidUnforwardPort(() => this.refresh());
   }
 
-  /**
-   * Refresh the tree view.
-   */
+  /** Refresh the tree view. */
   refresh(): void {
     this._onDidChangeTreeData.fire();
   }
@@ -98,9 +94,7 @@ export class PortViewProvider implements vscode.TreeDataProvider<ForwardedPort> 
     return this.portForwarder.getForwardedPorts();
   }
 
-  /**
-   * Register commands for add/remove/label actions and create the tree view.
-   */
+  /** Register commands for add/remove/label actions and create the tree view. */
   static register(
     context: vscode.ExtensionContext,
     portForwarder: IPortForwarderView,
@@ -132,9 +126,7 @@ export class PortViewProvider implements vscode.TreeDataProvider<ForwardedPort> 
     return provider;
   }
 
-  /**
-   * Prompt the user to add a new port forward.
-   */
+  /** Prompt the user to add a new port forward. */
   async addPort(): Promise<void> {
     const input = await vscode.window.showInputBox({
       prompt: "Enter the container port to forward",
@@ -156,16 +148,12 @@ export class PortViewProvider implements vscode.TreeDataProvider<ForwardedPort> 
     await this.portForwarder.forwardPort(containerPort);
   }
 
-  /**
-   * Remove a forwarded port.
-   */
+  /** Remove a forwarded port. */
   async removePort(port: ForwardedPort): Promise<void> {
     await this.portForwarder.unforwardPort(port.containerPort);
   }
 
-  /**
-   * Set or update the label for a forwarded port.
-   */
+  /** Set or update the label for a forwarded port. */
   async setLabel(port: ForwardedPort): Promise<void> {
     const label = await vscode.window.showInputBox({
       prompt: "Enter a label for this port",
@@ -182,9 +170,7 @@ export class PortViewProvider implements vscode.TreeDataProvider<ForwardedPort> 
     this.refresh();
   }
 
-  /**
-   * Dispose resources.
-   */
+  /** Dispose resources. */
   dispose(): void {
     this._onDidChangeTreeData.dispose();
     for (const d of this.disposables) {

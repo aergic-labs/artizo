@@ -9,25 +9,33 @@ vi.mock("../../src/utils/dockerUtils", () => ({
   dockerExec: vi.fn(),
 }));
 
-import { dockerExec } from "../../src/utils/dockerUtils";
 import { CredentialForwarder } from "../../src/credentials/credentialForwarder";
 
-const mockDockerExec = vi.mocked(dockerExec);
+function createMockHost() {
+  return {
+    dockerExec: vi
+      .fn()
+      .mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
+    dockerPath: "docker",
+  };
+}
 
 describe("CredentialForwarder", () => {
+  let mockHost: ReturnType<typeof createMockHost>;
+
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDockerExec.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+    mockHost = createMockHost();
   });
 
   describe("setupGitCredentialHelper", () => {
     it("writes the credential helper script to the container", async () => {
-      const forwarder = new CredentialForwarder();
+      const forwarder = new CredentialForwarder({ host: mockHost as any });
 
       await forwarder.setupGitCredentialHelper("test-container");
 
       // First call writes the script
-      expect(mockDockerExec).toHaveBeenCalledWith(
+      expect(mockHost.dockerExec).toHaveBeenCalledWith(
         "test-container",
         expect.arrayContaining([
           "sh",
@@ -36,72 +44,65 @@ describe("CredentialForwarder", () => {
             "cat > /tmp/.kiro-server/artizo-credential-helper.sh",
           ),
         ]),
-        expect.objectContaining({ dockerPath: "docker" }),
       );
     });
 
     it("makes the helper script executable", async () => {
-      const forwarder = new CredentialForwarder();
+      const forwarder = new CredentialForwarder({ host: mockHost as any });
 
       await forwarder.setupGitCredentialHelper("test-container");
 
-      expect(mockDockerExec).toHaveBeenCalledWith(
-        "test-container",
-        ["chmod", "+x", "/tmp/.kiro-server/artizo-credential-helper.sh"],
-        expect.objectContaining({ dockerPath: "docker" }),
-      );
+      expect(mockHost.dockerExec).toHaveBeenCalledWith("test-container", [
+        "chmod",
+        "+x",
+        "/tmp/.kiro-server/artizo-credential-helper.sh",
+      ]);
     });
 
     it("configures git to use the credential helper", async () => {
-      const forwarder = new CredentialForwarder();
+      const forwarder = new CredentialForwarder({ host: mockHost as any });
 
       await forwarder.setupGitCredentialHelper("test-container");
 
-      expect(mockDockerExec).toHaveBeenCalledWith(
-        "test-container",
-        [
-          "git",
-          "config",
-          "--global",
-          "credential.helper",
-          "!/tmp/.kiro-server/artizo-credential-helper.sh",
-        ],
-        expect.objectContaining({ dockerPath: "docker" }),
-      );
+      expect(mockHost.dockerExec).toHaveBeenCalledWith("test-container", [
+        "git",
+        "config",
+        "--global",
+        "credential.helper",
+        "!/tmp/.kiro-server/artizo-credential-helper.sh",
+      ]);
     });
 
-    it("uses custom docker path when provided", async () => {
+    it("routes dockerExec through the host", async () => {
+      const customHost = createMockHost();
       const forwarder = new CredentialForwarder({
-        dockerPath: "/usr/local/bin/docker",
+        host: customHost as any,
       });
 
       await forwarder.setupGitCredentialHelper("my-container");
 
-      // All calls should use the custom docker path
-      for (const call of mockDockerExec.mock.calls) {
-        expect(call[2]).toEqual(
-          expect.objectContaining({ dockerPath: "/usr/local/bin/docker" }),
-        );
+      // All calls should go through the host
+      for (const call of customHost.dockerExec.mock.calls) {
+        expect(call[0]).toBe("my-container");
       }
     });
 
     it("completes all three setup steps", async () => {
-      const forwarder = new CredentialForwarder();
+      const forwarder = new CredentialForwarder({ host: mockHost as any });
 
       await forwarder.setupGitCredentialHelper("test-container");
 
       // Each step should have been called
-      expect(mockDockerExec).toHaveBeenCalledWith(
+      expect(mockHost.dockerExec).toHaveBeenCalledWith(
         "test-container",
         expect.arrayContaining(["sh", "-c"]),
-        expect.anything(),
       );
-      expect(mockDockerExec).toHaveBeenCalledWith(
-        "test-container",
-        ["chmod", "+x", "/tmp/.kiro-server/artizo-credential-helper.sh"],
-        expect.anything(),
-      );
-      expect(mockDockerExec).toHaveBeenCalledWith(
+      expect(mockHost.dockerExec).toHaveBeenCalledWith("test-container", [
+        "chmod",
+        "+x",
+        "/tmp/.kiro-server/artizo-credential-helper.sh",
+      ]);
+      expect(mockHost.dockerExec).toHaveBeenCalledWith(
         "test-container",
         expect.arrayContaining([
           "git",
@@ -109,16 +110,15 @@ describe("CredentialForwarder", () => {
           "--global",
           "credential.helper",
         ]),
-        expect.anything(),
       );
     });
 
     it("helper script contains docker exec callback logic", async () => {
-      const forwarder = new CredentialForwarder();
+      const forwarder = new CredentialForwarder({ host: mockHost as any });
 
       await forwarder.setupGitCredentialHelper("test-container");
 
-      const writeCall = mockDockerExec.mock.calls[0];
+      const writeCall = mockHost.dockerExec.mock.calls[0];
       const scriptContent = writeCall[1][2]; // The sh -c argument
       expect(scriptContent).toContain("git credential");
       expect(scriptContent).toContain("ARTIZO_HOST_ID");

@@ -15,7 +15,8 @@ const {
   mockCreateServices,
   mockAutoDetectDevcontainer,
   mockRegisterCoreCommands,
-  mockConfigureDockerPath,
+  mockHostCreate,
+  mockGetPlatformAdapter,
 } = vi.hoisted(() => ({
   mockInitializeLogger: vi.fn(),
   mockValidatePlatformRuntime: vi.fn(),
@@ -26,7 +27,8 @@ const {
   mockCreateServices: vi.fn(),
   mockAutoDetectDevcontainer: vi.fn(),
   mockRegisterCoreCommands: vi.fn(),
-  mockConfigureDockerPath: vi.fn(),
+  mockHostCreate: vi.fn(),
+  mockGetPlatformAdapter: vi.fn(),
 }));
 
 vi.mock("vscode", () => ({
@@ -34,6 +36,10 @@ vi.mock("vscode", () => ({
     createTerminal: vi
       .fn()
       .mockReturnValue({ show: vi.fn(), dispose: vi.fn() }),
+    createStatusBarItem: vi.fn().mockReturnValue({
+      show: vi.fn(),
+      dispose: vi.fn(),
+    }),
     showErrorMessage: vi.fn(),
     showInformationMessage: vi.fn(),
   },
@@ -51,6 +57,8 @@ vi.mock("vscode", () => ({
     parse: (str: string) => ({ toString: () => str, fsPath: str }),
   },
   env: { remoteName: undefined, appRoot: "/mock/app/root" },
+  ExtensionKind: { UI: 1, Workspace: 2 },
+  StatusBarAlignment: { Left: 1, Right: 2 },
 }));
 
 vi.mock("../../src/host/services", () => ({
@@ -68,8 +76,12 @@ vi.mock("../../src/host/commands", () => ({
   registerCoreCommands: mockRegisterCoreCommands,
 }));
 
-vi.mock("../../src/docker/execPolicy", () => ({
-  configureDockerPath: mockConfigureDockerPath,
+vi.mock("../../src/host/host", () => ({
+  Host: { create: mockHostCreate },
+}));
+
+vi.mock("../../src/platform/index", () => ({
+  getPlatformAdapter: mockGetPlatformAdapter,
 }));
 
 vi.mock("../../src/utils/logger", () => ({
@@ -94,8 +106,10 @@ function createMockContext(): any {
   return {
     subscriptions: [] as any[],
     extensionPath: "/mock/extension/path",
+    extensionUri: { toString: () => "file:///mock/extension/path" },
     logPath: "/mock/log/path",
     extensionMode: 1,
+    extension: { extensionKind: 2 }, // workspace
     workspaceState: {
       get: vi.fn().mockReturnValue(false),
       update: vi.fn().mockResolvedValue(undefined),
@@ -118,11 +132,16 @@ describe("extension activation", () => {
       commit: "abc123",
       serverApplicationName: "kiro-server",
     });
+    mockHostCreate.mockReturnValue({
+      kind: "local",
+      isManaged: false,
+    });
+    mockGetPlatformAdapter.mockResolvedValue({
+      dataFolderName: ".kiro-server",
+    });
     mockCreateServices.mockReturnValue({
       configManager: {},
       serverManager: {},
-      bridge: {},
-      orchestrator: {},
       ui: {},
       gitConfigCopier: {},
       deps: {},
@@ -139,7 +158,9 @@ describe("extension activation", () => {
     expect(mockInitializeLogger).toHaveBeenCalledWith(context);
     expect(mockValidatePlatformRuntime).toHaveBeenCalledWith(context);
     expect(mockReadSettings).toHaveBeenCalled();
-    expect(mockConfigureDockerPath).toHaveBeenCalledWith("docker");
+    expect(mockHostCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ dockerPath: "docker" }),
+    );
     expect(mockEnsureResolversAvailable).toHaveBeenCalled();
     expect(mockRegisterResolverEarly).toHaveBeenCalled();
     expect(mockLoadProductInfo).toHaveBeenCalled();

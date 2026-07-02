@@ -30,7 +30,7 @@ export const FORBIDDEN_TERMS = {
 
 /**
  * Return the list of forbidden terms found in `text`, each with an occurrence
- * count and a short context snippet. Pure function — unit tested.
+ * count and a short context snippet. Pure function, unit tested.
  *
  * A term matches only at a *token start* (negative lookbehind for a letter), so
  * distinctive brand strings are caught even when embedded in a larger
@@ -85,6 +85,7 @@ export function scanTarget(root, target) {
 
   const files = [
     path.join(root, "dist", "extension.js"),
+    path.join(root, "dist", "argv-patch-remote.cjs"),
     ...collectTextFiles(path.join(root, "src", "webview"), [
       ".js",
       ".html",
@@ -102,7 +103,7 @@ export function scanTarget(root, target) {
   return findings;
 }
 
-// ── CLI ──────────────────────────────────────────────────────
+// CLI
 const invokedDirectly =
   process.argv[1] &&
   path.resolve(process.argv[1]) ===
@@ -117,7 +118,7 @@ if (invokedDirectly) {
   // This is a build-time guard: it needs a TARGET and a built bundle. When run
   // without a target (e.g. as part of `npm run lint`), skip rather than fail.
   if (!target) {
-    console.log("guard-bundle: no TARGET set — skipping (build-time guard).");
+    console.log("guard-bundle: no TARGET set, skipping (build-time guard).");
     process.exit(0);
   }
   if (!FORBIDDEN_TERMS[target]) {
@@ -129,7 +130,7 @@ if (invokedDirectly) {
 
   const distBundle = path.join(root, "dist", "extension.js");
   if (!existsSync(distBundle)) {
-    console.error("guard-bundle: dist/extension.js not found — build first");
+    console.error("guard-bundle: dist/extension.js not found, build first");
     process.exit(1);
   }
 

@@ -7,43 +7,22 @@ import * as vscode from "vscode";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-/** Log levels matching the official extension. */
-export enum LogLevel {
-  Info = 0,
-  Debug = 1,
-  Trace = 2,
-}
-
 /**
- * ANSI escape codes for terminal formatting.
- */
-const ANSI = {
-  reset: "\x1b[0m",
-  bold: "\x1b[1m",
-  dim: "\x1b[2m",
-  red: "\x1b[31m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  blue: "\x1b[34m",
-  cyan: "\x1b[36m",
-  gray: "\x1b[90m",
-};
-
-/**
- * A pseudo-terminal that writes text directly to the terminal buffer
- * without shell interpretation. Uses Pseudoterminal (no OutputChannel),
- * file-based log persistence, ANSI color support, session timestamps,
- * and log level filtering.
+ * A pseudo-terminal that renders docker build / provision output in a
+ * familiar colored terminal view. It also keeps a bounded on-disk log and
+ * a recent-output ring buffer for diagnose-on-failure.
+ *
+ * This is NOT the app logger - diagnostics go through getLogger() to an
+ * OutputChannel (see utils/logger.ts). This terminal is a build-output
+ * mirror only; the OutputChannel holds the authoritative record.
  */
 export class LogOutputTerminal implements vscode.Pseudoterminal {
   private writeEmitter = new vscode.EventEmitter<string>();
   private closeEmitter = new vscode.EventEmitter<number | void>();
-  private inputEmitter = new vscode.EventEmitter<string>();
-  private opened = false;
   private buffer: string[] = [];
+  private opened = false;
   private logPath: string;
   private sessionStart: Date;
-  private logLevel: LogLevel = LogLevel.Info;
 
   /** Bounded recent-output ring buffer (chars), for diagnose-on-failure. */
   private recent = "";
@@ -51,9 +30,6 @@ export class LogOutputTerminal implements vscode.Pseudoterminal {
 
   onDidWrite = this.writeEmitter.event;
   onDidClose = this.closeEmitter.event;
-  onDidInput = this.inputEmitter.event;
-  /** Called when the user presses a key. Used for "press any key to close" */
-  onDidInputRaw = this.inputEmitter.event;
 
   constructor(logPath?: string) {
     this.sessionStart = new Date();
@@ -65,12 +41,8 @@ export class LogOutputTerminal implements vscode.Pseudoterminal {
       );
   }
 
-  setLogLevel(level: LogLevel): void {
-    this.logLevel = level;
-  }
-
   /**
-   * Recent log output (bounded tail), with ANSI codes and CRLF stripped —
+   * Recent log output (bounded tail), with ANSI codes and CRLF stripped -
    * suitable for handing to an AI for diagnosis. `maxChars` further trims the
    * returned tail (the prompt doesn't need the full 64KB).
    */
@@ -88,8 +60,9 @@ export class LogOutputTerminal implements vscode.Pseudoterminal {
   }
 
   open(): void {
+    // The renderer has subscribed to onDidWrite by now. Flush anything
+    // buffered before the terminal was shown, then stream directly.
     this.opened = true;
-    // Flush buffered writes
     for (const text of this.buffer) {
       this.writeEmitter.fire(text);
     }
@@ -97,16 +70,16 @@ export class LogOutputTerminal implements vscode.Pseudoterminal {
   }
 
   close(): void {
-    // No-op. Cleanup handled by dispose
-  }
-
-  handleInput(data: string): void {
-    this.inputEmitter.fire(data);
+    // No-op. Cleanup handled by dispose.
   }
 
   write(text: string): void {
     const formatted = text.replace(/\r?\n/g, "\r\n");
     this.appendToLogFile(formatted);
+    // Once the terminal is open, fire directly. Before that, buffer so the
+    // output isn't lost; open() flushes it. (A naive opened-flag rather than
+    // probing the emitter's private internals, which proved unreliable and
+    // dropped all post-open output.)
     if (this.opened) {
       this.writeEmitter.fire(formatted);
     } else {
@@ -118,84 +91,14 @@ export class LogOutputTerminal implements vscode.Pseudoterminal {
     this.write(text + "\n");
   }
 
-  // Bypasses \r\n conversion for binary/ANSI output.
-  raw(text: string): void {
-    this.appendToLogFile(text);
-    if (this.opened) {
-      this.writeEmitter.fire(text);
-    } else {
-      this.buffer.push(text);
-    }
-  }
-
-  // ---- Log level methods ----
-
-  info(message: string): void {
-    if (this.logLevel >= LogLevel.Info) {
-      const ts = this.timestamp();
-      this.writeLine(
-        `${ANSI.gray}[${ts}]${ANSI.reset} ${ANSI.cyan}[INFO]${ANSI.reset} ${message}`,
-      );
-    }
-  }
-
-  debug(message: string): void {
-    if (this.logLevel >= LogLevel.Debug) {
-      const ts = this.timestamp();
-      this.writeLine(
-        `${ANSI.gray}[${ts}]${ANSI.reset} ${ANSI.green}[DEBUG]${ANSI.reset} ${message}`,
-      );
-    }
-  }
-
-  trace(message: string): void {
-    if (this.logLevel >= LogLevel.Trace) {
-      const ts = this.timestamp();
-      this.writeLine(
-        `${ANSI.gray}[${ts}]${ANSI.reset} ${ANSI.dim}[TRACE]${ANSI.reset} ${message}`,
-      );
-    }
-  }
-
-  error(message: string): void {
-    const ts = this.timestamp();
-    this.writeLine(
-      `${ANSI.gray}[${ts}]${ANSI.reset} ${ANSI.red}[ERROR]${ANSI.reset} ${message}`,
-    );
-  }
-
-  warn(message: string): void {
-    if (this.logLevel >= LogLevel.Info) {
-      const ts = this.timestamp();
-      this.writeLine(
-        `${ANSI.gray}[${ts}]${ANSI.reset} ${ANSI.yellow}[WARN]${ANSI.reset} ${message}`,
-      );
-    }
-  }
-
-  done(): void {
-    this.raw(
-      `\r\n${ANSI.bold}Done. Press any key to close the terminal.${ANSI.reset}\r\n`,
-    );
-  }
-
-  end(exitCode?: number): void {
-    this.closeEmitter.fire(exitCode);
-  }
-
   dispose(): void {
     this.writeEmitter.dispose();
     this.closeEmitter.dispose();
-    this.inputEmitter.dispose();
     try {
-      require("node:fs").unlinkSync(this.logPath);
-    } catch {}
-  }
-
-  // ---- Private helpers ----
-
-  private timestamp(): string {
-    return new Date().toISOString().slice(11, 19);
+      fs.unlinkSync(this.logPath);
+    } catch {
+      // best effort
+    }
   }
 
   private _logFileFailed = false;
@@ -211,13 +114,10 @@ export class LogOutputTerminal implements vscode.Pseudoterminal {
         fs.mkdirSync(dir, { recursive: true });
       }
       fs.appendFileSync(this.logPath, text);
-    } catch (err: unknown) {
+    } catch {
+      // Disk logging is best-effort; the OutputChannel is the authoritative
+      // record, so a failure here is silent (avoid a write loop).
       this._logFileFailed = true;
-      // Warn once on the terminal that file logging is broken
-      const msg = err instanceof Error ? err.message : String(err);
-      this.write(
-        `\r\n${ANSI.yellow}[WARN] Cannot write log file: ${msg}${ANSI.reset}\r\n`,
-      );
     }
   }
 }

@@ -22,8 +22,7 @@ body {
     height: 100vh;
 }
 
-/* ── Status bar ─────────────────────────────────────────── */
-
+/* Status bar */
 #status-bar {
     flex-shrink: 0;
     padding: 4px 12px;
@@ -32,8 +31,7 @@ body {
     border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
 }
 
-/* ── Panels ────────────────────────────────────────────── */
-
+/* Panels */
 .panel {
     display: none;
     flex-direction: column;
@@ -47,8 +45,7 @@ body {
     display: flex;
 }
 
-/* ── Sections ──────────────────────────────────────────── */
-
+/* Sections */
 .section {
     display: flex;
     flex-direction: column;
@@ -97,8 +94,7 @@ body {
     padding: 16px 8px;
 }
 
-/* ── Accordion ─────────────────────────────────────────── */
-
+/* Accordion */
 .accordion-header {
     display: flex;
     align-items: center;
@@ -142,8 +138,7 @@ body {
     display: none;
 }
 
-/* ── Extension filter ───────────────────────────────────── */
-
+/* Extension filter */
 #extension-filter {
     padding: 3px 6px;
     margin-top: 4px;
@@ -165,8 +160,7 @@ body {
     color: var(--vscode-input-placeholderForeground);
 }
 
-/* ── Feature rows ──────────────────────────────────────── */
-
+/* Feature rows */
 .toggle-wrapper {
     display: flex;
     flex-direction: column;
@@ -236,8 +230,7 @@ body {
     margin-top: 2px;
 }
 
-/* ── Resource rows (containers, volumes) ────────────────── */
-
+/* Resource rows (containers, volumes) */
 .resource-row {
     display: flex;
     flex-direction: column;
@@ -310,8 +303,7 @@ body {
     flex-shrink: 0;
 }
 
-/* ── Refresh button ─────────────────────────────────────── */
-
+/* Refresh button */
 .refresh-btn {
     display: none;
     align-items: center;
@@ -337,8 +329,7 @@ body {
     background: var(--vscode-toolbar-hoverBackground);
 }
 
-/* ── List rows ─────────────────────────────────────────── */
-
+/* List rows */
 .list-row {
     display: flex;
     align-items: center;
@@ -380,8 +371,7 @@ body {
     padding-left: 20px;
 }
 
-/* ── Add row ───────────────────────────────────────────── */
-
+/* Add row */
 .add-row {
     display: flex;
     gap: 4px;
@@ -416,8 +406,7 @@ body {
     margin: 0;
 }
 
-/* ── Buttons ───────────────────────────────────────────── */
-
+/* Buttons */
 .btn {
     display: inline-flex;
     align-items: center;
@@ -467,8 +456,7 @@ body {
     background: var(--vscode-button-hoverBackground);
 }
 
-/* ── Scrollbar styling ─────────────────────────────────── */
-
+/* Scrollbar styling */
 .panel::-webkit-scrollbar {
     width: 8px;
 }
@@ -482,8 +470,7 @@ body {
     background: var(--vscode-scrollbarSlider-hoverBackground);
 }
 
-/* ── Software rows ──────────────────────────────────────── */
-
+/* Software rows */
 .software-row {
     display: flex;
     align-items: center;
@@ -505,8 +492,7 @@ body {
     height: 13px;
 }
 
-/* ── Software freeform input ────────────────────────────── */
-
+/* Software freeform input */
 .freeform-row {
     display: flex;
     gap: 4px;
@@ -530,8 +516,7 @@ body {
     border-color: var(--vscode-focusBorder);
 }
 
-/* ── Wizard tabs ─────────────────────────────────────────── */
-
+/* Wizard tabs */
 .tab-bar {
     display: flex;
     border-bottom: 1px solid
@@ -585,8 +570,7 @@ body {
     font-style: italic;
 }
 
-/* ── Error banner ─────────────────────────────────────────── */
-
+/* Error banner */
 .error-banner {
     margin: 6px 8px;
     padding: 8px 10px;

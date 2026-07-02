@@ -5,18 +5,25 @@
 
 import * as vscode from "vscode";
 import { URI } from "vscode-uri";
-import { encodeAuthority } from "../utils/uriUtils";
 import { BRAND, BRAND_PREFIX } from "../utils/constants";
-import { getLogger } from "../utils/logger";
-import type { WorkflowDependencies, WorkflowUI } from "./types";
+import type { BuildResult, WorkflowDependencies, WorkflowUI } from "./types";
 import { launchProvision, withDefaults } from "../devcontainer/api";
 import { ProvisionFailedError } from "../devcontainer/provisionError";
 import { getPlatformAdapter } from "../platform";
-import { connectToContainer, writeOverrideConfig } from "./postLaunch";
+import {
+  connectToContainer,
+  writeOverrideConfig,
+  buildIdentityLabels,
+  finishBackgroundTasks,
+  buildAuthorityAndOpen,
+  throwIfCancelled,
+  CancelledError,
+} from "./postLaunch";
 import type { ReadConfigResult } from "../config/configManager";
 
 export interface RebuildContainerParams {
   workspaceFolder: string;
+  workspaceUri: vscode.Uri;
   noCache?: boolean;
   reconnect?: boolean;
 }
@@ -26,105 +33,89 @@ export async function rebuildContainer(
   ui: WorkflowUI,
   params: RebuildContainerParams,
 ): Promise<void> {
-  const { configManager, bridge, orchestrator } = deps;
-  const { workspaceFolder, noCache, reconnect } = params;
+  const { configManager } = deps;
+  const { workspaceFolder, workspaceUri, noCache, reconnect } = params;
 
   let configResult: ReadConfigResult | undefined;
   let perContainerDisable = false;
 
   try {
-    if (bridge.isConnected()) {
-      await bridge.disconnect();
+    // Phase 1: Config
+    configResult = await configManager.readConfig(workspaceUri);
+
+    if (!configResult.config) {
+      throw new Error("No devcontainer.json found in workspace");
     }
 
-    const buildResult = await orchestrator.run({
-      name: "Rebuild Container",
+    if (configResult.parseErrors.length > 0) {
+      const errorMessages = configResult.parseErrors
+        .map((e) => `Line ${e.line}: ${e.message}`)
+        .join("\n");
+      throw new Error(`devcontainer.json has parse errors:\n${errorMessages}`);
+    }
 
-      config: async () => {
-        configResult = configManager.readConfig(workspaceFolder);
+    perContainerDisable = !!(
+      configResult.config as Record<string, unknown> | undefined
+    )?.["disableCopyGitConfig"];
 
-        if (!configResult.config) {
-          throw new Error("No devcontainer.json found in workspace");
+    // Phase 2: Build
+    let result:
+      | {
+          containerId: string;
+          remoteUser: string;
+          remoteWorkspaceFolder: string;
+          finishBackgroundTasks?: () => Promise<void>;
         }
+      | undefined;
 
-        if (configResult.parseErrors.length > 0) {
-          const errorMessages = configResult.parseErrors
-            .map((e) => `Line ${e.line}: ${e.message}`)
-            .join("\n");
-          throw new Error(
-            `devcontainer.json has parse errors:\n${errorMessages}`,
-          );
-        }
+    await ui.showProgress(
+      `${BRAND}: Rebuilding Container`,
+      async (progress, token) => {
+        progress.report({
+          message: noCache ? "Building without cache..." : "Building...",
+        });
 
-        perContainerDisable = !!(
-          configResult.config as Record<string, unknown> | undefined
-        )?.["disableCopyGitConfig"];
+        const platformTarget = (await getPlatformAdapter()).name.toLowerCase();
+        const idLabels = buildIdentityLabels({
+          platformTarget,
+          workspaceFolder,
+          configPath: configResult!.configPath,
+        });
+        const options = withDefaults({
+          workspaceFolder,
+          configFile: configResult!.configPath
+            ? URI.file(configResult!.configPath)
+            : undefined,
+          buildNoCache: noCache ?? false,
+          removeExistingContainer: true,
+          defaultUserEnvProbe: reconnect ? "loginInteractiveShell" : "none",
+          additionalLabels: idLabels,
+          log: (text: string) => ui.showBuildLog(text),
+        });
+
+        result = await launchProvision(
+          options,
+          configResult!.configPath,
+          undefined,
+          idLabels,
+        );
+        throwIfCancelled(token);
       },
+    );
 
-      build: {
-        label: `${BRAND}: Rebuilding Container`,
+    await finishBackgroundTasks(result);
 
-        run: async (_progress) => {
-          let result:
-            | {
-                containerId: string;
-                remoteUser: string;
-                remoteWorkspaceFolder: string;
-                finishBackgroundTasks?: () => Promise<void>;
-              }
-            | undefined;
+    if (!result?.containerId) {
+      throw new Error("CLI did not return a container ID");
+    }
 
-          await ui.showProgress(
-            `${BRAND}: Rebuilding Container`,
-            async (progress) => {
-              progress.report({
-                message: noCache ? "Building without cache..." : "Building...",
-              });
-
-              const options = withDefaults({
-                workspaceFolder,
-                configFile: configResult!.configPath
-                  ? URI.file(configResult!.configPath)
-                  : undefined,
-                buildNoCache: noCache ?? false,
-                defaultUserEnvProbe: reconnect
-                  ? "loginInteractiveShell"
-                  : "none",
-                log: (text: string) => ui.showBuildLog(text),
-              });
-
-              result = await launchProvision(
-                options,
-                configResult!.configPath,
-              );
-            },
-          );
-
-          if (result?.finishBackgroundTasks) {
-            try {
-              await result.finishBackgroundTasks();
-            } catch (err) {
-              getLogger().warn(
-                `finishBackgroundTasks failed: ${(err as Error).message}`,
-              );
-            }
-          }
-
-          if (!result?.containerId) {
-            throw new Error("CLI did not return a container ID");
-          }
-
-          return {
-            containerId: result.containerId,
-            remoteUser: result.remoteUser,
-            remoteWorkspaceFolder: result.remoteWorkspaceFolder,
-          };
-        },
-      },
-    });
+    const buildResult: BuildResult = {
+      containerId: result.containerId,
+      remoteUser: result.remoteUser,
+      remoteWorkspaceFolder: result.remoteWorkspaceFolder,
+    };
 
     if (!reconnect) {
-      orchestrator.reset();
       ui.showBuildLog(`${BRAND_PREFIX} Build complete.`);
       ui.showInfo(`${BRAND_PREFIX} Container image rebuilt successfully.`);
       return;
@@ -159,15 +150,21 @@ export async function rebuildContainer(
 
       await ui.showProgress(
         `${BRAND}: Starting Container`,
-        async (progress) => {
+        async (progress, token) => {
           progress.report({ message: "Starting container..." });
 
+          const relaunchPlatformTarget = (
+            await getPlatformAdapter()
+          ).name.toLowerCase();
+          const relaunchIdLabels = buildIdentityLabels({
+            platformTarget: relaunchPlatformTarget,
+            workspaceFolder,
+            configPath: configResult!.configPath,
+          });
           const upOptions = withDefaults({
             workspaceFolder,
             removeExistingContainer: true,
-            additionalLabels: [
-              `artizo.target=${(await getPlatformAdapter()).name.toLowerCase()}`,
-            ],
+            additionalLabels: relaunchIdLabels,
             configFile: configResult!.configPath
               ? URI.file(configResult!.configPath)
               : undefined,
@@ -179,19 +176,13 @@ export async function rebuildContainer(
             upOptions,
             configResult!.configPath,
             "Container start failed",
+            relaunchIdLabels,
           );
+          throwIfCancelled(token);
         },
       );
 
-      if (relaunchResult?.finishBackgroundTasks) {
-        try {
-          await relaunchResult.finishBackgroundTasks();
-        } catch (err) {
-          getLogger().warn(
-            `relaunch finishBackgroundTasks failed: ${(err as Error).message}`,
-          );
-        }
-      }
+      await finishBackgroundTasks(relaunchResult);
 
       if (!relaunchResult?.containerId) {
         throw new Error("CLI did not return a container ID on restart");
@@ -201,23 +192,39 @@ export async function rebuildContainer(
       remoteWorkspaceFolder = relaunchResult.remoteWorkspaceFolder;
     }
 
-    await connectToContainer(deps, ui, containerId, perContainerDisable);
+    const connectInfo = await connectToContainer(
+      deps,
+      ui,
+      containerId,
+      perContainerDisable,
+      configResult!.config as Record<string, unknown> | undefined,
+    );
 
     ui.showInfo(
       `${BRAND_PREFIX} Container ready. Opening workspace in remote window.`,
     );
 
-    const authority = encodeAuthority("artizo-container", workspaceFolder);
     const remotePath = remoteWorkspaceFolder || "/workspaces";
-    const uriPath = remotePath.startsWith("/") ? remotePath : "/" + remotePath;
-    await ui.openWindow(`vscode-remote://${authority}${uriPath}`, {
-      forceNewWindow: true,
+    await buildAuthorityAndOpen({
+      deps,
+      ui,
+      scheme: "artizo-container",
+      id: workspaceFolder,
+      containerId,
+      containerPort: connectInfo.port,
+      installPath: connectInfo.installPath,
+      connectionToken: connectInfo.connectionToken,
+      workspaceFolder,
+      workspacePath: remotePath,
+      uriPath: remotePath.startsWith("/") ? remotePath : "/" + remotePath,
+      windowOptions: { forceReuseWindow: true },
     });
-    await new Promise((r) => setTimeout(r, 2500));
-    await vscode.commands.executeCommand("workbench.action.closeWindow");
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
-    orchestrator.fail(error);
+
+    if (error instanceof CancelledError) {
+      return;
+    }
 
     if (error instanceof ProvisionFailedError) {
       throw error;

@@ -36,10 +36,14 @@ vi.mock("vscode", () => ({
 vi.mock("../../src/terminal/outputParser", () => ({
   parseCliOutputLine: vi.fn(),
   formatEventForTerminal: vi.fn(),
+  formatEventForChannel: vi.fn(),
 }));
 
 import * as vscode from "vscode";
-import { parseCliOutputLine, formatEventForTerminal } from "../../src/terminal/outputParser";
+import {
+  parseCliOutputLine,
+  formatEventForTerminal,
+} from "../../src/terminal/outputParser";
 import { VscodeWorkflowUI } from "../../src/workflows/vscodeUI";
 import { LogOutputTerminal } from "../../src/workflows/logOutputTerminal";
 
@@ -86,7 +90,9 @@ describe("VscodeWorkflowUI", () => {
     it("returns the selected action", async () => {
       const pty = createMockBuildLogPty();
       const ui = new VscodeWorkflowUI(pty);
-      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue("Retry" as any);
+      vi.mocked(vscode.window.showErrorMessage).mockResolvedValue(
+        "Retry" as any,
+      );
 
       const result = await ui.showError("Fail", "Retry");
 
@@ -98,7 +104,9 @@ describe("VscodeWorkflowUI", () => {
     it("delegates to vscode.window.showInformationMessage", async () => {
       const pty = createMockBuildLogPty();
       const ui = new VscodeWorkflowUI(pty);
-      vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
+      vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(
+        undefined,
+      );
 
       await ui.showInfo("All good", "OK");
 
@@ -113,7 +121,9 @@ describe("VscodeWorkflowUI", () => {
     it("returns true when user picks Create", async () => {
       const pty = createMockBuildLogPty();
       const ui = new VscodeWorkflowUI(pty);
-      vi.mocked(vscode.window.showInformationMessage).mockResolvedValue("Create" as any);
+      vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(
+        "Create" as any,
+      );
 
       const result = await ui.promptCreateConfig();
 
@@ -123,7 +133,9 @@ describe("VscodeWorkflowUI", () => {
     it("returns false when user picks Cancel", async () => {
       const pty = createMockBuildLogPty();
       const ui = new VscodeWorkflowUI(pty);
-      vi.mocked(vscode.window.showInformationMessage).mockResolvedValue("Cancel" as any);
+      vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(
+        "Cancel" as any,
+      );
 
       const result = await ui.promptCreateConfig();
 
@@ -136,7 +148,12 @@ describe("VscodeWorkflowUI", () => {
       const pty = createMockBuildLogPty();
       const ui = new VscodeWorkflowUI(pty);
 
-      const mockEvent = { type: "text" as const, level: 0, timestamp: 0, text: "hi" };
+      const mockEvent = {
+        type: "text" as const,
+        level: 0,
+        timestamp: 0,
+        text: "hi",
+      };
       vi.mocked(parseCliOutputLine).mockReturnValue(mockEvent);
       vi.mocked(formatEventForTerminal).mockReturnValue("hi\r\n");
 
@@ -163,7 +180,12 @@ describe("VscodeWorkflowUI", () => {
       const pty = createMockBuildLogPty();
       const ui = new VscodeWorkflowUI(pty);
 
-      const mockEvent = { type: "start" as const, level: 0, timestamp: 0, text: "building" };
+      const mockEvent = {
+        type: "start" as const,
+        level: 0,
+        timestamp: 0,
+        text: "building",
+      };
       vi.mocked(parseCliOutputLine).mockReturnValue(mockEvent);
       vi.mocked(formatEventForTerminal).mockReturnValue("▶ building\r\n");
 
@@ -205,7 +227,8 @@ describe("VscodeWorkflowUI", () => {
 
       expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
         "vscode.openFolder",
-        expect.objectContaining({ forceNewWindow: false }),
+        expect.anything(),
+        undefined,
       );
     });
 
@@ -219,7 +242,8 @@ describe("VscodeWorkflowUI", () => {
 
       expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
         "vscode.openFolder",
-        expect.objectContaining({ forceNewWindow: true }),
+        expect.anything(),
+        { forceNewWindow: true },
       );
     });
   });

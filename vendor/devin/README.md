@@ -17,7 +17,9 @@ Artizo Dev Containers provides the same functionality for Devin by leveraging th
 ## Requirements
 
 - [Devin](https://devin.ai)
-- Docker Desktop (or Podman)
+- Docker CLI client (`docker`)
+  - Alternatives like Podman or Rancher work too, provided their
+    optional Docker CLI compatibility packages are installed and working.
 
 That's it. Everything else is bundled with the extension.
 

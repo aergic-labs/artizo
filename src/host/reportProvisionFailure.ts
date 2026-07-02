@@ -6,8 +6,8 @@
 /**
  * Single place that reports a container build/provision failure to the user.
  *
- * Shows one notification with "Show Log" and — when the platform has an AI
- * chat — "Diagnose with AI", which hands the build-log tail plus the
+ * Shows one notification with "Show Log" and - when the platform has an AI
+ * chat - "Diagnose with AI", which hands the build-log tail plus the
  * devcontainer.json (and any Dockerfile/compose file) to the platform chat.
  *
  * Called once at the command layer for a ProvisionFailedError; the building
@@ -59,7 +59,7 @@ export async function reportProvisionFailure(
   }
 
   // The build log terminal is already shown above, so when AI is available we
-  // offer a single "Diagnose with AI" action — adding "Show Log" alongside it
+  // offer a single "Diagnose with AI" action - adding "Show Log" alongside it
   // would only let the user pick one (clicking either dismisses the toast),
   // orphaning the diagnose option. "Show Log" remains the fallback when there's
   // no AI to offer.
@@ -106,7 +106,9 @@ async function diagnose(
   const configPath = error.configPath;
   let dockerfileAbs: string | undefined;
   if (configPath && workspaceFolder) {
-    const cfg = ctx.configManager.readConfig(workspaceFolder);
+    const cfg = await ctx.configManager.readConfig(
+      vscode.Uri.file(workspaceFolder),
+    );
     if (cfg.config) {
       dockerfileAbs = resolveDockerfilePath(
         cfg.config as Record<string, unknown>,
@@ -130,7 +132,9 @@ async function diagnose(
   const prompt =
     `${base}\n\n---\n\n` +
     `## Build error\n\n${error.message}\n\n` +
-    (relConfig ? `## Config\n\nThe devcontainer config is at \`${relConfig}\`.\n` : "") +
+    (relConfig
+      ? `## Config\n\nThe devcontainer config is at \`${relConfig}\`.\n`
+      : "") +
     (relDockerfile
       ? `The referenced Dockerfile/compose file is at \`${relDockerfile}\`.\n`
       : "") +
@@ -138,7 +142,7 @@ async function diagnose(
     `## Full build log\n\n` +
     `The full log file is at \`${logPath}\`. It is a rolling session log that ` +
     `also contains EARLIER, unrelated operations and previous build attempts. ` +
-    `The failure you are diagnosing is the MOST RECENT run — at the very end of ` +
+    `The failure you are diagnosing is the MOST RECENT run - at the very end of ` +
     `the file. If the tail above isn't enough, use a shell command to read the ` +
     `entire file, then scan from the bottom up to find the most recent build ` +
     `run and its failure; ignore the older runs higher up.\n`;

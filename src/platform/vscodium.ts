@@ -55,12 +55,43 @@ export class VSCodiumAdapter implements IPlatformAdapter {
     );
   }
 
+  getArgvDataFolderNames(): string[] {
+    // VSCodium builds use different data folder names depending on the
+    // build variant. Probe in order of likelihood.
+    return [
+      this.config.hostDataFolderName ?? this.dataFolderName,
+      ...(this.config.argvDataFolderNames ?? [
+        ".vscodium",
+        ".code-oss",
+        ".vscode",
+      ]),
+    ];
+  }
+
   needsArgvPatch(): boolean {
     return this.config.needsArgvPatch;
   }
 
   getAdditionalDockerRunArgs(): string[] {
     return this.config.additionalDockerRunArgs;
+  }
+
+  getRemoteExtensionsDirCandidates(): string[] {
+    // VSCodium's remote server dir is ~/.vscodium-server/extensions.
+    // dataFolderName (.vscode-oss) is the *client* data folder; the
+    // server folder uses the "vscodium-server" name, not derivable
+    // from dataFolderName. Also probe .vscode-oss-server as a
+    // secondary candidate for code-oss users.
+    return [".vscodium-server/extensions", ".vscode-oss-server/extensions"];
+  }
+
+  getApexExtensionsDir(): string {
+    // Client extensions dir: ~/.vscode-oss/extensions.
+    return path.join(
+      os.homedir(),
+      this.config.hostDataFolderName ?? this.dataFolderName,
+      "extensions",
+    );
   }
 
   getServerInstallRoot(): string {

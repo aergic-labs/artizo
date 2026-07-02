@@ -17,7 +17,9 @@ Artizo Dev Containers provides the same functionality for Kiro by leveraging the
 ## Requirements
 
 - [Kiro](https://kiro.dev)
-- Docker Desktop (or Podman)
+- Docker CLI client (`docker`)
+  - Alternatives like Podman or Rancher work too, provided their
+    optional Docker CLI compatibility packages are installed and working.
 
 That's it. Everything else is bundled with the extension.
 

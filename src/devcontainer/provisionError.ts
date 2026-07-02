@@ -5,7 +5,7 @@
 
 /**
  * Error thrown when a container build/provision (`launch()` / the CLI `up`)
- * fails — image build, feature install, or compose up. Carries the path to the
+ * fails - image build, feature install, or compose up. Carries the path to the
  * devcontainer.json so the failure reporter can offer "Diagnose with AI" with
  * the right config in hand. Caught once at the command layer; workflows let it
  * propagate rather than showing their own toast.

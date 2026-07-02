@@ -15,7 +15,8 @@
  * 3. Git inside the container calls back to the host for credentials
  */
 
-import { dockerExec, type DockerExecOptions } from "../utils/dockerUtils";
+import type { Host } from "../host/host";
+import { escapeShellArg } from "../utils/shellUtils";
 
 export interface ICredentialForwarder {
   setupGitCredentialHelper(containerId: string): Promise<void>;
@@ -31,6 +32,7 @@ export interface CredentialForwarderOptions {
    * in the container environment. Required for credential forwarding.
    */
   hostContainerRef?: string;
+  host?: Host;
 }
 
 /**
@@ -56,60 +58,46 @@ fi
 const HELPER_SCRIPT_PATH = "/tmp/.kiro-server/artizo-credential-helper.sh";
 
 export class CredentialForwarder implements ICredentialForwarder {
-  private readonly dockerPath: string;
+  private readonly host: Host;
   private readonly hostContainerRef: string | undefined;
 
   constructor(options?: CredentialForwarderOptions) {
-    this.dockerPath = options?.dockerPath ?? "docker";
+    this.host = options?.host!;
     this.hostContainerRef = options?.hostContainerRef;
   }
 
   async setupGitCredentialHelper(containerId: string): Promise<void> {
-    const execOptions: DockerExecOptions = { dockerPath: this.dockerPath };
+    await this.host.dockerExec(containerId, [
+      "sh",
+      "-c",
+      `cat > ${HELPER_SCRIPT_PATH} << 'ARTIZOEOF'\n${CREDENTIAL_HELPER_SCRIPT}ARTIZOEOF`,
+    ]);
 
-    await dockerExec(
-      containerId,
-      [
-        "sh",
-        "-c",
-        `cat > ${HELPER_SCRIPT_PATH} << 'ARTIZOEOF'\n${CREDENTIAL_HELPER_SCRIPT}ARTIZOEOF`,
-      ],
-      execOptions,
-    );
-
-    await dockerExec(
-      containerId,
-      ["chmod", "+x", HELPER_SCRIPT_PATH],
-      execOptions,
-    );
+    await this.host.dockerExec(containerId, [
+      "chmod",
+      "+x",
+      HELPER_SCRIPT_PATH,
+    ]);
 
     if (this.hostContainerRef) {
       // Write to git global config as env var override so the helper
       // inherits it regardless of shell profile state.
-      await dockerExec(
-        containerId,
-        [
-          "git",
-          "config",
-          "--global",
-          "credential.helper",
-          `!ARTIZO_HOST_ID="${this.hostContainerRef}" ${HELPER_SCRIPT_PATH}`,
-        ],
-        execOptions,
-      );
+      await this.host.dockerExec(containerId, [
+        "git",
+        "config",
+        "--global",
+        "credential.helper",
+        `!ARTIZO_HOST_ID=${escapeShellArg(this.hostContainerRef)} ${HELPER_SCRIPT_PATH}`,
+      ]);
     } else {
       // Configure git credential helper without host ref (will no-op).
-      await dockerExec(
-        containerId,
-        [
-          "git",
-          "config",
-          "--global",
-          "credential.helper",
-          `!${HELPER_SCRIPT_PATH}`,
-        ],
-        execOptions,
-      );
+      await this.host.dockerExec(containerId, [
+        "git",
+        "config",
+        "--global",
+        "credential.helper",
+        `!${HELPER_SCRIPT_PATH}`,
+      ]);
     }
   }
 }

@@ -3,37 +3,47 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { EventEmitter } from 'node:events';
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { EventEmitter } from "node:events";
 
-vi.mock('../../src/utils/dockerUtils', () => ({
+vi.mock("../../src/utils/dockerUtils", () => ({
   dockerExec: vi.fn(),
   dockerSpawn: vi.fn(),
 }));
 
-vi.mock('node:child_process', () => {
-  const actual = vi.importActual('node:child_process');
+vi.mock("node:child_process", () => {
+  const actual = vi.importActual("node:child_process");
   return {
     ...actual,
     spawn: vi.fn(),
   };
 });
 
-vi.mock('node:net', () => {
-  const { EventEmitter } = require('node:events');
+vi.mock("node:net", () => {
+  const { EventEmitter } = require("node:events");
   return {
-    createConnection: vi.fn().mockReturnValue(Object.assign(new EventEmitter(), {
-      pipe: vi.fn(),
-      destroy: vi.fn(),
-    })),
+    createConnection: vi.fn().mockReturnValue(
+      Object.assign(new EventEmitter(), {
+        pipe: vi.fn(),
+        destroy: vi.fn(),
+      }),
+    ),
   };
 });
 
-import { dockerExec, dockerSpawn } from '../../src/utils/dockerUtils';
-import { SshAgentForwarder } from '../../src/credentials/sshAgentForwarder';
+import { dockerSpawn } from "../../src/utils/dockerUtils";
+import { SshAgentForwarder } from "../../src/credentials/sshAgentForwarder";
 
-const mockDockerExec = vi.mocked(dockerExec);
 const mockDockerSpawn = vi.mocked(dockerSpawn);
+
+function createMockHost() {
+  return {
+    dockerExec: vi
+      .fn()
+      .mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
+    dockerPath: "docker",
+  };
+}
 
 function createMockChildProcess() {
   const stdout = Object.assign(new EventEmitter(), {
@@ -59,110 +69,133 @@ function createMockChildProcess() {
 
   // Emit 'spawn' + stdout data with 'READY' on next tick to simulate relay startup
   setImmediate(() => {
-    child.emit('spawn');
-    setImmediate(() => stdout.emit('data', Buffer.from('READY\n')));
+    child.emit("spawn");
+    setImmediate(() => stdout.emit("data", Buffer.from("READY\n")));
   });
 
   return child;
 }
 
-describe('SshAgentForwarder', () => {
+describe("SshAgentForwarder", () => {
+  let mockHost: ReturnType<typeof createMockHost>;
+
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDockerExec.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
+    mockHost = createMockHost();
   });
 
-  describe('setupSshAgentForwarding', () => {
-    it('skips gracefully when SSH_AUTH_SOCK is not set', async () => {
-      const forwarder = new SshAgentForwarder({ hostSshAuthSock: undefined });
-
-      await forwarder.setupSshAgentForwarding('test-container');
-
-      expect(mockDockerExec).not.toHaveBeenCalled();
-    });
-
-    it('skips gracefully when SSH_AUTH_SOCK is empty string', async () => {
-      const forwarder = new SshAgentForwarder({ hostSshAuthSock: '' });
-
-      await forwarder.setupSshAgentForwarding('test-container');
-
-      expect(mockDockerExec).not.toHaveBeenCalled();
-    });
-
-    it('sets up SSH_AUTH_SOCK profile script when agent is available', async () => {
-      mockDockerSpawn.mockReturnValue(createMockChildProcess() as any);
+  describe("setupSshAgentForwarding", () => {
+    it("skips gracefully when SSH_AUTH_SOCK is not set", async () => {
       const forwarder = new SshAgentForwarder({
-        hostSshAuthSock: '/tmp/ssh-agent.sock',
+        hostSshAuthSock: undefined,
+        host: mockHost as any,
       });
 
-      await forwarder.setupSshAgentForwarding('test-container');
+      await forwarder.setupSshAgentForwarding("test-container", "/tmp/.kiro-server");
 
-      expect(mockDockerExec).toHaveBeenCalledWith(
-        'test-container',
-        expect.arrayContaining(['sh', '-c', expect.stringContaining('SSH_AUTH_SOCK')]),
-        expect.objectContaining({ dockerPath: 'docker' })
+      expect(mockHost.dockerExec).not.toHaveBeenCalled();
+    });
+
+    it("skips gracefully when SSH_AUTH_SOCK is empty string", async () => {
+      const forwarder = new SshAgentForwarder({
+        hostSshAuthSock: "",
+        host: mockHost as any,
+      });
+
+      await forwarder.setupSshAgentForwarding("test-container", "/tmp/.kiro-server");
+
+      expect(mockHost.dockerExec).not.toHaveBeenCalled();
+    });
+
+    it("sets up SSH_AUTH_SOCK profile script when agent is available", async () => {
+      mockDockerSpawn.mockReturnValue(createMockChildProcess() as any);
+      const forwarder = new SshAgentForwarder({
+        hostSshAuthSock: "/tmp/ssh-agent.sock",
+        host: mockHost as any,
+      });
+
+      await forwarder.setupSshAgentForwarding("test-container", "/tmp/.kiro-server");
+
+      expect(mockHost.dockerExec).toHaveBeenCalledWith(
+        "test-container",
+        expect.arrayContaining([
+          "sh",
+          "-c",
+          expect.stringContaining("SSH_AUTH_SOCK"),
+        ]),
       );
     });
 
-    it('writes profile script to /etc/profile.d/', async () => {
+    it("writes profile script to /etc/profile.d/", async () => {
       mockDockerSpawn.mockReturnValue(createMockChildProcess() as any);
       const forwarder = new SshAgentForwarder({
-        hostSshAuthSock: '/tmp/ssh-agent.sock',
+        hostSshAuthSock: "/tmp/ssh-agent.sock",
+        host: mockHost as any,
       });
 
-      await forwarder.setupSshAgentForwarding('test-container');
+      await forwarder.setupSshAgentForwarding("test-container", "/tmp/.kiro-server");
 
-      const profileCall = mockDockerExec.mock.calls[0];
+      const profileCall = mockHost.dockerExec.mock.calls[0];
       const command = profileCall[1][2]; // sh -c argument
-      expect(command).toContain('/etc/profile.d/artizo-ssh.sh');
+      expect(command).toContain("/etc/profile.d/artizo-ssh.sh");
     });
 
-    it('sets the container SSH_AUTH_SOCK to the expected path', async () => {
+    it("sets the container SSH_AUTH_SOCK to the expected path", async () => {
       mockDockerSpawn.mockReturnValue(createMockChildProcess() as any);
       const forwarder = new SshAgentForwarder({
-        hostSshAuthSock: '/tmp/ssh-agent.sock',
+        hostSshAuthSock: "/tmp/ssh-agent.sock",
+        host: mockHost as any,
       });
 
-      await forwarder.setupSshAgentForwarding('test-container');
+      await forwarder.setupSshAgentForwarding("test-container", "/tmp/.kiro-server");
 
-      const profileCall = mockDockerExec.mock.calls[0];
+      const profileCall = mockHost.dockerExec.mock.calls[0];
       const command = profileCall[1][2];
-      expect(command).toContain('/tmp/artizo-ssh-agent.sock');
+      expect(command).toContain("/tmp/artizo-ssh-agent.sock");
     });
 
-    it('configures git core.sshCommand with SSH_AUTH_SOCK', async () => {
+    it("configures git core.sshCommand with SSH_AUTH_SOCK", async () => {
       mockDockerSpawn.mockReturnValue(createMockChildProcess() as any);
       const forwarder = new SshAgentForwarder({
-        hostSshAuthSock: '/tmp/ssh-agent.sock',
+        hostSshAuthSock: "/tmp/ssh-agent.sock",
+        host: mockHost as any,
       });
 
-      await forwarder.setupSshAgentForwarding('test-container');
+      await forwarder.setupSshAgentForwarding("test-container", "/tmp/.kiro-server");
 
-      expect(mockDockerExec).toHaveBeenCalledWith(
-        'test-container',
-        ['git', 'config', '--global', 'core.sshCommand', expect.stringContaining('SSH_AUTH_SOCK')],
-        expect.objectContaining({ dockerPath: 'docker' })
-      );
+      expect(mockHost.dockerExec).toHaveBeenCalledWith("test-container", [
+        "git",
+        "config",
+        "--global",
+        "core.sshCommand",
+        expect.stringContaining("SSH_AUTH_SOCK"),
+      ]);
     });
 
-    it('uses custom docker path when provided', async () => {
+    it("routes dockerExec through the host", async () => {
       mockDockerSpawn.mockReturnValue(createMockChildProcess() as any);
+      const customHost = createMockHost();
       const forwarder = new SshAgentForwarder({
-        dockerPath: '/custom/docker',
-        hostSshAuthSock: '/tmp/ssh-agent.sock',
+        hostSshAuthSock: "/tmp/ssh-agent.sock",
+        host: customHost as any,
       });
 
-      await forwarder.setupSshAgentForwarding('test-container');
+      await forwarder.setupSshAgentForwarding("test-container", "/tmp/.kiro-server");
 
-      for (const call of mockDockerExec.mock.calls) {
-        expect(call[2]).toEqual(expect.objectContaining({ dockerPath: '/custom/docker' }));
+      for (const call of customHost.dockerExec.mock.calls) {
+        expect(call[0]).toBe("test-container");
       }
     });
 
-    it('does not throw when SSH_AUTH_SOCK is not set', async () => {
-      const forwarder = new SshAgentForwarder({ hostSshAuthSock: undefined });
+    it("does not throw when SSH_AUTH_SOCK is not set", async () => {
+      const forwarder = new SshAgentForwarder({
+        hostSshAuthSock: undefined,
+        host: mockHost as any,
+      });
 
-      await expect(forwarder.setupSshAgentForwarding('test-container')).resolves.toBeUndefined();
+      await expect(
+        forwarder.setupSshAgentForwarding("test-container", "/tmp/.kiro-server"),
+      ).resolves.toBeUndefined();
     });
   });
 });

@@ -11,31 +11,43 @@ vi.mock("../../src/utils/dockerUtils", () => ({
   dockerExec: vi.fn(),
 }));
 
-import { dockerExec } from "../../src/utils/dockerUtils";
+function createMockHost() {
+  return {
+    dockerExec: vi
+      .fn()
+      .mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
+    dockerPath: "docker",
+  };
+}
 
-const mockDockerExec = vi.mocked(dockerExec);
+let mockHost = createMockHost();
 
 describe("DotfilesManager", () => {
   let manager: DotfilesManager;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    manager = new DotfilesManager({ dockerPath: "docker" });
+    mockHost = createMockHost();
+    manager = new DotfilesManager({ host: mockHost as any });
   });
 
   describe("constructor", () => {
-    it("defaults dockerPath to docker when no options provided", async () => {
-      const defaultManager = new DotfilesManager();
-      mockDockerExec.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+    it("routes dockerExec through the host", async () => {
+      const customHost = createMockHost();
+      const defaultManager = new DotfilesManager({ host: customHost as any });
+      customHost.dockerExec.mockResolvedValue({
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
 
       await defaultManager.install("container-1", {
         repository: "https://github.com/user/dotfiles.git",
       });
 
-      expect(mockDockerExec).toHaveBeenCalledWith(
+      expect(customHost.dockerExec).toHaveBeenCalledWith(
         "container-1",
         expect.any(Array),
-        expect.objectContaining({ dockerPath: "docker" }),
       );
     });
   });
@@ -48,11 +60,15 @@ describe("DotfilesManager", () => {
       expect(result.success).toBe(true);
       expect(result.cloned).toBe(false);
       expect(result.installed).toBe(false);
-      expect(mockDockerExec).not.toHaveBeenCalled();
+      expect(mockHost.dockerExec).not.toHaveBeenCalled();
     });
 
     it("clones repository to default target path", async () => {
-      mockDockerExec.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      mockHost.dockerExec.mockResolvedValue({
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
 
       const config: DotfilesConfig = {
         repository: "https://github.com/user/dotfiles.git",
@@ -63,15 +79,19 @@ describe("DotfilesManager", () => {
       expect(result.cloned).toBe(true);
 
       // Verify clone uses ~/dotfiles as default target
-      expect(mockDockerExec).toHaveBeenCalledWith(
-        "container-123",
-        ["rm", "-rf", "~/dotfiles"],
-        expect.objectContaining({ dockerPath: "docker" }),
-      );
+      expect(mockHost.dockerExec).toHaveBeenCalledWith("container-123", [
+        "rm",
+        "-rf",
+        "~/dotfiles",
+      ]);
     });
 
     it("clones repository to custom target path", async () => {
-      mockDockerExec.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      mockHost.dockerExec.mockResolvedValue({
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
 
       const config: DotfilesConfig = {
         repository: "https://github.com/user/dotfiles.git",
@@ -79,15 +99,19 @@ describe("DotfilesManager", () => {
       };
       await manager.install("container-123", config);
 
-      expect(mockDockerExec).toHaveBeenCalledWith(
-        "container-123",
-        ["rm", "-rf", "~/.dotfiles"],
-        expect.any(Object),
-      );
+      expect(mockHost.dockerExec).toHaveBeenCalledWith("container-123", [
+        "rm",
+        "-rf",
+        "~/.dotfiles",
+      ]);
     });
 
     it("runs install command after cloning", async () => {
-      mockDockerExec.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      mockHost.dockerExec.mockResolvedValue({
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
 
       const config: DotfilesConfig = {
         repository: "https://github.com/user/dotfiles.git",
@@ -100,7 +124,7 @@ describe("DotfilesManager", () => {
       expect(result.installed).toBe(true);
 
       // Verify install command was called with workdir
-      expect(mockDockerExec).toHaveBeenCalledWith(
+      expect(mockHost.dockerExec).toHaveBeenCalledWith(
         "container-123",
         ["sh", "-c", "./install.sh"],
         expect.objectContaining({ workdir: "~/dotfiles" }),
@@ -108,7 +132,11 @@ describe("DotfilesManager", () => {
     });
 
     it("performs shallow clone with depth 1 and removes existing target", async () => {
-      mockDockerExec.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      mockHost.dockerExec.mockResolvedValue({
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
 
       const config: DotfilesConfig = {
         repository: "https://github.com/user/dotfiles.git",
@@ -117,30 +145,28 @@ describe("DotfilesManager", () => {
       await manager.install("container-123", config);
 
       // First call: rm -rf
-      expect(mockDockerExec).toHaveBeenNthCalledWith(
-        1,
-        "container-123",
-        ["rm", "-rf", "/home/user/dots"],
-        expect.any(Object),
-      );
+      expect(mockHost.dockerExec).toHaveBeenNthCalledWith(1, "container-123", [
+        "rm",
+        "-rf",
+        "/home/user/dots",
+      ]);
       // Second call: git clone with --depth 1
-      expect(mockDockerExec).toHaveBeenNthCalledWith(
-        2,
-        "container-123",
-        [
-          "git",
-          "clone",
-          "--depth",
-          "1",
-          "https://github.com/user/dotfiles.git",
-          "/home/user/dots",
-        ],
-        expect.any(Object),
-      );
+      expect(mockHost.dockerExec).toHaveBeenNthCalledWith(2, "container-123", [
+        "git",
+        "clone",
+        "--depth",
+        "1",
+        "https://github.com/user/dotfiles.git",
+        "/home/user/dots",
+      ]);
     });
 
     it("runs install command in the target directory", async () => {
-      mockDockerExec.mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+      mockHost.dockerExec.mockResolvedValue({
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      });
 
       const config: DotfilesConfig = {
         repository: "https://github.com/user/dotfiles.git",
@@ -150,13 +176,13 @@ describe("DotfilesManager", () => {
       await manager.install("container-123", config);
 
       // Third call is the install command with workdir (rm=0, clone=1, install=2)
-      const installCall = mockDockerExec.mock.calls[2];
+      const installCall = mockHost.dockerExec.mock.calls[2];
       expect(installCall[1]).toEqual(["sh", "-c", "make install"]);
       expect(installCall[2]).toMatchObject({ workdir: "/opt/dotfiles" });
     });
 
     it("returns error when clone fails", async () => {
-      mockDockerExec.mockResolvedValue({
+      mockHost.dockerExec.mockResolvedValue({
         exitCode: 128,
         stdout: "",
         stderr: "fatal: repository not found",
@@ -174,7 +200,7 @@ describe("DotfilesManager", () => {
 
     it("returns error when install command fails", async () => {
       let callCount = 0;
-      mockDockerExec.mockImplementation(async () => {
+      mockHost.dockerExec.mockImplementation(async () => {
         callCount++;
         if (callCount <= 2) {
           // rm + clone both succeed
@@ -198,22 +224,24 @@ describe("DotfilesManager", () => {
 
     it("tries default install scripts when no install command is configured", async () => {
       let callCount = 0;
-      mockDockerExec.mockImplementation(async (_containerId, cmd) => {
-        callCount++;
-        if (callCount <= 2) {
-          // rm + clone both succeed
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        // Check for install.sh; found and executable (two calls: test -f, test -x)
-        const cmdStr = Array.isArray(cmd) ? cmd.join(" ") : "";
-        if (cmdStr.includes("install.sh")) {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (cmdStr.includes("./install.sh")) {
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        return { exitCode: 1, stdout: "", stderr: "" };
-      });
+      mockHost.dockerExec.mockImplementation(
+        async (_containerId: string, cmd: string[]) => {
+          callCount++;
+          if (callCount <= 2) {
+            // rm + clone both succeed
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          // Check for install.sh; found and executable (two calls: test -f, test -x)
+          const cmdStr = Array.isArray(cmd) ? cmd.join(" ") : "";
+          if (cmdStr.includes("install.sh")) {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (cmdStr.includes("./install.sh")) {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          return { exitCode: 1, stdout: "", stderr: "" };
+        },
+      );
 
       const config: DotfilesConfig = {
         repository: "https://github.com/user/dotfiles.git",
@@ -225,9 +253,41 @@ describe("DotfilesManager", () => {
       expect(result.installed).toBe(true);
     });
 
+    it("skips non-executable scripts", async () => {
+      let callCount = 0;
+      mockHost.dockerExec.mockImplementation(
+        async (_containerId: string, cmd: string[]) => {
+          callCount++;
+          if (callCount <= 2) {
+            // rm + clone both succeed
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          const cmdStr = Array.isArray(cmd) ? cmd.join(" ") : "";
+          // install.sh exists but is NOT executable
+          if (cmdStr.includes("test -f") && cmdStr.includes("install.sh")) {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (cmdStr.includes("test -x") && cmdStr.includes("install.sh")) {
+            return { exitCode: 1, stdout: "", stderr: "" };
+          }
+          // All other scripts don't exist
+          return { exitCode: 1, stdout: "", stderr: "" };
+        },
+      );
+
+      const config: DotfilesConfig = {
+        repository: "https://github.com/user/dotfiles.git",
+      };
+      const result = await manager.install("container-123", config);
+
+      expect(result.success).toBe(true);
+      expect(result.cloned).toBe(true);
+      expect(result.installed).toBe(false);
+    });
+
     it("handles no default install scripts found gracefully", async () => {
       let callCount = 0;
-      mockDockerExec.mockImplementation(async () => {
+      mockHost.dockerExec.mockImplementation(async () => {
         callCount++;
         if (callCount <= 2) {
           // rm + clone both succeed
@@ -248,7 +308,7 @@ describe("DotfilesManager", () => {
     });
 
     it("does not throw on clone failure; returns error info instead", async () => {
-      mockDockerExec.mockResolvedValue({
+      mockHost.dockerExec.mockResolvedValue({
         exitCode: 1,
         stdout: "",
         stderr: "network timeout",
@@ -265,7 +325,7 @@ describe("DotfilesManager", () => {
     });
 
     it("includes stderr in error message on clone failure", async () => {
-      mockDockerExec.mockResolvedValue({
+      mockHost.dockerExec.mockResolvedValue({
         exitCode: 128,
         stdout: "",
         stderr: "fatal: could not read from remote repository",

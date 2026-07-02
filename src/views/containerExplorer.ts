@@ -14,6 +14,7 @@
 import * as vscode from "vscode";
 import { dockerExecPolicy } from "../docker/execPolicy.js";
 import { MANAGED_LABEL } from "../utils/constants";
+import { parseContainerList, isDevContainer } from "../devcontainer/labels";
 import {
   type ContainerTarget,
   CategoryTreeItem,
@@ -21,14 +22,13 @@ import {
   RecentFolderTreeItem,
   VolumeTreeItem,
 } from "./treeItems";
+import { buildRemoteAuthority } from "../utils/uriUtils";
 import {
   SCHEME_DEV_CONTAINER,
   SCHEME_ATTACHED_CONTAINER,
 } from "../remote/authorityResolver";
 
 const RECENT_FOLDERS_KEY = "artizo.recentFolders";
-
-const LABEL_DEVCONTAINER = "devcontainer.local_folder";
 
 type ExplorerTreeItem =
   | CategoryTreeItem
@@ -110,8 +110,8 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
     try {
       const result = await dockerExecPolicy([
         "ps",
-        "--filter",
-        `label=${LABEL_DEVCONTAINER}`,
+        "-a",
+        "--no-trunc",
         "--format",
         "{{json .}}",
       ]);
@@ -120,19 +120,15 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
         return [];
       }
 
-      const lines = result.stdout.trim().split("\n").filter(Boolean);
-      return lines.map((line) => {
-        const container = JSON.parse(line);
-        return {
+      const summaries = parseContainerList(result.stdout);
+      return summaries
+        .filter((s) => isDevContainer(s.labels))
+        .map((s) => ({
           type: "running-container" as const,
-          label: container.Names || container.ID?.substring(0, 12) || "unknown",
-          containerId: container.ID,
-          status:
-            container.State === "running"
-              ? ("running" as const)
-              : ("stopped" as const),
-        };
-      });
+          label: s.name || s.id.substring(0, 12) || "unknown",
+          containerId: s.id,
+          status: s.state === "running" ? "running" : "stopped",
+        }));
     } catch {
       return [];
     }
@@ -153,6 +149,7 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
       const result = await dockerExecPolicy([
         "volume",
         "ls",
+        "--no-trunc",
         "--filter",
         `label=${MANAGED_LABEL}`,
         "--format",
@@ -240,16 +237,20 @@ async function connectToTarget(
   newWindow: boolean,
 ): Promise<void> {
   if (target.type === "running-container" && target.containerId) {
-    const uri = vscode.Uri.parse(
-      `vscode-remote://${SCHEME_ATTACHED_CONTAINER}+${Buffer.from(target.containerId).toString("hex")}/`,
+    const authority = buildRemoteAuthority(
+      SCHEME_ATTACHED_CONTAINER,
+      target.containerId,
     );
+    const uri = vscode.Uri.parse(`vscode-remote://${authority}/`);
     await vscode.commands.executeCommand("vscode.openFolder", uri, {
       forceNewWindow: newWindow,
     });
   } else if (target.type === "recent-folder" && target.workspacePath) {
-    const uri = vscode.Uri.parse(
-      `vscode-remote://${SCHEME_DEV_CONTAINER}+${Buffer.from(target.workspacePath).toString("hex")}/`,
+    const authority = buildRemoteAuthority(
+      SCHEME_DEV_CONTAINER,
+      target.workspacePath,
     );
+    const uri = vscode.Uri.parse(`vscode-remote://${authority}/`);
     await vscode.commands.executeCommand("vscode.openFolder", uri, {
       forceNewWindow: newWindow,
     });

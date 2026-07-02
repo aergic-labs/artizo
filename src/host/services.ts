@@ -11,23 +11,26 @@
  */
 
 import * as vscode from "vscode";
-import { initLogger, getLogger } from "../utils/logger";
+import { initLogger, getLogger, LogLevel } from "../utils/logger";
 import { BRAND } from "../utils/constants";
 import { ConfigManager } from "../config/configManager";
 import { ServerManager } from "../remote/serverManager";
-import { CommunicationBridge } from "../remote/communicationBridge";
-import { WorkflowOrchestrator } from "../workflows/orchestrator";
 import {
   RemoteAuthorityResolver,
   registerAuthorityResolver,
 } from "../remote/authorityResolver";
 import { VscodeWorkflowUI } from "../workflows/vscodeUI";
 import { DevcontainerDetector } from "../workflows/devcontainerDetector";
-import { LogOutputTerminal, LogLevel } from "../workflows/logOutputTerminal";
+import { LogOutputTerminal } from "../workflows/logOutputTerminal";
 import { getProductInfo, type ProductInfo } from "../remote/productInfo";
 import type { WorkflowDependencies } from "../workflows/types";
 import { GitConfigCopier } from "../credentials/gitConfigCopier";
+import { ExtensionInstaller } from "../extensions/extensionInstaller";
 import { getPlatformAdapter } from "../platform";
+import { isInDevContainerWindow, getTier } from "./state";
+import { ExecutionTier } from "./state";
+import { patchArgvContent } from "./argvPatch";
+import type { Host } from "./host";
 
 declare const HAS_TRAE_ADAPTER: boolean;
 declare const HAS_KIRO_ADAPTER: boolean;
@@ -57,32 +60,71 @@ export function readSettings(): ExtensionSettings {
 /**
  * Ensure the extension is listed in argv.json's enable-proposed-api array.
  * Returns true if the file was modified, false if already set.
+ *
+ * Probes candidate data folder names from the adapter; the first existing
+ * argv.json wins. If none exist, the first candidate is created.
  */
-async function ensureArgvProposedApi(
-  _context: vscode.ExtensionContext,
-): Promise<boolean> {
-  const fs = await import("node:fs/promises");
-  const path = await import("node:path");
-  const { parse, modify, applyEdits } = await import("jsonc-parser");
 
-  const adapter = await getPlatformAdapter();
-  const argvPath = adapter.getArgvPath();
-
-  if (!adapter.needsArgvPatch()) {
-    return false;
-  }
-  const extensionId = HAS_KIRO_ADAPTER
+/** Resolve the extension ID for argv.json from build-time adapter flags. */
+export function getArgvExtensionId(): string {
+  return HAS_KIRO_ADAPTER
     ? "aergic.artizo-kiro"
     : HAS_TRAE_ADAPTER
       ? "aergic.artizo-trae"
       : HAS_DEVIN_ADAPTER
         ? "aergic.artizo-devin"
         : "aergic.artizo-vscodium";
+}
+
+async function ensureArgvProposedApi(
+  _context: vscode.ExtensionContext,
+): Promise<boolean> {
+  const logger = getLogger();
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+
+  const adapter = await getPlatformAdapter();
+
+  if (!adapter.needsArgvPatch()) {
+    logger.info("ensureArgvProposedApi: needsArgvPatch=false, skipping");
+    return false;
+  }
+  const extensionId = getArgvExtensionId();
+
+  // Build candidate argv.json paths from the adapter's data folder names.
+  const home = (await import("node:os")).homedir();
+  const candidates = adapter
+    .getArgvDataFolderNames()
+    .map((name) => path.join(home, name, "argv.json"));
+  logger.info(
+    `ensureArgvProposedApi: candidates=${JSON.stringify(candidates)}`,
+  );
+
+  // Find the first candidate that exists.
+  let argvPath = candidates[0];
+  let found = false;
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      argvPath = candidate;
+      found = true;
+      logger.info(`ensureArgvProposedApi: found existing ${candidate}`);
+      break;
+    } catch {
+      // Not found, try next.
+    }
+  }
+  if (!found) {
+    logger.info(
+      `ensureArgvProposedApi: no existing argv.json, using ${argvPath}`,
+    );
+  }
 
   let content: string;
   try {
     content = await fs.readFile(argvPath, "utf-8");
   } catch {
+    logger.info(`ensureArgvProposedApi: creating new argv.json at ${argvPath}`);
     const newContent = JSON.stringify(
       { "enable-proposed-api": [extensionId] },
       null,
@@ -93,26 +135,14 @@ async function ensureArgvProposedApi(
     return true;
   }
 
-  const parsed = parse(content) as Record<string, unknown>;
-  const existing = parsed["enable-proposed-api"];
-  if (Array.isArray(existing) && existing.includes(extensionId)) {
+  const result = patchArgvContent(content, extensionId);
+  if (!result) {
+    logger.info("ensureArgvProposedApi: already patched, no change");
     return false;
   }
 
-  const newValue = Array.isArray(existing)
-    ? [...existing, extensionId]
-    : [extensionId];
-
-  const edits = modify(content, ["enable-proposed-api"], newValue, {
-    formattingOptions: {
-      eol: "\n",
-      insertSpaces: true,
-      tabSize: 4,
-    },
-  });
-
-  const patched = applyEdits(content, edits);
-  await fs.writeFile(argvPath, patched, "utf-8");
+  logger.info("ensureArgvProposedApi: patching argv.json");
+  await fs.writeFile(argvPath, result.patched, "utf-8");
   return true;
 }
 
@@ -126,7 +156,12 @@ export function initializeLogger(context: vscode.ExtensionContext): {
 } {
   const nodePath = require("node:path");
   const logFilePath = nodePath.join(context.logPath, "artizo.log");
-  const buildLogPty = new LogOutputTerminal(logFilePath);
+
+  // Authoritative diagnostics sink: a LogOutputChannel in the Output panel.
+  // Always available (no renderer / early-activation gap), reliable, ordered.
+  const channel = vscode.window.createOutputChannel(BRAND, { log: true });
+  context.subscriptions.push(channel);
+
   const logLevelConfig = vscode.workspace
     .getConfiguration("artizo")
     .get<string>("logLevel", "info");
@@ -136,9 +171,15 @@ export function initializeLogger(context: vscode.ExtensionContext): {
     trace: LogLevel.Trace,
   };
   const level = logLevelMap[logLevelConfig] ?? LogLevel.Info;
-  buildLogPty.setLogLevel(level);
 
-  // Terminal handle that supports recreation after user closes it.
+  const logger = initLogger(channel);
+  logger.setLevel(level);
+
+  // Docker build output is mirrored to a pty terminal for the familiar
+  // colored build view. The logger no longer writes here.
+  const buildLogPty = new LogOutputTerminal(logFilePath);
+
+  // Terminal handle that supports recreation after the user closes it.
   const handle = {
     pty: buildLogPty,
     terminal: vscode.window.createTerminal({
@@ -149,10 +190,9 @@ export function initializeLogger(context: vscode.ExtensionContext): {
       try {
         this.terminal.show(preserveFocus);
       } catch {
-        // Terminal was closed — recreate with fresh pty.
+        // Terminal was closed - recreate a fresh pty for the build view.
+        // The logger is independent (the OutputChannel), so it is untouched.
         this.pty = new LogOutputTerminal(logFilePath);
-        this.pty.setLogLevel(level);
-        initLogger(this.pty);
         this.terminal = vscode.window.createTerminal({
           name: `Dev Containers (${BRAND})`,
           pty: this.pty,
@@ -164,12 +204,11 @@ export function initializeLogger(context: vscode.ExtensionContext): {
 
   context.subscriptions.push(handle.terminal);
 
-  const logger = initLogger(buildLogPty);
   logger.info(`${BRAND} activating...`);
   logger.info(`Extension path: ${context.extensionPath}`);
   logger.info(`Log file: ${logFilePath}`);
 
-  // Register reveal log terminal command
+  // Register reveal (build) log terminal command
   context.subscriptions.push(
     vscode.commands.registerCommand("artizo.revealLogTerminal", () => {
       handle.show();
@@ -255,6 +294,18 @@ export async function validatePlatformRuntime(
  */
 export async function ensureResolversAvailable(): Promise<boolean> {
   const logger = getLogger();
+
+  // If we're the workspace-side extension on an SSH remote, the apex-side
+  // sideload already patched argv.json (or tried to). Don't pop the modal
+  // here - it would trap the user in a restart loop on the remote box.
+  const tier = getTier();
+  if (tier.tier === ExecutionTier.RemoteSSH && tier.owner === "workspace") {
+    logger.info(
+      "ensureResolversAvailable: workspace-side on SSH remote, skipping modal",
+    );
+    return false;
+  }
+
   const argvPatched = await ensureArgvProposedApi(
     {} as vscode.ExtensionContext,
   );
@@ -262,8 +313,9 @@ export async function ensureResolversAvailable(): Promise<boolean> {
   if (argvPatched) {
     const adapter = await getPlatformAdapter();
     logger.info("argv.json patched, prompting for restart");
-    const action = await vscode.window.showInformationMessage(
-      `Dev Containers: A full restart of ${adapter.name} is required to enable remote container support. Please quit and reopen ${adapter.name}.`,
+    const action = await vscode.window.showErrorMessage(
+      `${BRAND}: A full restart of ${adapter.name} is required to enable remote container support. Please quit and reopen ${adapter.name}.`,
+      { modal: true },
       `Quit ${adapter.name}`,
     );
     if (action === `Quit ${adapter.name}`) {
@@ -278,8 +330,9 @@ export async function ensureResolversAvailable(): Promise<boolean> {
   ) {
     const adapter = await getPlatformAdapter();
     logger.info("resolvers API not available, full restart required");
-    const action = await vscode.window.showInformationMessage(
-      `Dev Containers: A full restart of ${adapter.name} is required to enable remote container support. Please quit and reopen ${adapter.name}.`,
+    const action = await vscode.window.showErrorMessage(
+      `${BRAND}: A full restart of ${adapter.name} is required to enable remote container support. Please quit and reopen ${adapter.name}.`,
+      { modal: true },
       `Quit ${adapter.name}`,
     );
     if (action === `Quit ${adapter.name}`) {
@@ -307,6 +360,9 @@ export function registerResolverEarly(
     dockerPath: settings.dockerPath,
   });
   registerAuthorityResolver(context, resolver);
+  // Ensure SSH tunnels spawned by the State 4 proxy path are torn down on
+  // extension deactivation so we don't leave orphaned `ssh -L` processes.
+  context.subscriptions.push({ dispose: () => resolver.dispose() });
   getLogger().info("Authority resolver registered (early)");
   return resolver;
 }
@@ -339,10 +395,9 @@ export async function loadProductInfo(): Promise<ProductInfo | undefined> {
 export interface CreatedServices {
   configManager: ConfigManager;
   serverManager: ServerManager;
-  bridge: CommunicationBridge;
-  orchestrator: WorkflowOrchestrator;
   ui: VscodeWorkflowUI;
   gitConfigCopier: GitConfigCopier;
+  extensionInstaller: ExtensionInstaller;
   deps: WorkflowDependencies;
   containerLifecycle: ContainerLifecycle;
   sidebarProvider: SidebarProvider;
@@ -350,7 +405,7 @@ export interface CreatedServices {
 
 /**
  * Must be called AFTER registerResolverEarly() and loadProductInfo(),
- * so that the ServerManager gets the resolved product info and the
+ * so the ServerManager gets the resolved product info and the
  * resolver gets wired to the ServerManager.
  */
 export function createServices(
@@ -359,6 +414,7 @@ export function createServices(
   resolver: RemoteAuthorityResolver,
   productInfo: ProductInfo | undefined,
   buildLogPty: LogOutputTerminal,
+  host?: Host,
 ): CreatedServices {
   const logger = getLogger();
 
@@ -368,13 +424,12 @@ export function createServices(
     dockerPath: settings.dockerPath,
     productInfo,
     extensionPath: context.extensionPath,
+    host,
   });
 
   // Wire the serverManager into the resolver (it was created without one)
   resolver.setServerManager(serverManager);
 
-  const bridge = new CommunicationBridge({ dockerPath: settings.dockerPath });
-  const orchestrator = new WorkflowOrchestrator();
   const ui = new VscodeWorkflowUI(buildLogPty);
 
   const copyGitConfigEnabled = vscode.workspace
@@ -383,23 +438,39 @@ export function createServices(
   const gitConfigCopier = new GitConfigCopier({
     dockerPath: settings.dockerPath,
     enabled: copyGitConfigEnabled,
+    host,
+  });
+
+  const extensionInstaller = new ExtensionInstaller({
+    dockerPath: settings.dockerPath,
+    host,
+    localExtensionProvider: (extId) => {
+      // Imported lazily so the installer module stays testable without
+      // the vscode API.
+      const vscode = require("vscode") as typeof import("vscode");
+      const lower = extId.toLowerCase();
+      const ext = vscode.extensions.all.find(
+        (e) => e.id.toLowerCase() === lower,
+      );
+      return ext?.extensionPath;
+    },
   });
 
   const deps: WorkflowDependencies = {
     configManager,
     serverManager,
-    bridge,
-    orchestrator,
     gitConfigCopier,
+    extensionInstaller,
+    dockerPath: settings.dockerPath,
   };
 
   // Register tree views, sidebar, and config watcher (local only)
   const sidebarProvider = new SidebarProvider(
     context.extensionUri,
     configManager,
-    settings.dockerPath,
+    host!,
   );
-  if (!vscode.env.remoteName) {
+  if (!isInDevContainerWindow()) {
     const watcher = ConfigWatcher.register(context, { configManager });
     watcher.onDidConfigChange(() => {
       sidebarProvider.loadConfig();
@@ -436,8 +507,8 @@ export function createServices(
 
   // Refresh commands when workspace folders change
   context.subscriptions.push(
-    vscode.workspace.onDidChangeWorkspaceFolders(() => {
-      sidebarProvider.refreshCommands();
+    vscode.workspace.onDidChangeWorkspaceFolders(async () => {
+      await sidebarProvider.refreshCommands();
       sidebarProvider.loadConfig();
     }),
   );
@@ -449,10 +520,9 @@ export function createServices(
   return {
     configManager,
     serverManager,
-    bridge,
-    orchestrator,
     ui,
     gitConfigCopier,
+    extensionInstaller,
     deps,
     containerLifecycle,
     sidebarProvider,
@@ -467,7 +537,7 @@ export function autoDetectDevcontainer(
   configManager: ConfigManager,
 ): void {
   const logger = getLogger();
-  if (!vscode.env.remoteName) {
+  if (!isInDevContainerWindow()) {
     const detector = new DevcontainerDetector(configManager);
     detector.checkAndPrompt(context).catch((err) => {
       logger.error(

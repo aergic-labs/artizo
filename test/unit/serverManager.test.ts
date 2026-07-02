@@ -16,6 +16,7 @@ vi.mock("node:fs", async () => ({
 
 vi.mock("../../src/utils/dockerUtils", () => ({
   dockerExec: vi.fn(),
+  execFilePromise: vi.fn(),
 }));
 
 vi.mock("../../src/remote/bootstrap", () => {
@@ -64,50 +65,60 @@ vi.mock("node:crypto", () => ({
 import {
   ServerManager,
   validateArch,
-  versionsMatch,
   buildStartCommand,
   type ServerManagerOptions,
 } from "../../src/remote/serverManager";
 import type { ProductInfo } from "../../src/remote/productInfo";
-import { dockerExec } from "../../src/utils/dockerUtils";
 // Access mock internals via the mocked module
+const bootstrapModule = (await import("../../src/remote/bootstrap")) as any;
 const {
   ContainerBootstrap,
   __mockBootstrapBusybox,
   __mockDeployTools,
   __mockRunSetup,
-} = await import("../../src/remote/bootstrap");
+} = bootstrapModule;
 const mockBootstrapBusybox = __mockBootstrapBusybox as ReturnType<typeof vi.fn>;
 const mockDeployTools = __mockDeployTools as ReturnType<typeof vi.fn>;
 const mockRunSetup = __mockRunSetup as ReturnType<typeof vi.fn>;
 
-const mockDockerExec = vi.mocked(dockerExec);
+function createMockHost() {
+  return {
+    dockerExec: vi
+      .fn()
+      .mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
+    dockerPath: "docker",
+  };
+}
+
+let mockHost = createMockHost();
 
 /**
- * Helper to set up sequential mock responses for dockerExec.
+ * Helper to set up sequential mock responses for host.dockerExec.
  * Each call to dockerExec will consume the next response in the array.
  */
 function setupExecFileResponses(
   responses: Array<{ stdout: string; stderr?: string; exitCode?: number }>,
 ) {
-  mockDockerExec.mockReset();
+  mockHost.dockerExec.mockReset();
   let callIndex = 0;
 
-  mockDockerExec.mockImplementation((_containerId, _command, _options) => {
-    const response = responses[callIndex] ?? {
-      stdout: "",
-      stderr: "",
-      exitCode: 1,
-    };
-    callIndex++;
+  mockHost.dockerExec.mockImplementation(
+    (_containerId: string, _command: string[], _options?: any) => {
+      const response = responses[callIndex] ?? {
+        stdout: "",
+        stderr: "",
+        exitCode: 1,
+      };
+      callIndex++;
 
-    const { stdout, stderr = "", exitCode = 0 } = response;
+      const { stdout, stderr = "", exitCode = 0 } = response;
 
-    if (exitCode !== 0) {
-      return Promise.resolve({ exitCode, stdout: stdout ?? "", stderr });
-    }
-    return Promise.resolve({ exitCode: 0, stdout: stdout ?? "", stderr });
-  });
+      if (exitCode !== 0) {
+        return Promise.resolve({ exitCode, stdout: stdout ?? "", stderr });
+      }
+      return Promise.resolve({ exitCode: 0, stdout: stdout ?? "", stderr });
+    },
+  );
 }
 
 const TEST_PRODUCT_INFO: ProductInfo = {
@@ -142,30 +153,13 @@ describe("serverManager", () => {
     });
   });
 
-  describe("versionsMatch", () => {
-    it("returns true for equal commit hashes", () => {
-      expect(versionsMatch("abc123def456789", "abc123def456789")).toBe(true);
-    });
-
-    it("returns true with whitespace trimming", () => {
-      expect(versionsMatch("abc123def456789\n", "abc123def456789")).toBe(true);
-    });
-
-    it("returns false for different commit hashes", () => {
-      expect(versionsMatch("abc123", "def456")).toBe(false);
-    });
-
-    it("returns false for empty installed commit", () => {
-      expect(versionsMatch("", "abc123def456789")).toBe(false);
-    });
-  });
-
   describe("buildStartCommand", () => {
     const params = {
       installPath: "/tmp/.kiro-server/abc123",
       binaryName: "kiro-reh",
       tokenFilePath: "/tmp/.kiro-server/abc123/.connection-token",
       serverDataDir: "/tmp/.kiro-server/abc123/data",
+      extensionsDir: "/tmp/.kiro-server/extensions",
       telemetryLevel: "off",
       logFile: "/tmp/.kiro-server/abc123/server.log",
       pidFile: "/tmp/.kiro-server/abc123/server.pid",
@@ -220,17 +214,33 @@ describe("serverManager", () => {
       const cmd = buildStartCommand(params);
       expect(cmd[2]).toContain("nohup");
     });
+
+    it("includes --extensions-dir flag", () => {
+      const cmd = buildStartCommand(params);
+      expect(cmd[2]).toContain(
+        '--extensions-dir "/tmp/.kiro-server/extensions"',
+      );
+    });
+
+    it("creates extensions dir in mkdir", () => {
+      const cmd = buildStartCommand(params);
+      expect(cmd[2]).toContain(
+        'mkdir -m 700 -p "/tmp/.kiro-server/abc123" "/tmp/.kiro-server/abc123/data" "/tmp/.kiro-server/extensions"',
+      );
+    });
   });
 
   describe("ServerManager", () => {
     let manager: ServerManager;
 
     beforeEach(() => {
+      mockHost = createMockHost();
       manager = new ServerManager({
         productInfo: TEST_PRODUCT_INFO,
         extensionPath: "/fake/path",
+        host: mockHost as any,
       });
-      mockDockerExec.mockReset();
+      mockHost.dockerExec.mockReset();
       mockReadKiroToken.mockReset();
     });
 
@@ -240,10 +250,11 @@ describe("serverManager", () => {
       });
     });
 
-    describe("getInstallPath", () => {
-      it("returns path based on server data folder name (no commit in path)", () => {
-        expect(manager.getInstallPath()).toBe(
-          `~/${TEST_PRODUCT_INFO.serverDataFolderName}`,
+    describe("getExtensionsDir", () => {
+      it("returns extensions path under the server data folder", async () => {
+        const dir = await manager.getExtensionsDir("container1");
+        expect(dir).toBe(
+          `/tmp/${TEST_PRODUCT_INFO.serverDataFolderName}/extensions`,
         );
       });
     });
@@ -274,7 +285,7 @@ describe("serverManager", () => {
         setupExecFileResponses([{ stdout: "x86_64\n" }]);
         await manager.detectArch("container1");
 
-        const callArgs = mockDockerExec.mock.calls[0];
+        const callArgs = mockHost.dockerExec.mock.calls[0];
         expect(callArgs[0]).toBe("container1");
         expect(callArgs[1]).toEqual(["uname", "-m"]);
       });
@@ -313,7 +324,7 @@ describe("serverManager", () => {
           `/tmp/${TEST_PRODUCT_INFO.serverDataFolderName}`,
         );
         // Only 2 calls: uname + test-f (no download)
-        expect(mockDockerExec).toHaveBeenCalledTimes(2);
+        expect(mockHost.dockerExec).toHaveBeenCalledTimes(2);
       });
 
       it("installs when binary is not present", async () => {
@@ -328,7 +339,7 @@ describe("serverManager", () => {
         expect(info.commit).toBe(TEST_PRODUCT_INFO.commit);
         expect(info.arch).toBe("x64");
         // 3 dockerExec: uname, test-f, rm
-        expect(mockDockerExec).toHaveBeenCalledTimes(3);
+        expect(mockHost.dockerExec).toHaveBeenCalledTimes(3);
         // bootstrap called for busybox + deploy + setup
         expect(mockBootstrapBusybox).toHaveBeenCalledWith("container1", "x64");
         expect(mockDeployTools).toHaveBeenCalledWith("container1");
@@ -372,7 +383,7 @@ describe("serverManager", () => {
 
         expect(info.commit).toBe(TEST_PRODUCT_INFO.commit);
         expect(info.arch).toBe("arm64");
-        expect(mockDockerExec).toHaveBeenCalledTimes(3);
+        expect(mockHost.dockerExec).toHaveBeenCalledTimes(3);
         expect(mockBootstrapBusybox).toHaveBeenCalledWith(
           "container1",
           "arm64",
@@ -432,7 +443,7 @@ describe("serverManager", () => {
 
         await manager.ensureConnectionToken("container1");
 
-        const callArgs = mockDockerExec.mock.calls[0];
+        const callArgs = mockHost.dockerExec.mock.calls[0];
         const args = callArgs[1] as string[];
         const shCmdIndex = args.indexOf("-c");
         const shellCmd = args[shCmdIndex + 1];
@@ -503,7 +514,7 @@ describe("serverManager", () => {
         await manager.start("container1");
 
         // The nohup start command is the 5th call (index 4)
-        const startCallArgs = mockDockerExec.mock.calls[4];
+        const startCallArgs = mockHost.dockerExec.mock.calls[4];
         const args = startCallArgs[1] as string[];
         const shCmdIndex = args.indexOf("-c");
         expect(shCmdIndex).toBeGreaterThan(-1);
@@ -536,7 +547,7 @@ describe("serverManager", () => {
 
         await manager.start("container1");
 
-        const startCallArgs = mockDockerExec.mock.calls[4];
+        const startCallArgs = mockHost.dockerExec.mock.calls[4];
         const args = startCallArgs[1] as string[];
         const shCmdIndex = args.indexOf("-c");
         const shellCmd = args[shCmdIndex + 1];
@@ -602,7 +613,7 @@ describe("serverManager", () => {
 
         await manager.start("container1");
 
-        const startCallArgs = mockDockerExec.mock.calls[4];
+        const startCallArgs = mockHost.dockerExec.mock.calls[4];
         const args = startCallArgs[1] as string[];
         const shCmdIndex = args.indexOf("-c");
         const shellCmd = args[shCmdIndex + 1];
@@ -663,7 +674,7 @@ describe("serverManager", () => {
         await manager.stop("container1");
 
         // Verify kill was called with SIGTERM
-        const killCallArgs = mockDockerExec.mock.calls[1];
+        const killCallArgs = mockHost.dockerExec.mock.calls[1];
         const args = killCallArgs[1] as string[];
         expect(args).toContain("kill");
         expect(args).toContain("-TERM");
@@ -683,7 +694,7 @@ describe("serverManager", () => {
         await manager.stop("container1");
 
         // Verify pgrep searched for kiro-reh
-        const pgrepCallArgs = mockDockerExec.mock.calls[1];
+        const pgrepCallArgs = mockHost.dockerExec.mock.calls[1];
         const args = pgrepCallArgs[1] as string[];
         expect(args).toContain("pgrep");
         expect(args).toContain("-f");
@@ -705,7 +716,7 @@ describe("serverManager", () => {
 
         await manager.stop("container1");
 
-        expect(mockDockerExec).toHaveBeenCalledTimes(4);
+        expect(mockHost.dockerExec).toHaveBeenCalledTimes(4);
       });
 
       it("does nothing when no server process is found", async () => {
@@ -719,7 +730,7 @@ describe("serverManager", () => {
         await manager.stop("container1");
 
         // Only 2 calls (cat pidFile + pgrep), no kill
-        expect(mockDockerExec).toHaveBeenCalledTimes(2);
+        expect(mockHost.dockerExec).toHaveBeenCalledTimes(2);
       });
     });
 
@@ -766,19 +777,26 @@ describe("serverManager", () => {
       });
     });
 
-    describe("custom docker path", () => {
-      it("uses custom docker path for all commands", async () => {
+    describe("custom host", () => {
+      it("routes dockerExec through the host", async () => {
+        const customHost = createMockHost();
+        customHost.dockerExec.mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: "x86_64\n",
+          stderr: "",
+        });
         const customManager = new ServerManager({
           productInfo: TEST_PRODUCT_INFO,
-          dockerPath: "/usr/local/bin/docker",
           extensionPath: "/fake/path",
+          host: customHost as any,
         });
 
-        setupExecFileResponses([{ stdout: "x86_64\n" }]);
         await customManager.detectArch("container1");
 
-        const callArgs = mockDockerExec.mock.calls[0];
-        expect(callArgs[2]?.dockerPath).toBe("/usr/local/bin/docker");
+        expect(customHost.dockerExec).toHaveBeenCalledWith("container1", [
+          "uname",
+          "-m",
+        ]);
       });
     });
 
@@ -804,6 +822,7 @@ describe("serverManager", () => {
           productInfo: TEST_PRODUCT_INFO,
           telemetryLevel: "error",
           extensionPath: "/fake/path",
+          host: mockHost as any,
         });
 
         setupExecFileResponses([
@@ -823,7 +842,7 @@ describe("serverManager", () => {
 
         await customManager.start("container1");
 
-        const startCallArgs = mockDockerExec.mock.calls[4];
+        const startCallArgs = mockHost.dockerExec.mock.calls[4];
         const args = startCallArgs[1] as string[];
         const shCmdIndex = args.indexOf("-c");
         const shellCmd = args[shCmdIndex + 1];

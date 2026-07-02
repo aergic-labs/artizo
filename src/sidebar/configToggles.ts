@@ -14,6 +14,65 @@
 import type { ConfigToggles, SoftwareFeature } from "./messages";
 
 // ---------------------------------------------------------------------------
+// Option path table
+// ---------------------------------------------------------------------------
+
+/** A managed option's jsonPath (mounts/runArgs/flag entry) and its tag. */
+export interface OptionPath {
+  path: string[];
+  managed: string;
+}
+
+/**
+ * Build the mount/runArg path table used by toggleOption.
+ *
+ * Maps each managed feature (gpu, waylandSocket, mountHome, privileged,
+ * sshAgent, copyGitConfig) to its jsonPath entries and artizoManaged tag.
+ * The home mount source is parameterized because it depends on the host
+ * home directory, which is computed at the call site.
+ *
+ * @param homePath - Host home directory, pre-escaped for the current platform
+ * @returns Record keyed by feature name
+ */
+export function optionPaths(
+  homePath: string,
+): Record<string, OptionPath> {
+  return {
+    gpu: { path: ["runArgs", "--gpus", "all"], managed: "gpu" },
+    waylandSocket: {
+      path: [
+        "mounts",
+        "source=${localEnv:WAYLAND_DISPLAY}",
+        "target=/tmp/.X11-unix",
+      ],
+      managed: "waylandSocket",
+    },
+    mountHome: {
+      path: [
+        "mounts",
+        `source=${homePath}`,
+        "target=/host-home",
+        "type=bind",
+      ],
+      managed: "home",
+    },
+    privileged: { path: ["runArgs", "--privileged"], managed: "privileged" },
+    sshAgent: {
+      path: [
+        "mounts",
+        "source=${localEnv:SSH_AUTH_SOCK}",
+        "target=/tmp/ssh-auth-sock",
+      ],
+      managed: "sshAgent",
+    },
+    copyGitConfig: {
+      path: ["disableCopyGitConfig"],
+      managed: "copyGitConfig",
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Pure toggle logic
 // ---------------------------------------------------------------------------
 
@@ -137,31 +196,40 @@ export function extractToggles(raw: Record<string, unknown>): ConfigToggles {
 }
 
 const CURATED_SOFTWARE: { ref: string; label: string }[] = [
-  { ref: "ghcr.io/devcontainers/features/aws-cli:1", label: "AWS CLI" },
+  { ref: "ghcr.io/devcontainers/features/aws-cli:latest", label: "AWS CLI" },
   {
-    ref: "ghcr.io/devcontainers/features/common-utils:2",
+    ref: "ghcr.io/devcontainers/features/common-utils:latest",
     label: "Common Utilities",
   },
   {
-    ref: "ghcr.io/devcontainers/features/docker-in-docker:3",
+    ref: "ghcr.io/devcontainers/features/docker-in-docker:latest",
     label: "Docker (in Docker)",
   },
   {
-    ref: "ghcr.io/devcontainers/features/docker-outside-of-docker:1",
+    ref: "ghcr.io/devcontainers/features/docker-outside-of-docker:latest",
     label: "Docker (outside of Docker)",
   },
-  { ref: "ghcr.io/devcontainers/features/git:1", label: "Git (from source)" },
-  { ref: "ghcr.io/devcontainers/features/github-cli:1", label: "GitHub CLI" },
-  { ref: "ghcr.io/devcontainers/features/go:1", label: "Go" },
-  { ref: "ghcr.io/devcontainers/features/java:1", label: "Java" },
   {
-    ref: "ghcr.io/devcontainers/features/kubectl-helm-minikube:1",
+    ref: "ghcr.io/devcontainers/features/git:latest",
+    label: "Git (from source)",
+  },
+  {
+    ref: "ghcr.io/devcontainers/features/github-cli:latest",
+    label: "GitHub CLI",
+  },
+  { ref: "ghcr.io/devcontainers/features/go:latest", label: "Go" },
+  { ref: "ghcr.io/devcontainers/features/java:latest", label: "Java" },
+  {
+    ref: "ghcr.io/devcontainers/features/kubectl-helm-minikube:latest",
     label: "Kubernetes Tools",
   },
-  { ref: "ghcr.io/devcontainers/features/node:2", label: "Node.js" },
-  { ref: "ghcr.io/devcontainers/features/python:1", label: "Python" },
-  { ref: "ghcr.io/devcontainers/features/rust:1", label: "Rust" },
-  { ref: "ghcr.io/devcontainers/features/terraform:1", label: "Terraform" },
+  { ref: "ghcr.io/devcontainers/features/node:latest", label: "Node.js" },
+  { ref: "ghcr.io/devcontainers/features/python:latest", label: "Python" },
+  { ref: "ghcr.io/devcontainers/features/rust:latest", label: "Rust" },
+  {
+    ref: "ghcr.io/devcontainers/features/terraform:latest",
+    label: "Terraform",
+  },
 ];
 
 export function extractSoftware(

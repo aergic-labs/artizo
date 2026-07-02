@@ -1,13 +1,4 @@
-import * as fs from "node:fs";
-
 import { defineConfig } from "vitest/config";
-
-/**
- * Read the TCP relay script at test-config time and inject it as a compile-time
- * constant, matching what esbuild.config.mjs does for the production build.
- * This keeps relay.js as the single source of truth.
- */
-const relayScript = fs.readFileSync("src/remote/relay.js", "utf8");
 
 // Test defaults: Kiro feature set
 const testFlags = {
@@ -18,6 +9,7 @@ const testFlags = {
   HAS_TRAE_ADAPTER: JSON.stringify(false),
   HAS_DEVIN_ADAPTER: JSON.stringify(false),
   HAS_VSCODIUM_ADAPTER: JSON.stringify(false),
+  ARTIZO_SPIKE: JSON.stringify(false),
 };
 
 export default defineConfig({
@@ -42,11 +34,11 @@ export default defineConfig({
         "src/cli/provisionOptionsBuilder.ts",
         "src/cli/devcontainerEngine.ts",
         "src/cli/devcontainerEngine.d.ts",
+        "src/views/**",
       ],
     },
   },
   define: {
-    __RELAY_SCRIPT__: JSON.stringify(relayScript),
     __TARGET__: JSON.stringify(process.env.TARGET || "kiro"),
     ...testFlags,
   },

@@ -6,7 +6,7 @@
 /** Server lifecycle manager for kiro-reh inside containers. */
 
 import { randomUUID } from "node:crypto";
-import { dockerExec } from "../utils/dockerUtils";
+import type { Host } from "../host/host";
 import { type ProductInfo, buildServerDownloadUrl } from "./productInfo";
 import { getPlatformAdapter } from "../platform";
 import { getLogger } from "../utils/logger";
@@ -32,6 +32,12 @@ export interface IServerManager {
   stop(containerId: string): Promise<void>;
   getStatus(containerId: string): Promise<ServerInfo | null>;
   getCompatibleVersion(): string;
+  /**
+   * Container-side extensions directory for this platform's server.
+   * Used by ExtensionInstaller to know where to unzip VSIXs, and
+   * passed to the server via --extensions-dir on start.
+   */
+  getExtensionsDir(containerId: string): Promise<string>;
 }
 
 export function validateArch(unameArch: string): string {
@@ -47,25 +53,18 @@ export function validateArch(unameArch: string): string {
   }
 }
 
-/**
- * Maximum time (ms) to wait for the server to announce its listening port.
- */
+/** Maximum time (ms) to wait for the server to announce its listening port. */
 const SERVER_START_TIMEOUT_MS = 30_000;
 
-/**
- * Polling interval (ms) when waiting for the server port announcement.
- */
+/** Polling interval (ms) when waiting for the server port announcement. */
 const PORT_POLL_INTERVAL_MS = 250;
-
-export function versionsMatch(installed: string, expected: string): boolean {
-  return installed.trim() === expected.trim();
-}
 
 export function buildStartCommand(params: {
   installPath: string;
   binaryName: string;
   tokenFilePath: string;
   serverDataDir: string;
+  extensionsDir: string;
   telemetryLevel: string;
   logFile: string;
   pidFile: string;
@@ -75,6 +74,7 @@ export function buildStartCommand(params: {
     binaryName,
     tokenFilePath,
     serverDataDir,
+    extensionsDir,
     telemetryLevel,
     logFile,
     pidFile,
@@ -83,13 +83,14 @@ export function buildStartCommand(params: {
   return [
     "sh",
     "-c",
-    `mkdir -m 700 -p "${installPath}" "${serverDataDir}"; ` +
+    `mkdir -m 700 -p "${installPath}" "${serverDataDir}" "${extensionsDir}"; ` +
       `export PATH=/tmp/.artizo/bin:$PATH; ` +
       `nohup "${installPath}/bin/${binaryName}" ` +
       `--host 127.0.0.1 ` +
       `--port 0 ` +
       `--connection-token-file "${tokenFilePath}" ` +
       `--server-data-dir "${serverDataDir}" ` +
+      `--extensions-dir "${extensionsDir}" ` +
       `--telemetry-level ${telemetryLevel} ` +
       `--accept-server-license-terms ` +
       `--start-server ` +
@@ -102,17 +103,20 @@ export interface ServerManagerOptions {
   productInfo?: ProductInfo;
   telemetryLevel?: string;
   extensionPath?: string;
+  host?: Host;
 }
 
 /** Server lifecycle manager implementation. */
 export class ServerManager implements IServerManager {
   private readonly dockerPath: string;
+  private readonly host: Host;
   private readonly productInfo: ProductInfo;
   private readonly telemetryLevel: string;
   private readonly bootstrap: ContainerBootstrap | null;
 
   constructor(options?: ServerManagerOptions) {
     this.dockerPath = options?.dockerPath ?? "docker";
+    this.host = options?.host!;
     this.productInfo = options?.productInfo ?? {
       commit: "unknown",
       quality: "stable",
@@ -143,21 +147,10 @@ export class ServerManager implements IServerManager {
     return adapter.getServerInstallRoot?.() ?? "/tmp";
   }
 
-  async getInstallPathForContainer(containerId: string): Promise<string> {
-    const installRoot = await this.getServerInstallRoot(containerId);
-    return `${installRoot}/${this.productInfo.serverDataFolderName}/${this.productInfo.commit}`;
-  }
-
   // No commit hash in path; avoids stale-container mismatches.
   // Version tracking is done via a .version file inside this directory.
   getInstallPathWithRoot(installRoot: string): string {
     return `${installRoot}/${this.productInfo.serverDataFolderName}`;
-  }
-
-  // Legacy. Uses tilde for backward compat with tests.
-  // Do NOT use this in docker exec commands.
-  getInstallPath(): string {
-    return `~/${this.productInfo.serverDataFolderName}`;
   }
 
   private getTokenFilePath(installRoot: string): string {
@@ -168,11 +161,23 @@ export class ServerManager implements IServerManager {
     return `${installRoot}/${this.productInfo.serverDataFolderName}/data`;
   }
 
+  /**
+   * Container-side extensions directory.
+   *
+   * `${installRoot}/${serverDataFolderName}/extensions` - matches
+   * the `.<name>-server/extensions` convention used by each platform's
+   * remote extension host.
+   */
+  getExtensionsDir(containerId: string): Promise<string> {
+    return this.getServerInstallRoot(containerId).then(
+      (installRoot) =>
+        `${installRoot}/${this.productInfo.serverDataFolderName}/extensions`,
+    );
+  }
+
   async detectArch(containerId: string): Promise<string> {
     getLogger().info(`[Artizo] detectArch: exec uname...`);
-    const result = await dockerExec(containerId, ["uname", "-m"], {
-      dockerPath: this.dockerPath,
-    });
+    const result = await this.host.dockerExec(containerId, ["uname", "-m"]);
 
     if (result.exitCode !== 0) {
       throw new Error(
@@ -192,9 +197,11 @@ export class ServerManager implements IServerManager {
     const binaryPath = `${installPath}/bin/${binaryName}`;
     getLogger().info(`[Artizo] isServerBinaryPresent: test -f ${binaryPath}`);
 
-    const result = await dockerExec(containerId, ["test", "-f", binaryPath], {
-      dockerPath: this.dockerPath,
-    });
+    const result = await this.host.dockerExec(containerId, [
+      "test",
+      "-f",
+      binaryPath,
+    ]);
 
     return result.exitCode === 0;
   }
@@ -239,9 +246,7 @@ export class ServerManager implements IServerManager {
 
     getLogger().info(`[Artizo] clean install, path=${installPath}`);
 
-    await dockerExec(containerId, ["rm", "-rf", installPath], {
-      dockerPath: this.dockerPath,
-    });
+    await this.host.dockerExec(containerId, ["rm", "-rf", installPath]);
 
     getLogger().info(`[Artizo] deploying busybox...`);
     await this.bootstrap.bootstrapBusybox(containerId, arch);
@@ -284,9 +289,7 @@ export class ServerManager implements IServerManager {
         `rm -f '${tokenPath}-${uuid}' && cat '${tokenPath}')`,
     ];
 
-    const result = await dockerExec(containerId, tokenCmd, {
-      dockerPath: this.dockerPath,
-    });
+    const result = await this.host.dockerExec(containerId, tokenCmd);
 
     if (result.exitCode !== 0) {
       throw new Error(
@@ -336,6 +339,7 @@ export class ServerManager implements IServerManager {
     const installPath = this.getInstallPathWithRoot(installRoot);
     const tokenFilePath = this.getTokenFilePath(installRoot);
     const serverDataDir = this.getServerDataDir(installRoot);
+    const extensionsDir = await this.getExtensionsDir(containerId);
     const binaryName = this.productInfo.serverApplicationName;
     const logFile = `${installPath}/server.log`;
     const pidFile = `${installPath}/server.pid`;
@@ -347,14 +351,13 @@ export class ServerManager implements IServerManager {
       binaryName,
       tokenFilePath,
       serverDataDir,
+      extensionsDir,
       telemetryLevel: this.telemetryLevel,
       logFile,
       pidFile,
     });
 
-    const startResult = await dockerExec(containerId, startCmd, {
-      dockerPath: this.dockerPath,
-    });
+    const startResult = await this.host.dockerExec(containerId, startCmd);
 
     if (startResult.exitCode !== 0) {
       throw new Error(
@@ -365,9 +368,10 @@ export class ServerManager implements IServerManager {
     const port = await this.waitForPort(containerId, logFile);
 
     if (port === 0) {
-      const logResult = await dockerExec(containerId, ["cat", logFile], {
-        dockerPath: this.dockerPath,
-      });
+      const logResult = await this.host.dockerExec(containerId, [
+        "cat",
+        logFile,
+      ]);
       throw new Error(
         `Server did not announce a listening port within ${SERVER_START_TIMEOUT_MS}ms. ` +
           `Log output:\n${logResult.stdout}\n${logResult.stderr}`,
@@ -390,9 +394,7 @@ export class ServerManager implements IServerManager {
     const deadline = Date.now() + SERVER_START_TIMEOUT_MS;
 
     while (Date.now() < deadline) {
-      const result = await dockerExec(containerId, ["cat", logFile], {
-        dockerPath: this.dockerPath,
-      });
+      const result = await this.host.dockerExec(containerId, ["cat", logFile]);
 
       if (result.exitCode === 0 && result.stdout) {
         const port = this.parsePortFromOutput(result.stdout);
@@ -421,26 +423,20 @@ export class ServerManager implements IServerManager {
     const binaryName = this.productInfo.serverApplicationName;
     const pidFile = `${installPath}/server.pid`;
 
-    const pidResult = await dockerExec(containerId, ["cat", pidFile], {
-      dockerPath: this.dockerPath,
-    });
+    const pidResult = await this.host.dockerExec(containerId, ["cat", pidFile]);
 
     if (pidResult.exitCode === 0 && pidResult.stdout.trim()) {
       const pid = pidResult.stdout.trim();
-      await dockerExec(containerId, ["kill", "-TERM", pid], {
-        dockerPath: this.dockerPath,
-      });
-      await dockerExec(containerId, ["rm", "-f", pidFile], {
-        dockerPath: this.dockerPath,
-      });
+      await this.host.dockerExec(containerId, ["kill", "-TERM", pid]);
+      await this.host.dockerExec(containerId, ["rm", "-f", pidFile]);
       return;
     }
 
-    const findResult = await dockerExec(
-      containerId,
-      ["pgrep", "-f", `${binaryName}.*--connection-token-file`],
-      { dockerPath: this.dockerPath },
-    );
+    const findResult = await this.host.dockerExec(containerId, [
+      "pgrep",
+      "-f",
+      `${binaryName}.*--connection-token-file`,
+    ]);
 
     if (findResult.exitCode !== 0 || !findResult.stdout.trim()) {
       return;
@@ -449,9 +445,7 @@ export class ServerManager implements IServerManager {
     const pids = findResult.stdout.trim().split("\n").filter(Boolean);
 
     for (const pid of pids) {
-      await dockerExec(containerId, ["kill", "-TERM", pid], {
-        dockerPath: this.dockerPath,
-      });
+      await this.host.dockerExec(containerId, ["kill", "-TERM", pid]);
     }
   }
 
@@ -459,11 +453,11 @@ export class ServerManager implements IServerManager {
     const binaryName = this.productInfo.serverApplicationName;
 
     // Check if the server process is running
-    const findResult = await dockerExec(
-      containerId,
-      ["pgrep", "-f", `${binaryName}.*--connection-token-file`],
-      { dockerPath: this.dockerPath },
-    );
+    const findResult = await this.host.dockerExec(containerId, [
+      "pgrep",
+      "-f",
+      `${binaryName}.*--connection-token-file`,
+    ]);
 
     if (findResult.exitCode !== 0 || !findResult.stdout.trim()) {
       return null;

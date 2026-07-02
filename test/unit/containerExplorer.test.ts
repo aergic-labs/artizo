@@ -145,11 +145,13 @@ describe("ContainerExplorerProvider", () => {
           ID: "abc123def456",
           Names: "my-devcontainer",
           State: "running",
+          Labels: "devcontainer.local_folder=/home/user/project",
         }),
         JSON.stringify({
           ID: "xyz789",
           Names: "another-container",
           State: "running",
+          Labels: "artizo.local_folder=/other/path",
         }),
       ].join("\n");
 
@@ -347,6 +349,7 @@ describe("ContainerExplorerProvider", () => {
         ID: "abc123",
         Names: "container1",
         State: "running",
+        Labels: "devcontainer.local_folder=/home/user/project",
       });
       // First call is for containers (docker ps), second for volumes (docker volume ls)
       let callCount = 0;

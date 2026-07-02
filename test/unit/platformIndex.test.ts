@@ -66,5 +66,11 @@ describe("getPlatformAdapter", () => {
     it("isValidRuntime returns a boolean", () => {
       expect(typeof adapter.isValidRuntime()).toBe("boolean");
     });
+
+    it("getApexExtensionsDir returns a path ending in extensions", () => {
+      const dir = adapter.getApexExtensionsDir();
+      expect(dir).toBeTruthy();
+      expect(dir.endsWith("extensions")).toBe(true);
+    });
   });
 });

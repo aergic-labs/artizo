@@ -1,7 +1,7 @@
 A dev container build/provision just FAILED. Help me diagnose and fix it.
 
 The failing build output (tail) and the relevant config are provided below /
-attached. Work from the actual error — don't guess.
+attached. Work from the actual error  -  don't guess.
 
 1. Read the build log tail below and identify the **root cause** of the failure
    (e.g. a missing system package, a failing `RUN`/feature install, a bad base
@@ -9,8 +9,8 @@ attached. Work from the actual error — don't guess.
    Point to the specific line(s) that show the failure. If the tail is
    truncated or doesn't show the cause, use a shell command to read the entire
    full log file referenced near the end of this message (detect the shell
-   first if unsure — `echo $SHELL` — then use an appropriate read command),
-   then scan from the bottom up to find the most recent build run and its failure — it is a
+   first if unsure  -  `echo $SHELL`  -  then use an appropriate read command),
+   then scan from the bottom up to find the most recent build run and its failure  -  it is a
    rolling session log containing earlier unrelated runs, so ignore those.
 2. Read `.devcontainer/devcontainer.json` (and the Dockerfile / compose file if
    referenced) to see what produced that step.
@@ -22,5 +22,5 @@ attached. Work from the actual error — don't guess.
    changing anything; otherwise apply the fix and briefly explain what was wrong
    and what you changed. Then suggest rebuilding the container.
 
-Do not make unrelated changes or "improvements" — fix only what caused the
+Do not make unrelated changes or "improvements"  -  fix only what caused the
 failure.

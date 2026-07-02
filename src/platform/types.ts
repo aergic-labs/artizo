@@ -24,6 +24,12 @@ export interface PlatformConfig {
   needsHomeSymlink?: boolean;
   /** Host data folder for argv.json. Defaults to dataFolderName. */
   hostDataFolderName?: string;
+  /**
+   * Candidate data folder names where argv.json may live. Defaults to
+   * [dataFolderName] when absent. VSCodium needs both .vscode-oss and
+   * .vscodium because different builds use different folder names.
+   */
+  argvDataFolderNames?: string[];
 }
 
 /**
@@ -52,6 +58,13 @@ export interface IPlatformAdapter {
   /** Path to the IDE's argv.json file for proposed API enablement. */
   getArgvPath(): string;
 
+  /**
+   * Candidate data folder names where argv.json may live. The caller
+   * probes each joined with os.homedir() + name + "argv.json"; the first
+   * existing file wins. If none exist, the first candidate is created.
+   */
+  getArgvDataFolderNames(): string[];
+
   /** Whether argv.json patching is needed for proposed APIs to work. */
   needsArgvPatch(): boolean;
 
@@ -65,6 +78,27 @@ export interface IPlatformAdapter {
 
   /** Whether a home symlink is needed after server install. */
   needsHomeSymlink?(): boolean;
+
+  /**
+   * Candidate remote server extensions directories, relative to the
+   * remote home (POSIX, no leading slash). Probed in order by the
+   * side-load bootstrap. The first that exists wins.
+   *
+   * Returns just the current platform's own server dir - the
+   * side-load runs from inside the target IDE, so cross-platform
+   * fallbacks would only leak competitor names into the bundle (which
+   * guard-bundle.mjs rejects). One entry per adapter.
+   */
+  getRemoteExtensionsDirCandidates(): string[];
+
+  /**
+   * Absolute path to the apex (client) extensions directory. Used by
+   * the SSH side-load mirror to enumerate locally-installed extensions
+   * on disk - vscode.extensions.all on the UI-side exthost doesn't
+   * include workspace-kind extensions that aren't loaded into that
+   * process, so we read the disk ledger directly.
+   */
+  getApexExtensionsDir(): string;
 
   /** Read auth token from host filesystem. */
   readAuthToken?(): string | undefined;

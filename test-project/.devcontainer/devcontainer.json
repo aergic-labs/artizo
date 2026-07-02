@@ -1,19 +1,14 @@
 {
   "name": "Dev Container",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
-  "features": {
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "20"
-    }
-  },
-  "forwardPorts": [3000],
   "customizations": {
     "vscode": {
       "extensions": []
     }
   },
-  "runArgs": [
-    "--privileged"
-  ],
-  "mounts": []
+  "mounts": [],
+  "features": {
+    "ghcr.io/devcontainers/features/aws-cli:latest": {}
+  },
+  "runArgs": []
 }

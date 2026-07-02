@@ -36,6 +36,15 @@ ajv
     require-from-string (2.0.2) - MIT - Vsevolod Strukchinsky
 
 --------------------------------------------------------------------------------
+comment-json
+  Version: 5.0.0
+  License: MIT
+  Author: kaelzhang
+  Repository: https://github.com/kaelzhang/node-comment-json
+  Note: JSON parser that preserves comments, used for devcontainer.json
+        editing with comment preservation.
+
+--------------------------------------------------------------------------------
 jsonc-parser
   Version: 3.3.1
   License: MIT
@@ -52,12 +61,13 @@ vscode-uri
   Note: URI handling utilities for VS Code extension development.
 
 --------------------------------------------------------------------------------
-ws
-  Version: 8.20.1
+yauzl
+  Version: 3.4.0
   License: MIT
-  Author: Einar Otto Stangvik
-  Repository: https://github.com/websockets/ws
-  Note: WebSocket client/server library for container communication.
+  Author: Josh Wolfe
+  Repository: https://github.com/thejoshwolfe/yauzl
+  Note: Zip extraction library for unpacking VSIX files during extension
+        mirroring onto SSH remotes.
 
 ================================================================================
 LICENSE SUMMARY
@@ -65,8 +75,8 @@ LICENSE SUMMARY
 
 This project uses open source software under the following licenses:
 
-  - MIT: @devcontainers/cli, ajv, jsonc-parser, vscode-uri, ws,
-         fast-deep-equal, json-schema-traverse, require-from-string
+  - MIT: @devcontainers/cli, ajv, comment-json, jsonc-parser, vscode-uri,
+         yauzl, fast-deep-equal, json-schema-traverse, require-from-string
   - BSD-3-Clause: fast-uri
 
 ================================================================================

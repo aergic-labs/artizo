@@ -6,12 +6,13 @@ const isWatch = process.argv.includes("--watch");
 const target = process.env.TARGET || "kiro";
 
 // Per-vendor feature flags; vendor names never ship in VSIX
+const isTraeFamily = target === "trae";
 const flags = {
-  HAS_SECCOMP_UNCONFINED: target === "trae",
+  HAS_SECCOMP_UNCONFINED: isTraeFamily,
   HAS_HOME_SYMLINK: target === "devin",
-  HAS_ARGV_PATCH: target !== "trae",
+  HAS_ARGV_PATCH: !isTraeFamily,
   HAS_KIRO_ADAPTER: target === "kiro",
-  HAS_TRAE_ADAPTER: target === "trae",
+  HAS_TRAE_ADAPTER: isTraeFamily,
   HAS_DEVIN_ADAPTER: target === "devin",
   HAS_VSCODIUM_ADAPTER: target === "vscodium",
 };
@@ -51,6 +52,34 @@ const buildOptions = {
 };
 
 /**
+ * Build options for the standalone remote argv.json patch script. Bundled
+ * to a single self-contained CJS file (jsonc-parser inlined) that the apex
+ * pushes over ssh stdin to `node -` on the SSH remote. Minified + no legal
+ * comments to keep the pushed payload small (~17KB).
+ */
+/** @type {esbuild.BuildOptions} */
+const remotePatchOptions = {
+  entryPoints: ["src/remote/argvPatchRemoteMain.ts"],
+  bundle: true,
+  outfile: "dist/argv-patch-remote.cjs",
+  format: "cjs",
+  platform: "node",
+  target: "node18",
+  minify: true,
+  legalComments: "none",
+  treeShaking: true,
+  // Prefer jsonc-parser's ESM build; the UMD build uses dynamic relative
+  // requires that esbuild can't statically bundle.
+  mainFields: ["module", "main"],
+  banner: {
+    js: `/*
+ * Copyright (c) 2026 Aergic Labs, LLC
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */`,
+  },
+};
+
+/**
  * Recursively copy a directory from src to dest.
  */
 function copyDirSync(src, dest) {
@@ -66,71 +95,16 @@ function copyDirSync(src, dest) {
   }
 }
 
-/**
- * Copy @devcontainers/cli distribution files to the output directory.
- *
- * The CLI is built from the vendored source with:
- *   cd vendor/devcontainers-cli && npm install && npm run compile-prod
- *
- * Only the files needed by templates.ts (which spawns the CLI as a
- * child process) are copied. The main API path (api.ts) imports vendored
- * source directly; esbuild handles that bundling.
- */
-function copyDevcontainersCli() {
-  const cliSource = path.resolve("vendor", "devcontainers-cli");
-  const cliEntry = path.join(
-    cliSource,
-    "dist",
-    "spec-node",
-    "devContainersSpecCLI.js",
-  );
-
-  if (!fs.existsSync(cliEntry)) {
-    console.error(
-      "Vendored CLI not built. Run: cd vendor/devcontainers-cli && npm install && npm run compile-prod",
-    );
-    process.exit(1);
-  }
-
-  const cliDest = path.resolve("dist", "node_modules", "@devcontainers", "cli");
-  // Clean previous build to avoid stale files
-  fs.rmSync(cliDest, { recursive: true, force: true });
-  fs.mkdirSync(path.join(cliDest, "dist", "spec-node"), { recursive: true });
-
-  // CLI entry point
-  fs.copyFileSync(
-    path.join(cliSource, "devcontainer.js"),
-    path.join(cliDest, "devcontainer.js"),
-  );
-  // Package metadata (for dependency resolution if spawned)
-  fs.copyFileSync(
-    path.join(cliSource, "package.json"),
-    path.join(cliDest, "package.json"),
-  );
-  // Compiled CLI (spawned by templates.ts)
-  fs.copyFileSync(
-    path.join(cliSource, "dist", "spec-node", "devContainersSpecCLI.js"),
-    path.join(cliDest, "dist", "spec-node", "devContainersSpecCLI.js"),
-  );
-  // Dockerfile used by the CLI for UID updates
-  const scriptsSource = path.join(cliSource, "scripts");
-  const scriptsDest = path.join(cliDest, "scripts");
-  fs.mkdirSync(scriptsDest, { recursive: true });
-  fs.copyFileSync(
-    path.join(scriptsSource, "updateUID.Dockerfile"),
-    path.join(scriptsDest, "updateUID.Dockerfile"),
-  );
-}
-
 async function main() {
   if (isWatch) {
     const ctx = await esbuild.context(buildOptions);
+    const remoteCtx = await esbuild.context(remotePatchOptions);
     await ctx.watch();
-    copyDevcontainersCli();
+    await remoteCtx.watch();
     console.log("Watching for changes...");
   } else {
     const result = await esbuild.build(buildOptions);
-    copyDevcontainersCli();
+    await esbuild.build(remotePatchOptions);
 
     // Report bundle size
     if (result.metafile) {

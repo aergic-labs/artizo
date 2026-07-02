@@ -11,11 +11,14 @@
  */
 
 import * as vscode from "vscode";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
-const LABEL_DEVCONTAINER = "devcontainer.local_folder";
+import type { Host } from "../host/host";
+import { getLogger } from "../utils/logger";
+import {
+  parseContainerList,
+  getLocalFolder,
+  getConfigFile,
+  isDevContainer,
+} from "../devcontainer/labels";
 
 export interface ContainerInfo {
   id: string;
@@ -23,39 +26,47 @@ export interface ContainerInfo {
   status: "running" | "stopped";
   image: string;
   localFolder: string;
+  configFile: string;
 }
 
 export class ContainerService {
-  constructor(private readonly dockerPath: string) {}
+  constructor(private readonly host: Host) {}
 
-  /** Fetch all dev containers from Docker. */
+  /**
+   * Fetch all dev containers from Docker.
+   *
+   * Mirrors the official extension: list every container with
+   * `docker ps -a`, then categorize in memory by checking our
+   * artizo.* / devcontainer.* labels.
+   */
   async refreshContainers(): Promise<ContainerInfo[]> {
-    const { stdout } = await execFileAsync(
-      this.dockerPath,
-      [
-        "ps",
-        "-a",
-        "--filter",
-        `label=${LABEL_DEVCONTAINER}`,
-        "--format",
-        "{{json .}}",
-      ],
-      { timeout: 10000, maxBuffer: 1024 * 1024 },
-    );
-
-    const lines = stdout.trim().split("\n").filter(Boolean);
-    return lines.map((line) => {
-      const c = JSON.parse(line);
-      const labels = parseLabelString(c.Labels || "");
-      return {
-        id: c.ID || "",
-        name: (c.Names || "").replace(/^\/+/, ""),
-        status:
-          c.State === "running" ? ("running" as const) : ("stopped" as const),
-        image: c.Image || "",
-        localFolder: labels[LABEL_DEVCONTAINER] || "",
-      };
+    getLogger().info("refreshContainers: called");
+    const result = await this.host.exec({
+      cmd: this.host.dockerPath,
+      args: ["ps", "-a", "--no-trunc", "--format", "{{json .}}"],
     });
+
+    getLogger().info(
+      `refreshContainers: stdout length=${result.stdout.length}, exitCode=${result.exitCode}`,
+    );
+    if (result.exitCode !== 0) {
+      getLogger().warn(`refreshContainers: docker ps failed: ${result.stderr}`);
+      return [];
+    }
+
+    const summaries = parseContainerList(result.stdout);
+    const dev = summaries.filter((s) => isDevContainer(s.labels));
+    getLogger().info(
+      `refreshContainers: ${summaries.length} total, ${dev.length} dev containers`,
+    );
+    return dev.map((s) => ({
+      id: s.id,
+      name: s.name,
+      status: s.state === "running" ? "running" : "stopped",
+      image: s.image,
+      localFolder: getLocalFolder(s.labels) || "",
+      configFile: getConfigFile(s.labels) || "",
+    }));
   }
 
   /** Handle container actions: start, stop, remove, connect, logs, inspect. */
@@ -71,8 +82,7 @@ export class ContainerService {
     containerId: string,
     containerName?: string,
   ): Promise<void> {
-    const docker = this.dockerPath;
-    const newWindow = action === "connectNewWindow";
+    const docker = this.host.dockerPath;
 
     switch (action) {
       case "start":
@@ -92,7 +102,7 @@ export class ContainerService {
             action === "start" ? "start" : action === "stop" ? "stop" : "rm";
           const args =
             cmd === "rm" ? ["rm", "-f", containerId] : [cmd, containerId];
-          await execFileAsync(docker, args, { timeout: 30000 });
+          await this.host.exec({ cmd: docker, args });
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
           vscode.window.showErrorMessage(`Docker ${action} failed: ${msg}`);
@@ -112,13 +122,12 @@ export class ContainerService {
       }
       case "inspect": {
         try {
-          const { stdout } = await execFileAsync(
-            docker,
-            ["inspect", containerId],
-            { timeout: 10000, maxBuffer: 1024 * 1024 },
-          );
+          const result = await this.host.exec({
+            cmd: docker,
+            args: ["inspect", containerId],
+          });
           const name = containerName || containerId.slice(0, 12);
-          const encoded = Buffer.from(stdout).toString("base64");
+          const encoded = Buffer.from(result.stdout).toString("base64");
           const uri = vscode.Uri.parse(
             `artizo-inspect:Container ${name}.json`,
           ).with({ query: encoded });
@@ -136,39 +145,13 @@ export class ContainerService {
       }
       case "connectCurrentWindow":
       case "connectNewWindow": {
-        const hexId = Buffer.from(containerId).toString("hex");
-        const uri = vscode.Uri.parse(
-          `vscode-remote://attached-container+${hexId}/`,
+        await vscode.commands.executeCommand(
+          "artizo.attachToRunningContainer",
+          containerId,
+          action === "connectNewWindow",
         );
-        await vscode.commands.executeCommand("vscode.openFolder", uri, {
-          forceNewWindow: newWindow,
-        });
         return;
       }
     }
   }
-}
-
-function parseLabelString(labels: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  if (!labels) {
-    return result;
-  }
-  // Docker --format {{json .}} outputs Labels as a comma-separated string
-  // Try JSON first (some Docker versions output JSON for Labels)
-  try {
-    const obj = JSON.parse(labels);
-    if (typeof obj === "object" && obj !== null) {
-      return obj as Record<string, string>;
-    }
-  } catch {
-    // Not JSON, parse as comma-separated key=value
-  }
-  for (const part of labels.split(",")) {
-    const eq = part.indexOf("=");
-    if (eq > 0) {
-      result[part.slice(0, eq).trim()] = part.slice(eq + 1);
-    }
-  }
-  return result;
 }

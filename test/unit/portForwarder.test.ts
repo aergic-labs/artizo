@@ -23,9 +23,7 @@ import { PortForwarder, type ForwardedPort } from '../../src/ports/portForwarder
 const mockSpawn = vi.mocked(spawn);
 const mockCreateServer = vi.mocked(createServer);
 
-/**
- * Creates a mock net.Server.
- */
+/** Creates a mock net.Server. */
 function createMockServer(): {
   server: Server;
   emitter: EventEmitter;
@@ -61,9 +59,7 @@ function createMockServer(): {
   return { server, emitter, get connectionHandler() { return connectionHandler; } };
 }
 
-/**
- * Creates a mock ChildProcess for relay tunneling.
- */
+/** Creates a mock ChildProcess for relay tunneling. */
 function createMockChildProcess(): {
   process: ChildProcess;
   stdin: EventEmitter & { write: ReturnType<typeof vi.fn>; destroyed: boolean; end: ReturnType<typeof vi.fn> };
@@ -103,9 +99,7 @@ function createMockChildProcess(): {
   return { process, stdin, stdout, emitter };
 }
 
-/**
- * Creates a mock Socket.
- */
+/** Creates a mock Socket. */
 function createMockSocket(): Socket {
   const emitter = new EventEmitter();
   const socket = Object.assign(emitter, {

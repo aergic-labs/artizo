@@ -13,16 +13,17 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { get as httpsGet } from "node:https";
 import { getLogger } from "../utils/logger";
-import { PassThrough } from "node:stream";
 import { dockerSpawn as realDockerSpawn } from "../utils/dockerUtils";
 
-// ── Constants ───────────────────────────────────────────────────────
-
+// Constants
 const ARTIZO_BIN = "/tmp/.artizo/bin";
 const BLOCK = 512;
+/** Inactivity timeout for the server download (ms). */
+const DOWNLOAD_TIMEOUT_MS = 60_000;
+/** Max HTTP redirects to follow when downloading the server. */
+const MAX_DOWNLOAD_REDIRECTS = 5;
 
-// ── Minimal tar creator (zero deps) ─────────────────────────────────
-
+// Minimal tar creator (zero deps)
 function createTar(
   entries: Array<{
     name: string;
@@ -74,8 +75,7 @@ function checksum(header: Buffer): number {
   return sum;
 }
 
-// ── Public API ──────────────────────────────────────────────────────
-
+// Public API
 /** Parse HOME=... line from setup script stdout. */
 export function parseHome(stdout: string): string {
   const m = stdout.match(/^HOME=(.*)$/m);
@@ -193,8 +193,13 @@ export class ContainerBootstrap {
     authTokenPath?: string,
   ): Promise<BootstrapResult> {
     const args = ["exec", "-i", "-e", `ARTIZO_SERVER_ROOT=${installPath}`];
-    if (authToken && authTokenPath) {
-      args.push("-e", `ARTIZO_AUTH_TOKEN=${authToken}`);
+    const sendToken = Boolean(authToken && authTokenPath);
+    if (sendToken) {
+      // The SSO token is streamed on stdin (base64, first line) rather than
+      // passed as `-e ARTIZO_AUTH_TOKEN=...`, so it never lands on the host
+      // `docker` process argv (visible via `ps` / `/proc/<pid>/cmdline`).
+      // Only the non-sensitive destination path and a marker flag go on argv.
+      args.push("-e", "ARTIZO_AUTH_TOKEN_STDIN=1");
       args.push("-e", `ARTIZO_AUTH_TOKEN_PATH=${authTokenPath}`);
     }
     args.push(containerId, "/tmp/.artizo/bin/sh", "/tmp/.artizo/bin/setup.sh");
@@ -213,36 +218,16 @@ export class ContainerBootstrap {
 
     // Download server tarball into memory
     getLogger().info(`[Artizo] downloading server...`);
-    const buf = new PassThrough();
-    const chunks: Buffer[] = [];
-    buf.on("data", (c: Buffer) => chunks.push(c));
-
-    await new Promise<void>((resolve, reject) => {
-      this.fetcher(serverUrl, (res) => {
-        if (!res.statusCode || res.statusCode >= 400) {
-          reject(new Error(`HTTP ${res.statusCode} fetching server`));
-          return;
-        }
-        if (res.statusCode >= 300 && res.headers.location) {
-          this.fetcher(res.headers.location, (res2) => {
-            if (!res2.statusCode || res2.statusCode >= 400) {
-              reject(
-                new Error(`HTTP ${res2.statusCode} fetching server (redirect)`),
-              );
-              return;
-            }
-            res2.pipe(buf);
-            res2.on("end", () => resolve());
-          }).on("error", reject);
-          return;
-        }
-        res.pipe(buf);
-        res.on("end", () => resolve());
-      }).on("error", reject);
-    });
+    const serverBuf = await this.downloadServer(serverUrl);
 
     getLogger().info(`[Artizo] running setup...`);
-    child.stdin!.write(Buffer.concat(chunks));
+    // Auth token goes first as a single base64 line; setup.sh consumes it with
+    // one `read` before piping the remaining stdin (the tarball) into gzip.
+    if (sendToken) {
+      const tokenB64 = Buffer.from(authToken!).toString("base64");
+      child.stdin!.write(Buffer.from(`${tokenB64}\n`));
+    }
+    child.stdin!.write(serverBuf);
     child.stdin!.end();
 
     const exitCode = await exitCodePromise;
@@ -252,5 +237,66 @@ export class ContainerBootstrap {
     }
 
     return { home: parseHome(stdout) };
+  }
+
+  /**
+   * Download the server tarball into a Buffer, following up to
+   * MAX_DOWNLOAD_REDIRECTS redirects. Rejects on HTTP error, redirect loop,
+   * or an inactivity timeout so a stalled download fails fast instead of
+   * hanging the provision forever.
+   */
+  private downloadServer(serverUrl: string): Promise<Buffer> {
+    return new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      let settled = false;
+      const fail = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      };
+
+      const attempt = (url: string, redirectsLeft: number): void => {
+        const req = this.fetcher(url, (res) => {
+          const status = res.statusCode ?? 0;
+          const location = res.headers?.location;
+
+          if (status >= 300 && status < 400 && location) {
+            res.resume?.(); // drain so the socket can close
+            if (redirectsLeft <= 0) {
+              fail(new Error("Too many redirects fetching server"));
+              return;
+            }
+            attempt(location, redirectsLeft - 1);
+            return;
+          }
+
+          if (status < 200 || status >= 300) {
+            res.resume?.();
+            fail(new Error(`HTTP ${res.statusCode} fetching server`));
+            return;
+          }
+
+          res.on("data", (c: Buffer) => chunks.push(c));
+          res.on("end", () => {
+            if (settled) return;
+            settled = true;
+            resolve(Buffer.concat(chunks));
+          });
+          res.on("error", fail);
+        });
+
+        req.on("error", fail);
+        // Inactivity timeout: fires if the connection stalls with no data.
+        req.setTimeout?.(DOWNLOAD_TIMEOUT_MS, () => {
+          req.destroy?.(
+            new Error(
+              `server download timed out after ${DOWNLOAD_TIMEOUT_MS}ms`,
+            ),
+          );
+        });
+      };
+
+      attempt(serverUrl, MAX_DOWNLOAD_REDIRECTS);
+    });
   }
 }

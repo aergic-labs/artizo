@@ -1,5 +1,5 @@
-// node-pty stub — matches the real IPty interface from microsoft/node-pty
-// Called only in ptyExec (interactive exec, lifecycle hooks) — dormant for our code paths
+// node-pty stub  -  matches the real IPty interface from microsoft/node-pty
+// Called only in ptyExec (interactive exec, lifecycle hooks)  -  dormant for our code paths
 const EventEmitter = require('events');
 
 function noopDisposable() { return { dispose() {} }; }
@@ -46,8 +46,8 @@ class StubPty extends EventEmitter {
     resize(cols, rows) { this.cols = cols; this.rows = rows; }
     kill(signal) { this.emit('exit', { exitCode: 0, signal: signal || 0 }); }
     clear() {}    // no-op (Windows/ConPTY only)
-    pause() {}    // flow control — no-op
-    resume() {}   // flow control — no-op
+    pause() {}    // flow control  -  no-op
+    resume() {}   // flow control  -  no-op
 }
 
 module.exports = { spawn: (file, args, options) => new StubPty(file, args, options) };

@@ -57,12 +57,35 @@ export class DevinAdapter implements IPlatformAdapter {
     );
   }
 
+  getArgvDataFolderNames(): string[] {
+    return [
+      this.config.hostDataFolderName ?? this.dataFolderName,
+      ...(this.config.argvDataFolderNames ?? []),
+    ];
+  }
+
   needsArgvPatch(): boolean {
     return this.config.needsArgvPatch;
   }
 
   getAdditionalDockerRunArgs(): string[] {
     return this.config.additionalDockerRunArgs;
+  }
+
+  getRemoteExtensionsDirCandidates(): string[] {
+    // Devin's remote server dir is ~/.devin-server/extensions.
+    // dataFolderName is already ".devin-server" for Devin, so the
+    // server extensions dir is just <dataFolderName>/extensions.
+    return [`${this.dataFolderName}/extensions`];
+  }
+
+  getApexExtensionsDir(): string {
+    // Client extensions dir: ~/.devin/extensions (hostDataFolderName).
+    return path.join(
+      os.homedir(),
+      this.config.hostDataFolderName ?? this.dataFolderName,
+      "extensions",
+    );
   }
 
   getServerInstallRoot(): string {

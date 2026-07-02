@@ -6,22 +6,20 @@
 /**
  * Guard functions for command preconditions.
  *
- * Extracted from extension.ts to centralize local-context and
+ * Extracted from extension.ts to centralize host-context and
  * Docker-availability checks used by command handlers.
  */
 
-import * as vscode from "vscode";
-import { getLocalWorkspaceFolder as getLocalWsFolder } from "../utils/uriUtils";
+import { isInDevContainerWindow } from "./state";
+import { getHostWorkspaceFolder as getHostWsFolder } from "../utils/uriUtils";
 
-/** Dev container build/launch commands must run from a local window. */
-export function guardLocalContext(): void {
-  if (vscode.env.remoteName) {
+/** Dev container build/launch commands must not run from inside a managed container. */
+export function guardHostContext(): void {
+  if (isInDevContainerWindow()) {
     throw new Error(
-      "Dev container commands must run from a local window. " +
-        "You are currently connected via " +
-        vscode.env.remoteName +
-        ". " +
-        "Reopen the workspace locally first.",
+      "Dev container commands must run from a host window. " +
+        "You are currently connected to a managed container. " +
+        "Reopen the workspace in the host first.",
     );
   }
 }
@@ -36,6 +34,6 @@ export async function checkDockerAvailable(dockerPath: string): Promise<void> {
   }
 }
 
-export function getLocalWorkspaceFolder(): string | undefined {
-  return getLocalWsFolder();
+export function getHostWorkspaceFolder(): string | undefined {
+  return getHostWsFolder();
 }

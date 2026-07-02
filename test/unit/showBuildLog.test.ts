@@ -21,8 +21,12 @@ let terminalWrites: string[] = [];
 vi.mock("vscode", () => {
   class MockEventEmitter {
     private listeners: Array<(data: any) => void> = [];
+    _eventEmitter = {
+      hasListeners: false as boolean,
+    };
     event = (listener: (data: any) => void) => {
       this.listeners.push(listener);
+      this._eventEmitter.hasListeners = true;
       return { dispose: () => {} };
     };
     fire(data: any) {
@@ -32,6 +36,7 @@ vi.mock("vscode", () => {
     }
     dispose() {
       this.listeners = [];
+      this._eventEmitter.hasListeners = false;
     }
   }
 

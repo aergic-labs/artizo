@@ -56,9 +56,9 @@ vi.mock("../../src/utils/dockerUtils", () => ({
 
 import { RemoteAuthorityResolver } from "../../src/remote/authorityResolver";
 import { encodeAuthority } from "../../src/utils/uriUtils";
-import { validateArch, versionsMatch } from "../../src/remote/serverManager";
+import { validateArch } from "../../src/remote/serverManager";
 
-// ─── Property 2.1: Container lookup by label ────────────────────────────────
+// Property 2.1: Container lookup by label
 // For all container lookups with `devcontainer.local_folder` label,
 // the resolver finds the correct container.
 
@@ -155,7 +155,7 @@ describe("Property 2.1: Container lookup by label", () => {
   });
 });
 
-// ─── Property 2.2: Container lookup by ID ───────────────────────────────────
+// Property 2.2: Container lookup by ID
 // For all container lookups by container ID, the resolver finds the correct container.
 
 describe("Property 2.2: Container lookup by ID", () => {
@@ -230,7 +230,7 @@ describe("Property 2.2: Container lookup by ID", () => {
   });
 });
 
-// ─── Property 2.4: Architecture mapping ─────────────────────────────────────
+// Property 2.4: Architecture mapping
 // For all architecture strings, mapping produces correct platform identifier.
 
 describe("Property 2.4: Architecture mapping", () => {
@@ -316,59 +316,6 @@ describe("Property 2.4: Architecture mapping", () => {
   });
 });
 
-// ─── Property 2.5: Skip-if-installed ────────────────────────────────────────
-// For all cases where server commit matches installed commit, installation is skipped.
-
-describe("Property 2.5: Skip-if-installed (versionsMatch)", () => {
-  it("identical version strings match", () => {
-    fc.assert(
-      fc.property(fc.string({ minLength: 1, maxLength: 50 }), (version) => {
-        expect(versionsMatch(version, version)).toBe(true);
-      }),
-      { numRuns: 200 },
-    );
-  });
-
-  it("versions with surrounding whitespace still match", () => {
-    fc.assert(
-      fc.property(
-        fc
-          .string({ minLength: 1, maxLength: 50 })
-          .filter((s) => s.trim().length > 0),
-        fc.tuple(
-          fc.stringOf(fc.constantFrom(" ", "\t", "\n", "\r"), {
-            minLength: 0,
-            maxLength: 3,
-          }),
-          fc.stringOf(fc.constantFrom(" ", "\t", "\n", "\r"), {
-            minLength: 0,
-            maxLength: 3,
-          }),
-        ),
-        (version, [prefix, suffix]) => {
-          const padded = `${prefix}${version.trim()}${suffix}`;
-          expect(versionsMatch(padded, version.trim())).toBe(true);
-        },
-      ),
-      { numRuns: 100 },
-    );
-  });
-
-  it("different version strings do not match", () => {
-    fc.assert(
-      fc.property(
-        fc
-          .string({ minLength: 1, maxLength: 50 })
-          .filter((s) => s.trim().length > 0),
-        fc
-          .string({ minLength: 1, maxLength: 50 })
-          .filter((s) => s.trim().length > 0),
-        (v1, v2) => {
-          fc.pre(v1.trim() !== v2.trim());
-          expect(versionsMatch(v1, v2)).toBe(false);
-        },
-      ),
-      { numRuns: 100 },
-    );
-  });
-});
+// Property 2.5 (Skip-if-installed / versionsMatch) was removed: the
+// version-comparison design it covered was superseded by binary-presence
+// detection, so there is no live behavior left to assert.

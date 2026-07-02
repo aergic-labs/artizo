@@ -77,19 +77,13 @@ import { execFile } from "node:child_process";
 
 const mockExecFile = vi.mocked(execFile);
 
-/**
- * Arbitrary for a valid architecture string.
- */
+/** Arbitrary for a valid architecture string. */
 const archArb = fc.constantFrom("x64", "arm64");
 
-/**
- * Arbitrary for a valid container ID (hex string, 12-64 chars).
- */
+/** Arbitrary for a valid container ID (hex string, 12-64 chars). */
 const containerIdArb = fc.hexaString({ minLength: 12, maxLength: 64 });
 
-/**
- * Helper to set up execFile mock responses in sequence.
- */
+/** Helper to set up execFile mock responses in sequence. */
 function setupExecFileResponses(
   responses: Array<{ stdout?: string; stderr?: string; exitCode?: number }>,
 ) {
@@ -144,15 +138,15 @@ describe("Property 1: Bug Condition - Wrong Server Binary and Broken Connection"
 
   describe("1.2 Server startup command must use bin/<serverApplicationName> with --port and --connection-token-file", () => {
     it("start command uses correct server binary and flags", async () => {
-      const { dockerExec } = await import("../../src/utils/dockerUtils");
       const { ServerManager } = await import("../../src/remote/serverManager");
-
-      const mockedDockerExec = vi.mocked(dockerExec);
 
       await fc.assert(
         fc.asyncProperty(containerIdArb, async (containerId) => {
-          // Reset mocks for each property run
-          mockedDockerExec.mockReset();
+          // Create a fresh mock host for each property run
+          const mockHost = {
+            dockerExec: vi.fn(),
+            dockerPath: "docker",
+          };
 
           // start() calls many dockerExec operations in sequence:
           // 1. detectArch (uname -m)
@@ -161,44 +155,47 @@ describe("Property 1: Bug Condition - Wrong Server Binary and Broken Connection"
           // 4. start command (nohup ... &)
           // 5. waitForPort (cat logfile)
           // Provide enough responses for all of them
-          mockedDockerExec.mockResolvedValue({
+          mockHost.dockerExec.mockResolvedValue({
             exitCode: 0,
             stdout: "x86_64\n",
             stderr: "",
           });
           // Override specific calls: token creation returns a UUID
-          mockedDockerExec.mockResolvedValueOnce({
+          mockHost.dockerExec.mockResolvedValueOnce({
             exitCode: 0,
             stdout: "x86_64\n",
             stderr: "",
           }); // detectArch
-          mockedDockerExec.mockResolvedValueOnce({
+          mockHost.dockerExec.mockResolvedValueOnce({
             exitCode: 0,
             stdout: "test-token-uuid\n",
             stderr: "",
           }); // ensureConnectionToken
-          mockedDockerExec.mockResolvedValueOnce({
+          mockHost.dockerExec.mockResolvedValueOnce({
             exitCode: 1,
             stdout: "",
             stderr: "",
           }); // stop - cat pidfile (not found)
-          mockedDockerExec.mockResolvedValueOnce({
+          mockHost.dockerExec.mockResolvedValueOnce({
             exitCode: 1,
             stdout: "",
             stderr: "",
           }); // stop - pgrep (not found)
-          mockedDockerExec.mockResolvedValueOnce({
+          mockHost.dockerExec.mockResolvedValueOnce({
             exitCode: 0,
             stdout: "",
             stderr: "",
           }); // start command
-          mockedDockerExec.mockResolvedValueOnce({
+          mockHost.dockerExec.mockResolvedValueOnce({
             exitCode: 0,
             stdout: "Extension host agent listening on 9999\n",
             stderr: "",
           }); // waitForPort
 
-          const manager = new ServerManager({ dockerPath: "docker" });
+          const manager = new ServerManager({
+            dockerPath: "docker",
+            host: mockHost as any,
+          });
 
           try {
             await manager.start(containerId);
@@ -207,8 +204,8 @@ describe("Property 1: Bug Condition - Wrong Server Binary and Broken Connection"
           }
 
           // Find the start command among all dockerExec calls
-          const allCalls = mockedDockerExec.mock.calls;
-          const startCall = allCalls.find((call) => {
+          const allCalls = mockHost.dockerExec.mock.calls;
+          const startCall = allCalls.find((call: any[]) => {
             const cmdStr = call[1].join(" ");
             return (
               cmdStr.includes("nohup") || cmdStr.includes("--start-server")

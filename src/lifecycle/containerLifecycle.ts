@@ -46,9 +46,15 @@ export interface RemoveOptions {
 export interface CleanUpOptions {
   removeImages?: boolean;
   removeVolumes?: boolean;
-  /** Only remove containers with this label. */
+  /** Only remove containers with this label. Defaults to dev-container set. */
   labelFilter?: string;
 }
+
+/** Default label filters for clean-up: artizo.* or devcontainer.* namespace. */
+const CLEANUP_LABEL_FILTERS = [
+  "artizo.local_folder",
+  "devcontainer.local_folder",
+];
 
 /**
  * Result of a clean-up operation.
@@ -115,8 +121,8 @@ export class ContainerLifecycle implements IContainerLifecycle {
   /**
    * Clean up unused dev containers and optionally images/volumes.
    *
-   * Identifies dev containers by the devcontainer.local_folder label
-   * that @devcontainers/cli applies during up.
+   * Lists containers by the artizo.* / devcontainer.* local-folder labels
+   * (docker --filter is AND-only, so we query each and dedup).
    */
   async cleanUp(options?: CleanUpOptions): Promise<CleanUpResult> {
     const result: CleanUpResult = {
@@ -126,44 +132,44 @@ export class ContainerLifecycle implements IContainerLifecycle {
       errors: [],
     };
 
-    const labelFilter = options?.labelFilter ?? "devcontainer.local_folder";
+    const labelFilters = options?.labelFilter
+      ? [options.labelFilter]
+      : CLEANUP_LABEL_FILTERS;
 
-    const listResult = await this.execDocker([
-      "ps",
-      "-a",
-      "--filter",
-      `label=${labelFilter}`,
-      "--filter",
-      "status=exited",
-      "--format",
-      "{{.ID}}",
-    ]);
-
-    if (listResult.exitCode === 0 && listResult.stdout.trim()) {
-      const containerIds = listResult.stdout.trim().split("\n").filter(Boolean);
-
-      for (const id of containerIds) {
-        const removeResult = await this.remove(id, {
-          force: true,
-          removeVolumes: options?.removeVolumes,
-        });
-        if (removeResult.success) {
-          result.containersRemoved++;
-        } else {
-          result.errors.push(removeResult.error ?? `Failed to remove ${id}`);
+    const ids = new Set<string>();
+    for (const labelFilter of labelFilters) {
+      const listResult = await this.execDocker([
+        "ps",
+        "-a",
+        "--filter",
+        `label=${labelFilter}`,
+        "--filter",
+        "status=exited",
+        "--format",
+        "{{.ID}}",
+      ]);
+      if (listResult.exitCode === 0 && listResult.stdout.trim()) {
+        for (const id of listResult.stdout.trim().split("\n").filter(Boolean)) {
+          ids.add(id);
         }
+      }
+    }
+
+    for (const id of ids) {
+      const removeResult = await this.remove(id, {
+        force: true,
+        removeVolumes: options?.removeVolumes,
+      });
+      if (removeResult.success) {
+        result.containersRemoved++;
+      } else {
+        result.errors.push(removeResult.error ?? `Failed to remove ${id}`);
       }
     }
 
     // Remove dangling images if requested
     if (options?.removeImages) {
-      const pruneResult = await this.execDocker([
-        "image",
-        "prune",
-        "--force",
-        "--filter",
-        `label=${labelFilter}`,
-      ]);
+      const pruneResult = await this.execDocker(["image", "prune", "--force"]);
 
       if (pruneResult.exitCode === 0) {
         // Count removed images from output

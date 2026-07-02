@@ -16,6 +16,52 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { execSync } from "node:child_process";
 
+const root = path.resolve(import.meta.dirname, "..");
+
+// Staging dir lives in the OS temp dir, not the project root, so a
+// killed run can't orphan an `artizo-pack-*` dir into the worktree.
+// Sweep both the project root (legacy 0.2.0 used `.artizo-pack-*` in
+// root) and os.tmpdir() (current builds stage there as
+// `artizo-pack-*` without a dot) so orphans from killed runs are
+// cleaned up on the next build.
+const sweepDir = (dir, label) => {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    if (!name.startsWith("artizo-pack-") && !name.startsWith(".artizo-pack-"))
+      continue;
+    const p = path.join(dir, name);
+    try {
+      fs.rmSync(p, { recursive: true, force: true });
+      console.log(`Removed stale ${label} staging dir ${name}`);
+    } catch {
+      // best effort
+    }
+  }
+};
+sweepDir(root, "root");
+sweepDir(os.tmpdir(), "tmp");
+
+// Track the staging dir so signal handlers can clean it up if the
+// process is interrupted before the `finally` block runs.
+let stageDir;
+const cleanup = () => {
+  if (stageDir) {
+    fs.rmSync(stageDir, { recursive: true, force: true });
+    stageDir = undefined;
+  }
+};
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.once(sig, () => {
+    cleanup();
+    process.exit(130);
+  });
+}
+
 const target = process.argv
   .find((a) => a.startsWith("--target="))
   ?.split("=")[1];
@@ -32,7 +78,6 @@ if (
   process.exit(1);
 }
 
-const root = path.resolve(import.meta.dirname, "..");
 const basePkgPath = path.join(root, "package.json");
 const vendorDir = path.join(root, "vendor", target);
 const vendorPkgPath = path.join(vendorDir, "package.json");
@@ -61,8 +106,6 @@ if (fs.existsSync(outPath)) {
 }
 
 try {
-  // ── Build steps (in working tree) ──────────────────────────
-
   // Clean stale bundles from previous builds
   const distDir = path.join(root, "dist");
   for (const f of fs.readdirSync(distDir)) {
@@ -104,9 +147,9 @@ try {
     stdio: "inherit",
   });
 
-  // ── Assemble in temp directory ──────────────────────────────
+  // Assemble in temp directory
 
-  const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), "artizo-pack-"));
+  stageDir = fs.mkdtempSync(path.join(os.tmpdir(), "artizo-pack-"));
   console.log(`Packaging in ${stageDir}...`);
 
   // Merge vendor package.json over base
@@ -115,7 +158,7 @@ try {
   delete merged.scripts;
   delete merged.devDependencies;
 
-  // Generate vendor README — VSCodium has its own, others use the template
+  // Generate vendor README: VSCodium has its own, others use the template
   const vendorPkg = JSON.parse(fs.readFileSync(vendorPkgPath, "utf-8"));
   const platform = vendorPkg.platform;
   let readme;
@@ -135,7 +178,8 @@ try {
   }
 
   // Copy project files, skipping dirs that .vscodeignore would exclude anyway
-  // and skipping node_modules (huge, not packaged).
+  // and skipping node_modules (huge, not packaged). Staging lives outside the
+  // root now, so no prefix match is needed; the path guard is belt-and-suspenders.
   const SKIP = new Set([
     "node_modules",
     "vendor",
@@ -147,6 +191,7 @@ try {
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     const name = entry.name;
     if (SKIP.has(name)) continue;
+    if (name.startsWith(".artizo-pack-")) continue;
     if (name.startsWith("package.json.bak") || name.endsWith(".vsix")) continue;
     const src = path.join(root, name);
     const dest = path.join(stageDir, name);
@@ -177,9 +222,9 @@ try {
     fs.unlinkSync(path.join(stageDir, "dist", f));
   }
 
-  // ── Package ─────────────────────────────────────────────────
+  // Package
   execSync(
-    `npx vsce package --no-dependencies --allow-missing-repository -o ${outPath}`,
+    `npx vsce package --no-dependencies --allow-missing-repository --allow-star-activation -o ${outPath}`,
     {
       cwd: stageDir,
       stdio: "inherit",
@@ -187,10 +232,9 @@ try {
   );
 
   console.log(`Done: ${outFile}`);
-
-  // ── Cleanup ─────────────────────────────────────────────────
-  fs.rmSync(stageDir, { recursive: true, force: true });
 } catch (err) {
   console.error(err.message);
-  process.exit(1);
+  process.exitCode = 1;
+} finally {
+  cleanup();
 }

@@ -16,14 +16,9 @@ vi.mock("vscode", () => ({
 
 import * as vscode from "vscode";
 import type { VscodeWorkflowUI } from "../../src/workflows/vscodeUI";
-import type {
-  DevContainerTemplate,
-  DevContainerFeature,
-} from "../../src/workflows/configWizard";
 import type { RunningContainer } from "../../src/workflows/attachToContainer";
 import {
   buildOpenFolderUI,
-  buildConfigWizardUI,
   buildCloneInVolumeUI,
   buildAttachUI,
 } from "../../src/host/adapters";
@@ -39,14 +34,6 @@ function stubUi(): VscodeWorkflowUI {
     showBuildLog: vi.fn() as any,
     dispose: vi.fn(),
   } as unknown as VscodeWorkflowUI;
-}
-
-function makeTemplate(name: string, description = ""): DevContainerTemplate {
-  return { id: name.toLowerCase(), name, description };
-}
-
-function makeFeature(name: string, description = ""): DevContainerFeature {
-  return { id: name.toLowerCase(), name, description };
 }
 
 function makeContainer(
@@ -127,197 +114,6 @@ describe("adapters", () => {
           ["alpine", "ubuntu"],
           { placeHolder: "Select a devcontainer configuration" },
         );
-      });
-    });
-  });
-
-  describe("buildConfigWizardUI", () => {
-    describe("pickTemplate", () => {
-      it("builds items from template list with custom image option", async () => {
-        const ui = stubUi();
-        const adapter = buildConfigWizardUI(ui);
-        const templates = [makeTemplate("Ubuntu"), makeTemplate("Python")];
-        vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
-
-        await adapter.pickTemplate(templates);
-
-        const items = vi.mocked(vscode.window.showQuickPick).mock
-          .calls[0][0] as any[];
-        expect(items).toHaveLength(3);
-        expect(items[0].label).toBe("Ubuntu");
-        expect(items[0].template).toEqual(templates[0]);
-        expect(items[1].label).toBe("Python");
-        expect(items[2].label).toBe("$(edit) Custom image...");
-        expect(items[2].template).toBeUndefined();
-      });
-
-      it("returns the picked template", async () => {
-        const ui = stubUi();
-        const adapter = buildConfigWizardUI(ui);
-        const templates = [makeTemplate("Ubuntu")];
-        vi.mocked(vscode.window.showQuickPick).mockResolvedValue({
-          label: "Ubuntu",
-          description: "",
-          template: templates[0],
-        } as any);
-
-        const result = await adapter.pickTemplate(templates);
-
-        expect(result).toEqual(templates[0]);
-      });
-
-      it("returns Custom when custom image option picked", async () => {
-        const ui = stubUi();
-        const adapter = buildConfigWizardUI(ui);
-        vi.mocked(vscode.window.showQuickPick).mockResolvedValue({
-          label: "$(edit) Custom image...",
-          template: undefined,
-        } as any);
-
-        const result = await adapter.pickTemplate([makeTemplate("Ubuntu")]);
-
-        expect(result).toEqual({
-          id: "__custom__",
-          name: "Custom",
-          description: "",
-        });
-      });
-
-      it("returns undefined when QuickPick cancelled", async () => {
-        const ui = stubUi();
-        const adapter = buildConfigWizardUI(ui);
-        vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
-
-        const result = await adapter.pickTemplate([makeTemplate("Ubuntu")]);
-
-        expect(result).toBeUndefined();
-      });
-    });
-
-    describe("pickCustomImage", () => {
-      it("returns the entered image name", async () => {
-        const ui = stubUi();
-        const adapter = buildConfigWizardUI(ui);
-        vi.mocked(vscode.window.showInputBox).mockResolvedValue(
-          "alpine:latest",
-        );
-
-        const result = await adapter.pickCustomImage();
-
-        expect(result).toBe("alpine:latest");
-      });
-
-      it("returns undefined when input cancelled", async () => {
-        const ui = stubUi();
-        const adapter = buildConfigWizardUI(ui);
-        vi.mocked(vscode.window.showInputBox).mockResolvedValue(undefined);
-
-        const result = await adapter.pickCustomImage();
-
-        expect(result).toBeUndefined();
-      });
-
-      it("uses isValidImageRef as validator", async () => {
-        const ui = stubUi();
-        const adapter = buildConfigWizardUI(ui);
-        vi.mocked(vscode.window.showInputBox).mockResolvedValue("alpine");
-
-        await adapter.pickCustomImage();
-
-        const opts = vi.mocked(vscode.window.showInputBox).mock
-          .calls[0][0] as any;
-        expect(opts.validateInput).toBeDefined();
-      });
-    });
-
-    describe("pickFeatures", () => {
-      it("builds items from feature list", async () => {
-        const ui = stubUi();
-        const adapter = buildConfigWizardUI(ui);
-        const features = [makeFeature("Docker-in-Docker"), makeFeature("Git")];
-        vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
-
-        await adapter.pickFeatures(features);
-
-        const items = vi.mocked(vscode.window.showQuickPick).mock
-          .calls[0][0] as any[];
-        expect(items).toHaveLength(2);
-        expect(items[0].label).toBe("Docker-in-Docker");
-        expect(items[0].picked).toBe(false);
-      });
-
-      it("filters features to only picked ones", async () => {
-        const ui = stubUi();
-        const adapter = buildConfigWizardUI(ui);
-        const features = [makeFeature("A"), makeFeature("B"), makeFeature("C")];
-        vi.mocked(vscode.window.showQuickPick).mockResolvedValue([
-          { label: "A" },
-          { label: "C" },
-        ] as any);
-
-        const result = await adapter.pickFeatures(features);
-
-        expect(result).toEqual([features[0], features[2]]);
-      });
-
-      it("returns empty array when nothing picked", async () => {
-        const ui = stubUi();
-        const adapter = buildConfigWizardUI(ui);
-        vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
-
-        const result = await adapter.pickFeatures([makeFeature("A")]);
-
-        expect(result).toEqual([]);
-      });
-
-      it("enables multi-select", async () => {
-        const ui = stubUi();
-        const adapter = buildConfigWizardUI(ui);
-        vi.mocked(vscode.window.showQuickPick).mockResolvedValue(undefined);
-
-        await adapter.pickFeatures([makeFeature("A")]);
-
-        const opts = vi.mocked(vscode.window.showQuickPick).mock
-          .calls[0][1] as any;
-        expect(opts.canPickMany).toBe(true);
-      });
-    });
-
-    describe("confirmAfterCreate", () => {
-      it('returns "reopen" when user picks Reopen', async () => {
-        const ui = stubUi();
-        const adapter = buildConfigWizardUI(ui);
-        vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(
-          "Reopen in Container" as any,
-        );
-
-        const result = await adapter.confirmAfterCreate();
-
-        expect(result).toBe("reopen");
-      });
-
-      it('returns "edit" when user picks Edit Config', async () => {
-        const ui = stubUi();
-        const adapter = buildConfigWizardUI(ui);
-        vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(
-          "Edit Config" as any,
-        );
-
-        const result = await adapter.confirmAfterCreate();
-
-        expect(result).toBe("edit");
-      });
-
-      it('returns "done" when user picks Done or cancels', async () => {
-        const ui = stubUi();
-        const adapter = buildConfigWizardUI(ui);
-        vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(
-          undefined,
-        );
-
-        const result = await adapter.confirmAfterCreate();
-
-        expect(result).toBe("done");
       });
     });
   });
