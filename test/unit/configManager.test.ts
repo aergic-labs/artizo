@@ -9,9 +9,9 @@ import * as path from "node:path";
 import * as os from "node:os";
 
 vi.mock("vscode", () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+   
   const realFs = require("node:fs") as typeof import("node:fs");
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+   
   const realPath = require("node:path") as typeof import("node:path");
 
   return {

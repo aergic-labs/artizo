@@ -5,45 +5,17 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as fc from "fast-check";
+import vscodeMock from "../__mocks__/vscode";
 
 /**
- * Bug Condition Exploration Property Tests
+ * Regression property tests for the server-connection fixes.
  *
- * These tests encode the EXPECTED (correct) behavior. They are expected to FAIL
- * on the current unfixed code, confirming the bugs exist.
+ * These encode the correct behavior (right server binary, non-zero port +
+ * connection token, build-log output not piped to a shell). They pass on the
+ * current code and exist to lock that behavior in and catch regressions.
  */
 
-// Mock vscode module for tests that import modules depending on it
-vi.mock("vscode", () => ({
-  window: {
-    createTerminal: vi.fn(() => ({
-      show: vi.fn(),
-      sendText: vi.fn(),
-      exitStatus: undefined,
-      dispose: vi.fn(),
-    })),
-    createOutputChannel: vi.fn(() => ({
-      appendLine: vi.fn(),
-      append: vi.fn(),
-      show: vi.fn(),
-      dispose: vi.fn(),
-    })),
-  },
-  workspace: {},
-  commands: {
-    registerCommand: vi.fn().mockReturnValue({ dispose: vi.fn() }),
-  },
-  Uri: {
-    parse: (str: string) => ({ toString: () => str }),
-  },
-  EventEmitter: vi.fn(function () {
-    return {
-      event: vi.fn(),
-      fire: vi.fn(),
-    };
-  }),
-  ProgressLocation: { Notification: 15 },
-}));
+vi.mock("vscode", () => ({ default: vscodeMock, ...vscodeMock }));
 
 // Mock node:child_process for authority resolver's execFile and spawn usage
 vi.mock("node:child_process", () => {
@@ -110,7 +82,7 @@ function setupExecFileResponses(
   });
 }
 
-describe("Property 1: Bug Condition - Wrong Server Binary and Broken Connection", () => {
+describe("Server connection regression properties", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -232,13 +204,14 @@ describe("Property 1: Bug Condition - Wrong Server Binary and Broken Connection"
 
   describe("1.3 Authority resolver must return non-zero port and valid connectionToken", () => {
     /**
-     * For any valid running container, the authority resolver should return:
+     * With a serverManager injected (the production path), resolving a running
+     * container returns:
      * - host: "127.0.0.1" (not the containerId)
-     * - port: non-zero (not 0)
+     * - port: non-zero (the forwarded local port)
      * - connectionToken: a non-empty string
      *
-     * This test FAILS on unfixed code because resolveContainerById returns
-     * { host: containerId, port: 0 } with no connectionToken.
+     * The no-serverManager fallback (host=containerId, port=0) is covered by
+     * preservation.property.test.ts property 2.2.
      */
     it("resolver returns 127.0.0.1 with non-zero port and connectionToken", async () => {
       const { dockerInspect } = await import("../../src/utils/dockerUtils");
@@ -314,14 +287,10 @@ describe("Property 1: Bug Condition - Wrong Server Binary and Broken Connection"
 
   describe("1.5/1.6 CLI output must not be piped to shell via sendText", () => {
     /**
-     * CLI output lines should be written to a pseudo-terminal (pty) that writes
-     * directly to the terminal buffer, NOT piped to shell via terminal.sendText().
-     *
-     * The current VscodeWorkflowUI.showBuildLog() calls terminal.sendText(content),
-     * which causes the shell to interpret JSON lines as commands
-     * (e.g., "bash: type:text: command not found").
-     *
-     * This test FAILS on unfixed code.
+     * CLI output lines must be written to a pseudo-terminal (pty) that writes
+     * directly to the terminal buffer, NOT piped to a shell via
+     * terminal.sendText() - piping caused the shell to interpret JSON lines as
+     * commands (e.g. "bash: type:text: command not found").
      */
     it("showBuildLog does not use sendText (which causes shell interpretation)", async () => {
       const vscode = await import("vscode");

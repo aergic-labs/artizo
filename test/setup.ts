@@ -7,21 +7,21 @@ import { vi } from "vitest";
 
 // esbuild define flags - tests use the default (Kiro) path
 declare global {
-  // eslint-disable-next-line no-var
+   
   var HAS_KIRO_ADAPTER: boolean;
-  // eslint-disable-next-line no-var
+   
   var HAS_TRAE_ADAPTER: boolean;
-  // eslint-disable-next-line no-var
+   
   var HAS_DEVIN_ADAPTER: boolean;
-  // eslint-disable-next-line no-var
+   
   var HAS_VSCODIUM_ADAPTER: boolean;
-  // eslint-disable-next-line no-var
+   
   var HAS_SECCOMP_UNCONFINED: boolean;
-  // eslint-disable-next-line no-var
+   
   var HAS_HOME_SYMLINK: boolean;
-  // eslint-disable-next-line no-var
+   
   var HAS_ARGV_PATCH: boolean;
-  // eslint-disable-next-line no-var
+   
   var ARTIZO_SPIKE: boolean;
 }
 

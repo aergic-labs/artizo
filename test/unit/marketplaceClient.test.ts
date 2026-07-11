@@ -3,9 +3,15 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import * as crypto from "node:crypto";
 import {
   parseExtensionId,
+  parseSha256,
+  deriveChecksumUrl,
   MarketplaceClient,
   type ExtensionMetadata,
 } from "../../src/extensions/marketplaceClient";
@@ -250,6 +256,104 @@ describe("MarketplaceClient", () => {
         "https://cdn.example.com/linux-x64.vsix",
         expect.stringContaining("ns.ext-1.0.0.vsix"),
       );
+    });
+  });
+
+  describe("deriveChecksumUrl", () => {
+    it("maps a .vsix URL to its .sha256 sibling", () => {
+      expect(
+        deriveChecksumUrl("https://open-vsx.org/api/ns/ext/1.0.0/file/ns.ext-1.0.0.vsix"),
+      ).toBe("https://open-vsx.org/api/ns/ext/1.0.0/file/ns.ext-1.0.0.sha256");
+    });
+
+    it("returns undefined for non-vsix URLs", () => {
+      expect(deriveChecksumUrl("https://example.com/thing.tar.gz")).toBeUndefined();
+    });
+  });
+
+  describe("parseSha256", () => {
+    const hex = "a".repeat(64);
+    it("accepts a bare hex digest", () => {
+      expect(parseSha256(hex)).toBe(hex);
+    });
+    it("accepts sha256sum format (hex + filename)", () => {
+      expect(parseSha256(`${hex}  ext.vsix\n`)).toBe(hex);
+    });
+    it("lowercases the digest", () => {
+      expect(parseSha256("A".repeat(64))).toBe(hex);
+    });
+    it("rejects non-hex / wrong-length content", () => {
+      expect(parseSha256("not-a-hash")).toBeUndefined();
+      expect(parseSha256("abc123")).toBeUndefined();
+      expect(parseSha256("{}")).toBeUndefined();
+    });
+  });
+
+  describe("downloadFromMetadata checksum verification", () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "artizo-vsix-"));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    const metadata: ExtensionMetadata = {
+      namespace: "ns",
+      name: "ext",
+      version: "1.0.0",
+      downloadUrl: "https://cdn.example.com/ns.ext-1.0.0.vsix",
+      dependencies: [],
+      bundledExtensions: [],
+    };
+
+    it("passes when the downloaded file matches the published checksum", async () => {
+      const bytes = Buffer.from("fake vsix bytes");
+      const digest = crypto.createHash("sha256").update(bytes).digest("hex");
+      const httpDownload = vi.fn(async (_url: string, dest: string) => {
+        fs.writeFileSync(dest, bytes);
+      });
+      const httpGet = vi.fn().mockResolvedValue(digest);
+
+      const client = createClient({ httpGet, httpDownload });
+      const result = await client.downloadFromMetadata(metadata, tmpDir);
+
+      expect(httpGet).toHaveBeenCalledWith(
+        "https://cdn.example.com/ns.ext-1.0.0.sha256",
+      );
+      expect(fs.existsSync(result)).toBe(true);
+    });
+
+    it("rejects and deletes the file on checksum mismatch", async () => {
+      const bytes = Buffer.from("tampered bytes");
+      const httpDownload = vi.fn(async (_url: string, dest: string) => {
+        fs.writeFileSync(dest, bytes);
+      });
+      const httpGet = vi.fn().mockResolvedValue("b".repeat(64));
+
+      const client = createClient({ httpGet, httpDownload });
+      const destPath = path.join(tmpDir, "ns.ext-1.0.0.vsix");
+
+      await expect(
+        client.downloadFromMetadata(metadata, tmpDir),
+      ).rejects.toThrow("checksum mismatch");
+      // The bad artifact must not be left on disk.
+      expect(fs.existsSync(destPath)).toBe(false);
+    });
+
+    it("skips verification when no checksum is published (fetch fails)", async () => {
+      const bytes = Buffer.from("unverified bytes");
+      const httpDownload = vi.fn(async (_url: string, dest: string) => {
+        fs.writeFileSync(dest, bytes);
+      });
+      const httpGet = vi.fn().mockRejectedValue(new Error("HTTP 404"));
+
+      const client = createClient({ httpGet, httpDownload });
+      const result = await client.downloadFromMetadata(metadata, tmpDir);
+
+      expect(fs.existsSync(result)).toBe(true);
     });
   });
 });

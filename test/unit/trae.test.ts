@@ -4,7 +4,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import vscodeMock from "../__mocks__/vscode";
 import { TraeAdapter } from "../../src/platform/trae";
+
+vi.mock("vscode", () => ({ default: vscodeMock, ...vscodeMock }));
 
 const TEST_CONFIG = {
   name: "Trae",

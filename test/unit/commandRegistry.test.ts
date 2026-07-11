@@ -76,7 +76,7 @@ describe("computeCommands", () => {
 
     it("always includes Show Log", () => {
       const ids = commands.map((c) => c.id);
-      expect(ids).toContain("artizo.revealLogTerminal");
+      expect(ids).toContain("artizo.revealOutputLog");
     });
   });
 

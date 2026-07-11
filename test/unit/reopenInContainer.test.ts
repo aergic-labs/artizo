@@ -357,7 +357,7 @@ describe("reopenInContainer", () => {
     });
     mockDecodeSshAuthority.mockReturnValue({
       sshHost: "34.136.190.14",
-      sshUser: "kerry",
+      sshUser: "dev",
     });
     mockStartRelayDaemon.mockResolvedValue({
       relayPort: 9888,
@@ -388,7 +388,7 @@ describe("reopenInContainer", () => {
       ) as Record<string, unknown>;
       expect(json.proxy).toBe(true);
       expect(json.sshHost).toBe("34.136.190.14");
-      expect(json.sshUser).toBe("kerry");
+      expect(json.sshUser).toBe("dev");
       expect(json.relayPort).toBe(9888);
       expect(json.connectionToken).toBe("token-xyz");
       expect(json.workspacePath).toBe("/workspaces/test-project");

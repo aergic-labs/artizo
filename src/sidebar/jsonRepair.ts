@@ -123,7 +123,7 @@ function fixBareValues(text: string): string {
     },
   );
   text = text.replace(
-    /:\s*([a-zA-Z_][a-zA-Z0-9_.\-]*)(\s*[,\]\}])/g,
+    /:\s*([a-zA-Z_][a-zA-Z0-9_.-]*)(\s*[,\]}])/g,
     (_m: string, word: string, tail: string) => {
       const lower = word.toLowerCase();
       return /^(true|false|null|undefined|none)$/.test(lower)
@@ -134,7 +134,7 @@ function fixBareValues(text: string): string {
     },
   );
   text = text.replace(
-    /:\s*([a-zA-Z_][a-zA-Z0-9_.\-]*)\s*$/gm,
+    /:\s*([a-zA-Z_][a-zA-Z0-9_.-]*)\s*$/gm,
     (_m: string, word: string) => {
       const lower = word.toLowerCase();
       return /^(true|false|null|undefined|none)$/.test(lower)
@@ -157,12 +157,12 @@ export function repairDevcontainerJson(rawInput: string): string {
   // Collapse duplicate commas
   text = text.replace(/,{2,}/g, ",");
   // Insert missing commas between consecutive values
-  text = text.replace(/(["\]\}\d])\s*\n\s*(")/g, "$1,\n$2");
+  text = text.replace(/(["\]}\d])\s*\n\s*(")/g, "$1,\n$2");
   // Single quotes
   text = text.replace(/'([^']*)'/g, '"$1"');
   // Unquoted keys (skips comments)
   text = text.replace(
-    /([{,]\s*(?:\/\/[^\n]*\n\s*|\/\*[\s\S]*?\*\/\s*)*)([a-zA-Z0-9_\-]+)\s*:/g,
+    /([{,]\s*(?:\/\/[^\n]*\n\s*|\/\*[\s\S]*?\*\/\s*)*)([a-zA-Z0-9_-]+)\s*:/g,
     '$1"$2":',
   );
   // Drop unbalanced brackets

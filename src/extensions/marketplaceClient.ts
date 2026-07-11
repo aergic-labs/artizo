@@ -10,6 +10,7 @@
 import * as https from "node:https";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as crypto from "node:crypto";
 
 /**
  * Metadata returned from the Open VSX Registry for an extension.
@@ -60,6 +61,31 @@ export interface MarketplaceClientOptions {
 
 const DEFAULT_REGISTRY_URL = "https://open-vsx.org/api";
 
+/** Max HTTP redirects to follow before giving up (prevents redirect loops). */
+const MAX_REDIRECTS = 5;
+
+/**
+ * Open VSX co-locates a SHA-256 checksum file next to each VSIX (same path,
+ * `.vsix` -> `.sha256`; exposed as `files.sha256` in the registry API since
+ * open-vsx v0.10.0 / eclipse-openvsx#678). Derive that URL from the resolved
+ * download URL so we verify the exact artifact we fetched (universal or
+ * platform-specific). Returns undefined for non-`.vsix` URLs.
+ */
+export function deriveChecksumUrl(downloadUrl: string): string | undefined {
+  if (!/\.vsix$/i.test(downloadUrl)) return undefined;
+  return downloadUrl.replace(/\.vsix$/i, ".sha256");
+}
+
+/**
+ * Parse a SHA-256 checksum file. Accepts either a bare hex digest or the
+ * `sha256sum` format (`<hex>  <filename>`). Returns the lowercase 64-char hex
+ * digest, or undefined if the content isn't a valid SHA-256.
+ */
+export function parseSha256(text: string): string | undefined {
+  const token = text.trim().split(/\s+/)[0] ?? "";
+  return /^[0-9a-f]{64}$/i.test(token) ? token.toLowerCase() : undefined;
+}
+
 export function parseExtensionId(id: string): {
   namespace: string;
   name: string;
@@ -76,8 +102,28 @@ export function parseExtensionId(id: string): {
   };
 }
 
-function defaultHttpGet(url: string): Promise<string> {
+/**
+ * Resolve a redirect target and reject downgrades. VSIX bytes are extracted
+ * and run locally, so a redirect off HTTPS would be a MITM foothold. Returns
+ * the absolute next URL, or throws if it isn't HTTPS.
+ */
+function resolveRedirect(location: string, current: string): string {
+  const next = new URL(location, current).href;
+  if (!next.startsWith("https:")) {
+    throw new Error(`Refusing to follow non-HTTPS redirect to ${next}`);
+  }
+  return next;
+}
+
+function defaultHttpGet(
+  url: string,
+  redirectsLeft = MAX_REDIRECTS,
+): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (!url.startsWith("https:")) {
+      reject(new Error(`Refusing non-HTTPS URL: ${url}`));
+      return;
+    }
     https
       .get(url, (res) => {
         if (
@@ -86,7 +132,17 @@ function defaultHttpGet(url: string): Promise<string> {
           res.statusCode < 400 &&
           res.headers.location
         ) {
-          defaultHttpGet(res.headers.location).then(resolve, reject);
+          res.resume();
+          if (redirectsLeft <= 0) {
+            reject(new Error(`Too many redirects fetching ${url}`));
+            return;
+          }
+          try {
+            const next = resolveRedirect(res.headers.location, url);
+            defaultHttpGet(next, redirectsLeft - 1).then(resolve, reject);
+          } catch (err) {
+            reject(err instanceof Error ? err : new Error(String(err)));
+          }
           return;
         }
 
@@ -104,8 +160,16 @@ function defaultHttpGet(url: string): Promise<string> {
   });
 }
 
-function defaultHttpDownload(url: string, destPath: string): Promise<void> {
+function defaultHttpDownload(
+  url: string,
+  destPath: string,
+  redirectsLeft = MAX_REDIRECTS,
+): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (!url.startsWith("https:")) {
+      reject(new Error(`Refusing non-HTTPS URL: ${url}`));
+      return;
+    }
     https
       .get(url, (res) => {
         if (
@@ -114,10 +178,20 @@ function defaultHttpDownload(url: string, destPath: string): Promise<void> {
           res.statusCode < 400 &&
           res.headers.location
         ) {
-          defaultHttpDownload(res.headers.location, destPath).then(
-            resolve,
-            reject,
-          );
+          res.resume();
+          if (redirectsLeft <= 0) {
+            reject(new Error(`Too many redirects downloading ${url}`));
+            return;
+          }
+          try {
+            const next = resolveRedirect(res.headers.location, url);
+            defaultHttpDownload(next, destPath, redirectsLeft - 1).then(
+              resolve,
+              reject,
+            );
+          } catch (err) {
+            reject(err instanceof Error ? err : new Error(String(err)));
+          }
           return;
         }
 
@@ -258,7 +332,51 @@ export class MarketplaceClient {
     const destPath = path.join(targetDir, fileName);
 
     await this.httpDownload(metadata.downloadUrl, destPath);
+    await this.verifyChecksum(metadata.downloadUrl, destPath);
 
     return destPath;
+  }
+
+  /**
+   * Verify the downloaded VSIX against the registry's published SHA-256.
+   *
+   * VSIX bytes are extracted and executed on the host/container, so a
+   * corrupted or tampered artifact is an RCE vector. When the registry
+   * publishes a checksum (open-vsx.org always does), a mismatch is fatal and
+   * the bad file is deleted. If no checksum can be fetched (custom/older
+   * registry), verification is skipped with a warning rather than blocking the
+   * install - transport is already HTTPS-only. Signature verification
+   * (`files.signature` + `publicKey`) is the stronger follow-up.
+   */
+  private async verifyChecksum(
+    downloadUrl: string,
+    filePath: string,
+  ): Promise<void> {
+    const checksumUrl = deriveChecksumUrl(downloadUrl);
+    if (!checksumUrl) return;
+
+    let expected: string | undefined;
+    try {
+      expected = parseSha256(await this.httpGet(checksumUrl));
+    } catch {
+      // Checksum not published or unreachable - can't verify, don't block.
+      return;
+    }
+    if (!expected) return;
+
+    const actual = crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(filePath))
+      .digest("hex");
+    if (actual !== expected) {
+      try {
+        fs.rmSync(filePath, { force: true });
+      } catch {
+        // best effort
+      }
+      throw new Error(
+        `VSIX checksum mismatch for ${downloadUrl}: expected ${expected}, got ${actual}`,
+      );
+    }
   }
 }

@@ -32,7 +32,7 @@ export interface CredentialForwarderOptions {
    * in the container environment. Required for credential forwarding.
    */
   hostContainerRef?: string;
-  host?: Host;
+  host: Host;
 }
 
 /**
@@ -61,8 +61,8 @@ export class CredentialForwarder implements ICredentialForwarder {
   private readonly host: Host;
   private readonly hostContainerRef: string | undefined;
 
-  constructor(options?: CredentialForwarderOptions) {
-    this.host = options?.host!;
+  constructor(options: CredentialForwarderOptions) {
+    this.host = options.host;
     this.hostContainerRef = options?.hostContainerRef;
   }
 

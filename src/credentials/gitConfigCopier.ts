@@ -27,7 +27,7 @@ export interface GitConfigCopierOptions {
   enabled?: boolean;
   /** Override for testing. Defaults to ~/.gitconfig. */
   hostGitConfigPath?: string;
-  host?: Host;
+  host: Host;
 }
 
 export class GitConfigCopier implements IGitConfigCopier {
@@ -35,8 +35,8 @@ export class GitConfigCopier implements IGitConfigCopier {
   private readonly enabled: boolean;
   private readonly hostGitConfigPath: string;
 
-  constructor(options?: GitConfigCopierOptions) {
-    this.host = options?.host!;
+  constructor(options: GitConfigCopierOptions) {
+    this.host = options.host;
     this.enabled = options?.enabled ?? true;
     this.hostGitConfigPath =
       options?.hostGitConfigPath ?? join(homedir(), ".gitconfig");

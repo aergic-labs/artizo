@@ -253,7 +253,7 @@ function renderContainers(containers) {
     const top = el("div", "resource-top");
     const dot = el("span", "status-dot " + c.status);
     const info = el("span", "resource-info");
-    const dir = c.localFolder ? c.localFolder.split(/[\\\/]/).pop() : "";
+    const dir = c.localFolder ? c.localFolder.split(/[\\/]/).pop() : "";
     const imgShort = c.image.split("/").pop() || c.image;
     info.innerHTML = `<span class="resource-name">${esc(c.name)}</span><span class="resource-meta">${c.status}, ${esc(imgShort)}${dir ? ", " + esc(dir) : ""}</span>`;
     info.title = `Image: ${c.image}\nFolder: ${c.localFolder}`;

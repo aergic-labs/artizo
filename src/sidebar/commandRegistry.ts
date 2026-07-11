@@ -79,7 +79,7 @@ export function computeCommands(
       label: "Return to Host",
       when: (managed && !inAttached) || onSSHHost,
     },
-    { id: "artizo.revealLogTerminal", label: "Show Log", when: true },
+    { id: "artizo.revealOutputLog", label: "Show Log", when: true },
     {
       id: "workbench.action.remote.showMenu",
       label: "Remote Menu",

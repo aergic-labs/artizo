@@ -3,13 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-/**
- * Container Explorer tree view: shows dev container targets in the
- * Remote Explorer panel. Displays three categories:
- * - Dev Containers (running containers with devcontainer labels)
- * - Recent Folders (recently opened workspace folders)
- * - Volumes (Docker volumes associated with dev containers)
- */
+/** Container Explorer tree view for the Remote Explorer panel. */
 
 import * as vscode from "vscode";
 import { dockerExecPolicy } from "../docker/execPolicy.js";
@@ -31,10 +25,7 @@ import {
 const RECENT_FOLDERS_KEY = "artizo.recentFolders";
 
 type ExplorerTreeItem =
-  | CategoryTreeItem
-  | ContainerTreeItem
-  | RecentFolderTreeItem
-  | VolumeTreeItem;
+  CategoryTreeItem | ContainerTreeItem | RecentFolderTreeItem | VolumeTreeItem;
 
 export interface IContainerExplorerProvider extends vscode.TreeDataProvider<ExplorerTreeItem> {
   refresh(): void;
@@ -138,7 +129,7 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
     const folders = this.globalState.get<string[]>(RECENT_FOLDERS_KEY, []);
     return folders.map((folder) => ({
       type: "recent-folder" as const,
-      label: folder.split(/[\\/]/).pop() || folder,
+      label: folder.split(/[/]/).pop() || folder,
       workspacePath: folder,
       status: "stopped" as const,
     }));
@@ -192,9 +183,7 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
     this.refresh();
   }
 
-  /**
-   * Register the container explorer tree view and associated commands.
-   */
+  /** Register the tree view and commands. Called from services.ts. */
   static register(context: vscode.ExtensionContext): ContainerExplorerProvider {
     const provider = new ContainerExplorerProvider({
       globalState: context.globalState,
@@ -207,11 +196,13 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
 
     context.subscriptions.push(treeView);
 
-    // Register commands for container actions
     context.subscriptions.push(
+      // View title + refresh
       vscode.commands.registerCommand("artizo.explorer.refresh", () =>
         provider.refresh(),
       ),
+
+      // Connect (containers + recent folders)
       vscode.commands.registerCommand(
         "artizo.explorer.connectCurrentWindow",
         (item: ContainerTreeItem | RecentFolderTreeItem) =>
@@ -221,6 +212,44 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
         "artizo.explorer.connectNewWindow",
         (item: ContainerTreeItem | RecentFolderTreeItem) =>
           connectToTarget(item.target, true),
+      ),
+
+      // Container lifecycle
+      vscode.commands.registerCommand(
+        "artizo.explorer.stopContainer",
+        (item: ContainerTreeItem) => stopContainer(item.target),
+      ),
+      vscode.commands.registerCommand(
+        "artizo.explorer.startContainer",
+        (item: ContainerTreeItem) => startContainer(item.target),
+      ),
+      vscode.commands.registerCommand(
+        "artizo.explorer.removeContainer",
+        (item: ContainerTreeItem) => removeContainer(item.target),
+      ),
+      vscode.commands.registerCommand(
+        "artizo.explorer.showLogs",
+        (item: ContainerTreeItem) => showContainerLogs(item.target),
+      ),
+
+      // Recent folders
+      vscode.commands.registerCommand(
+        "artizo.explorer.removeRecentFolder",
+        (item: RecentFolderTreeItem) =>
+          provider.removeRecentFolder(item.target.workspacePath ?? ""),
+      ),
+
+      // Volumes
+      vscode.commands.registerCommand(
+        "artizo.explorer.inspectVolume",
+        (item: VolumeTreeItem) => inspectVolume(item.target),
+      ),
+      vscode.commands.registerCommand(
+        "artizo.explorer.removeVolume",
+        (item: VolumeTreeItem) => removeVolume(item.target),
+      ),
+      vscode.commands.registerCommand("artizo.explorer.cloneInVolume", () =>
+        vscode.commands.executeCommand("artizo.cloneInVolume"),
       ),
     );
 
@@ -255,4 +284,96 @@ async function connectToTarget(
       forceNewWindow: newWindow,
     });
   }
+}
+
+async function stopContainer(target: ContainerTarget): Promise<void> {
+  if (!target.containerId) return;
+  const result = await dockerExecPolicy(["stop", target.containerId]);
+  if (result.exitCode !== 0) {
+    vscode.window.showErrorMessage(
+      `Failed to stop container: ${result.stderr}`,
+    );
+    return;
+  }
+  vscode.commands.executeCommand("artizo.explorer.refresh");
+}
+
+async function startContainer(target: ContainerTarget): Promise<void> {
+  if (!target.containerId) return;
+  const result = await dockerExecPolicy(["start", target.containerId]);
+  if (result.exitCode !== 0) {
+    vscode.window.showErrorMessage(
+      `Failed to start container: ${result.stderr}`,
+    );
+    return;
+  }
+  vscode.commands.executeCommand("artizo.explorer.refresh");
+}
+
+async function removeContainer(target: ContainerTarget): Promise<void> {
+  if (!target.containerId) return;
+  const confirm = await vscode.window.showWarningMessage(
+    `Remove container "${target.label}"? This cannot be undone.`,
+    { modal: true },
+    "Remove",
+  );
+  if (confirm !== "Remove") return;
+  const result = await dockerExecPolicy(["rm", "-f", target.containerId]);
+  if (result.exitCode !== 0) {
+    vscode.window.showErrorMessage(
+      `Failed to remove container: ${result.stderr}`,
+    );
+    return;
+  }
+  vscode.commands.executeCommand("artizo.explorer.refresh");
+}
+
+async function showContainerLogs(target: ContainerTarget): Promise<void> {
+  if (!target.containerId) return;
+  const terminal = vscode.window.createTerminal(`logs: ${target.label}`);
+  terminal.show(true);
+  // Allow the shell to initialize.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  terminal.sendText(`docker logs -f ${target.containerId}`);
+}
+
+async function inspectVolume(target: ContainerTarget): Promise<void> {
+  if (!target.volumeName) return;
+  const result = await dockerExecPolicy([
+    "volume",
+    "inspect",
+    target.volumeName,
+  ]);
+  if (result.exitCode !== 0) {
+    vscode.window.showErrorMessage(
+      `Failed to inspect volume "${target.volumeName}": ${result.stderr}`,
+    );
+    return;
+  }
+  const doc = await vscode.workspace.openTextDocument({
+    content: result.stdout,
+    language: "json",
+  });
+  await vscode.window.showTextDocument(doc);
+}
+
+async function removeVolume(target: ContainerTarget): Promise<void> {
+  if (!target.volumeName) return;
+  const confirm = await vscode.window.showWarningMessage(
+    `Remove volume "${target.volumeName}"? This cannot be undone.`,
+    { modal: true },
+    "Remove",
+  );
+  if (confirm !== "Remove") return;
+  const result = await dockerExecPolicy(["volume", "rm", target.volumeName]);
+  if (result.exitCode !== 0) {
+    vscode.window.showErrorMessage(
+      `Failed to remove volume "${target.volumeName}": ${result.stderr}`,
+    );
+    return;
+  }
+  vscode.window.showInformationMessage(
+    `Volume "${target.volumeName}" removed.`,
+  );
+  vscode.commands.executeCommand("artizo.explorer.refresh");
 }

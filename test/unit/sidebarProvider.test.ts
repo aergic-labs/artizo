@@ -417,9 +417,10 @@ describe("SidebarProvider", () => {
     provider = createProvider();
   });
 
-  function makeWebviewView() {
+  function makeWebviewView(visible = true) {
     const postMessage = vi.fn();
     const onDidReceiveMessage = vi.fn();
+    const onDidChangeVisibility = vi.fn().mockReturnValue({ dispose: vi.fn() });
     const asWebviewUri = vi.fn((u: any) => ({
       ...u,
       toString: () => `webview-uri:${u?.fsPath ?? u?.path ?? ""}`,
@@ -431,11 +432,13 @@ describe("SidebarProvider", () => {
       onDidReceiveMessage,
       asWebviewUri,
     };
+    const view: any = { webview, visible, onDidChangeVisibility };
     return {
       webview,
-      view: { webview } as any,
+      view,
       postMessage,
       onDidReceiveMessage,
+      onDidChangeVisibility,
     };
   }
 
@@ -470,11 +473,11 @@ describe("SidebarProvider", () => {
       });
     });
 
-    it("calls loadConfig(true) on resolve", () => {
-      const { view } = makeWebviewView();
+    it("does not load data on resolve (waits for ready/visibility)", () => {
+      const { view } = makeWebviewView(true);
       const spy = vi.spyOn((provider as any).configEdit, "loadConfig");
       provider.resolveWebviewView(view);
-      expect(spy).toHaveBeenCalledWith(true);
+      expect(spy).not.toHaveBeenCalled();
     });
 
     it("registers onDidSaveTextDocument listener", () => {
@@ -706,9 +709,10 @@ describe("SidebarProvider.handleMessage", () => {
     provider = createProvider();
   });
 
-  function makeWebviewView() {
+  function makeWebviewView(visible = true) {
     const postMessage = vi.fn();
     const onDidReceiveMessage = vi.fn();
+    const onDidChangeVisibility = vi.fn().mockReturnValue({ dispose: vi.fn() });
     const asWebviewUri = vi.fn((u: any) => ({
       ...u,
       toString: () => `webview-uri:${u?.fsPath ?? u?.path ?? ""}`,
@@ -720,11 +724,13 @@ describe("SidebarProvider.handleMessage", () => {
       onDidReceiveMessage,
       asWebviewUri,
     };
+    const view: any = { webview, visible, onDidChangeVisibility };
     return {
       webview,
-      view: { webview } as any,
+      view,
       postMessage,
       onDidReceiveMessage,
+      onDidChangeVisibility,
     };
   }
 

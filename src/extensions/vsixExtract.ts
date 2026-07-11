@@ -16,6 +16,29 @@ import * as path from "node:path";
 import type yauzl from "yauzl";
 
 /**
+ * Resolve a zip entry's relative path against the target dir, rejecting any
+ * path that escapes it (zip-slip / path traversal). Entry names come from an
+ * untrusted archive, so `extension/../../../.bashrc` must not be allowed to
+ * write outside `targetDir`.
+ *
+ * Returns the absolute destination path, or `null` if the entry escapes.
+ */
+export function safeExtractPath(
+  targetDir: string,
+  relPath: string,
+): string | null {
+  const resolvedTarget = path.resolve(targetDir);
+  const destPath = path.resolve(resolvedTarget, relPath);
+  if (
+    destPath !== resolvedTarget &&
+    !destPath.startsWith(resolvedTarget + path.sep)
+  ) {
+    return null;
+  }
+  return destPath;
+}
+
+/**
  * Extract a VSIX (ZIP) file to a target directory using yauzl.
  *
  * VSIX files are ZIP archives whose layout is:
@@ -84,7 +107,15 @@ export async function extractVsix(
             return;
           }
 
-          const destPath = path.join(targetDir, relPath);
+          const destPath = safeExtractPath(targetDir, relPath);
+          if (!destPath) {
+            reject(
+              new Error(
+                `Refusing to extract entry outside target dir (zip slip): ${entry.fileName}`,
+              ),
+            );
+            return;
+          }
           fs.mkdirSync(path.dirname(destPath), { recursive: true });
 
           zipfile.openReadStream(entry, (readErr, readStream) => {

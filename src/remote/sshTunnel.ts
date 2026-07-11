@@ -38,6 +38,12 @@ import * as path from "node:path";
 import * as os from "node:os";
 import * as vscode from "vscode";
 import { getLogger } from "../utils/logger";
+import { SleepDetector } from "../health/sleepDetector";
+import {
+  batchModeArgs,
+  sshEnvForAskpass,
+  type AskpassHandle,
+} from "../ssh/askpass";
 
 /** Result of starting the SSH tunnel. */
 export interface TunnelInfo {
@@ -70,6 +76,8 @@ export interface TunnelController {
 const MAX_BACKOFF_MS = 30_000;
 /** Initial respawn delay. */
 const INITIAL_BACKOFF_MS = 1_000;
+/** Debounce window for sleep/focus-initiated respawns. */
+const MIN_RESPAWN_GAP_MS = 15_000;
 
 /**
  * Resolve the SSH binary to use for the tunnel.
@@ -136,8 +144,10 @@ export async function startSshTunnel(params: {
   sshUser: string;
   remotePort: number;
   localPort: number;
+  /** Askpass handle. When undefined, ssh runs with BatchMode=yes. */
+  askpass?: AskpassHandle;
 }): Promise<TunnelInfo> {
-  const { sshHost, sshUser, remotePort, localPort } = params;
+  const { sshHost, sshUser, remotePort, localPort, askpass } = params;
   const log = getLogger();
 
   const sshBinary = resolveSshBinary();
@@ -154,6 +164,7 @@ export async function startSshTunnel(params: {
   const args = [
     "-L",
     `${localPort}:127.0.0.1:${remotePort}`,
+    ...batchModeArgs(!!askpass),
     `${sshUser}@${sshHost}`,
     "-N",
     "-E",
@@ -177,6 +188,7 @@ export async function startSshTunnel(params: {
   const child = spawn(sshBinary, args, {
     stdio: ["ignore", "ignore", "pipe"], // stderr for error diagnostics
     detached: false, // tied to extension host lifetime
+    env: sshEnvForAskpass(askpass),
   });
 
   // Capture stderr for debugging (ssh -E logs to file, but stderr may
@@ -198,7 +210,12 @@ export async function startSshTunnel(params: {
 
   // Wait for the local port to be listening. ssh -L opens the listener
   // early, but ExitOnForwardFailure means it exits if the binding fails.
-  await waitForLocalPort(localPort, 10_000);
+  // When askpass is active, the user may need time to respond to a
+  // password prompt before ssh can connect and bind the port. No timeout
+  // in that case; the window just waits for input. Without askpass, 10s
+  // catches real bind failures (port in use, etc).
+  const portWaitMs = askpass ? 0 : 10_000;
+  await waitForLocalPort(localPort, portWaitMs);
   log.info(`[tunnel] local port ${localPort} is listening`);
 
   return { localPort, process: child };
@@ -234,14 +251,15 @@ export function pickFreePort(): Promise<number> {
 
 /**
  * Wait for a local TCP port to be listening.
- * Polls by attempting a connection every 100ms.
+ * Polls by attempting a connection every 100ms. timeoutMs of 0 means
+ * no timeout (wait indefinitely).
  */
 async function waitForLocalPort(
   port: number,
   timeoutMs: number,
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : 0;
+  while (deadline === 0 || Date.now() < deadline) {
     const reachable = await probePort(port);
     if (reachable) return;
     await new Promise((r) => setTimeout(r, 100));
@@ -293,8 +311,10 @@ export async function startManagedSshTunnel(params: {
   remotePort: number;
   /** Max attempts to find a free local port if ssh -L fails to bind. */
   maxBindRetries?: number;
+  /** Askpass handle for password/passphrase prompts. */
+  askpass?: AskpassHandle;
 }): Promise<TunnelController> {
-  const { sshHost, sshUser, remotePort } = params;
+  const { sshHost, sshUser, remotePort, askpass } = params;
   const maxBindRetries = params.maxBindRetries ?? 3;
   const log = getLogger();
 
@@ -312,6 +332,7 @@ export async function startManagedSshTunnel(params: {
         sshUser,
         remotePort,
         localPort: candidatePort,
+        askpass,
       });
       localPort = candidatePort;
       break;
@@ -339,16 +360,19 @@ export async function startManagedSshTunnel(params: {
 
   const scheduleRespawn = (): void => {
     if (stopped) return;
+    if (respawnTimer) return; // already scheduled
     log.info(`[tunnel] scheduling respawn in ${backoffMs}ms`);
     respawnTimer = setTimeout(async () => {
       respawnTimer = undefined;
       if (stopped) return;
+      respawnInFlight = true;
       try {
         const respawned = await startSshTunnel({
           sshHost,
           sshUser,
           remotePort,
           localPort: port,
+          askpass,
         });
         current = respawned;
         backoffMs = INITIAL_BACKOFF_MS; // reset on success
@@ -359,6 +383,8 @@ export async function startManagedSshTunnel(params: {
         log.info(`[tunnel] respawn failed: ${msg}`);
         backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
         scheduleRespawn();
+      } finally {
+        respawnInFlight = false;
       }
     }, backoffMs);
   };
@@ -380,6 +406,62 @@ export async function startManagedSshTunnel(params: {
 
   attachSentinel(current);
 
+  // Sleep/wake monitoring: on wake, proactively kill the tunnel so the
+  // sentinel fires immediately instead of waiting for keepalive timeout.
+  // Debounce prevents sleep + sentinel from both scheduling respawns.
+  const detector = new SleepDetector();
+  let lastRespawnAt = 0;
+  let respawnInFlight = false;
+
+  /** Trigger respawn with debounce + in-flight dedup. */
+  const triggerWakeRespawn = (reason: string): void => {
+    if (stopped) return;
+    if (respawnTimer || respawnInFlight) {
+      log.info(
+        `[tunnel] ${reason}: respawn already scheduled/in-flight, skipping`,
+      );
+      return;
+    }
+    const now = Date.now();
+    if (now - lastRespawnAt < MIN_RESPAWN_GAP_MS) {
+      log.info(
+        `[tunnel] ${reason}: debounced (last respawn ${now - lastRespawnAt}ms ago)`,
+      );
+      return;
+    }
+    lastRespawnAt = now;
+
+    // Kill the tunnel so the sentinel fires immediately.
+    log.info(`[tunnel] ${reason}: proactively killing tunnel for fast respawn`);
+    try {
+      current.process.kill("SIGTERM");
+    } catch {
+      /* already dead */
+    }
+  };
+
+  // Primary: timer-gap sleep detection.
+  detector.onSleep((sleptMs) => {
+    const sleptSec = Math.round(sleptMs / 1000);
+    log.info(
+      `[tunnel] sleep detected (~${sleptSec}s), triggering fast respawn`,
+    );
+    triggerWakeRespawn(`sleep(${sleptSec}s)`);
+  });
+  detector.start();
+
+  // Secondary: focus regain + gap confirmation (faster than the timer).
+  const focusDisposable = vscode.window.onDidChangeWindowState((state) => {
+    if (!state.focused) return;
+    if (stopped) return;
+    if (!detector.isSleepingByGap()) return;
+    const gap = detector.currentGap();
+    log.info(
+      `[tunnel] focus regain with gap=${Math.round(gap / 1000)}s, treating as wake`,
+    );
+    triggerWakeRespawn("focus-wake");
+  });
+
   return {
     localPort: port,
     isAlive: () =>
@@ -387,6 +469,8 @@ export async function startManagedSshTunnel(params: {
     stop(): void {
       if (stopped) return;
       stopped = true;
+      detector.stop();
+      focusDisposable.dispose();
       if (respawnTimer) {
         clearTimeout(respawnTimer);
         respawnTimer = undefined;

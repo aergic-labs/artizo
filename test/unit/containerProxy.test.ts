@@ -51,11 +51,11 @@ describe("containerProxy", () => {
 
   describe("decodeSshAuthority", () => {
     it("decodes a valid ssh-remote authority", () => {
-      const authority = makeSshAuthority("34.136.190.14", "kerry");
+      const authority = makeSshAuthority("34.136.190.14", "dev");
       const result = decodeSshAuthority(authority);
       expect(result).toEqual({
         sshHost: "34.136.190.14",
-        sshUser: "kerry",
+        sshUser: "dev",
       });
     });
 
@@ -79,7 +79,7 @@ describe("containerProxy", () => {
     });
 
     it("returns undefined for JSON missing hostName", () => {
-      const json = JSON.stringify({ user: "kerry" });
+      const json = JSON.stringify({ user: "dev" });
       const hex = Buffer.from(json, "utf-8").toString("hex");
       expect(decodeSshAuthority(`ssh-remote+${hex}`)).toBeUndefined();
     });
@@ -95,7 +95,7 @@ describe("containerProxy", () => {
     });
 
     it("returns undefined for non-string hostName", () => {
-      const json = JSON.stringify({ hostName: 123, user: "kerry" });
+      const json = JSON.stringify({ hostName: 123, user: "dev" });
       const hex = Buffer.from(json, "utf-8").toString("hex");
       expect(decodeSshAuthority(`ssh-remote+${hex}`)).toBeUndefined();
     });
@@ -111,22 +111,22 @@ describe("containerProxy", () => {
     });
 
     it("decodes a plain user@host authority", () => {
-      expect(decodeSshAuthority("ssh-remote+kerry@34.173.162.32")).toEqual({
-        sshHost: "34.173.162.32",
-        sshUser: "kerry",
+      expect(decodeSshAuthority("ssh-remote+dev@example.com")).toEqual({
+        sshHost: "example.com",
+        sshUser: "dev",
       });
     });
 
     it("decodes a plain host authority with no user", () => {
-      const result = decodeSshAuthority("ssh-remote+34.173.162.32");
-      expect(result?.sshHost).toBe("34.173.162.32");
+      const result = decodeSshAuthority("ssh-remote+example.com");
+      expect(result?.sshHost).toBe("example.com");
       expect(result?.sshUser).toBe(os.userInfo().username);
     });
 
     it("decodes a plain user@host:port authority", () => {
-      expect(decodeSshAuthority("ssh-remote+kerry@host.example:2222")).toEqual({
+      expect(decodeSshAuthority("ssh-remote+dev@host.example:2222")).toEqual({
         sshHost: "host.example",
-        sshUser: "kerry",
+        sshUser: "dev",
       });
     });
 
@@ -137,9 +137,9 @@ describe("containerProxy", () => {
     });
 
     it("decodes a plain user@host authority with leading whitespace", () => {
-      expect(decodeSshAuthority("ssh-remote+ kerry@34.173.162.32")).toEqual({
-        sshHost: "34.173.162.32",
-        sshUser: "kerry",
+      expect(decodeSshAuthority("ssh-remote+ dev@example.com")).toEqual({
+        sshHost: "example.com",
+        sshUser: "dev",
       });
     });
 
@@ -150,9 +150,9 @@ describe("containerProxy", () => {
         /[A-Z]/g,
         (ch) => `\\x${ch.charCodeAt(0).toString(16).toLowerCase()}`,
       );
-      expect(decodeSshAuthority(`ssh-remote+kerry@${escaped}`)).toEqual({
+      expect(decodeSshAuthority(`ssh-remote+dev@${escaped}`)).toEqual({
         sshHost: "MyHost.example",
-        sshUser: "kerry",
+        sshUser: "dev",
       });
     });
 

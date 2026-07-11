@@ -108,6 +108,7 @@ if (fs.existsSync(outPath)) {
 try {
   // Clean stale bundles from previous builds
   const distDir = path.join(root, "dist");
+  fs.mkdirSync(distDir, { recursive: true });
   for (const f of fs.readdirSync(distDir)) {
     if (f.startsWith("extension-") && f.endsWith(".js")) {
       fs.unlinkSync(path.join(distDir, f));

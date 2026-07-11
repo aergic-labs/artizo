@@ -11,6 +11,8 @@
  */
 
 import * as vscode from "vscode";
+import * as nodeFs from "node:fs";
+import * as nodePath from "node:path";
 import { initLogger, getLogger, LogLevel } from "../utils/logger";
 import { BRAND } from "../utils/constants";
 import { ConfigManager } from "../config/configManager";
@@ -32,13 +34,15 @@ import { ExecutionTier } from "./state";
 import { patchArgvContent } from "./argvPatch";
 import type { Host } from "./host";
 
+// VSCodium is the default (else) branch in getArgvExtensionId, so its flag
+// isn't referenced here.
 declare const HAS_TRAE_ADAPTER: boolean;
 declare const HAS_KIRO_ADAPTER: boolean;
 declare const HAS_DEVIN_ADAPTER: boolean;
-declare const HAS_VSCODIUM_ADAPTER: boolean;
 import { ConfigWatcher } from "../config/configWatcher";
 import { ContainerLifecycle } from "../lifecycle/containerLifecycle";
 import { SidebarProvider } from "../sidebar/provider";
+import { ContainerExplorerProvider } from "../views/containerExplorer";
 
 /**
  * Extension settings read from workspace configuration.
@@ -154,7 +158,6 @@ export function initializeLogger(context: vscode.ExtensionContext): {
   buildLogPty: LogOutputTerminal;
   buildLogTerminal: { show(preserveFocus?: boolean): void };
 } {
-  const nodePath = require("node:path");
   const logFilePath = nodePath.join(context.logPath, "artizo.log");
 
   // Authoritative diagnostics sink: a LogOutputChannel in the Output panel.
@@ -179,39 +182,59 @@ export function initializeLogger(context: vscode.ExtensionContext): {
   // colored build view. The logger no longer writes here.
   const buildLogPty = new LogOutputTerminal(logFilePath);
 
-  // Terminal handle that supports recreation after the user closes it.
-  const handle = {
+  // Terminal created lazily on first show() so the pty's open() fires
+  // before any write() calls. Creating eagerly at activation leaves
+  // opened=false until the renderer gets around to displaying it, which
+  // causes buffered output to be lost on the first build.
+  const handle: {
+    pty: LogOutputTerminal;
+    terminal: vscode.Terminal | undefined;
+    show(preserveFocus?: boolean): void;
+  } = {
     pty: buildLogPty,
-    terminal: vscode.window.createTerminal({
-      name: `Dev Containers (${BRAND})`,
-      pty: buildLogPty,
-    }),
+    terminal: undefined,
     show(preserveFocus?: boolean) {
+      if (!this.terminal) {
+        this.terminal = vscode.window.createTerminal({
+          name: `Dev Containers (${BRAND})`,
+          pty: this.pty,
+        });
+        // Write a header so the pty has content to flush when open()
+        // fires. This ensures opened=true before build output arrives.
+        this.pty.writeLine(`${BRAND} Dev Containers`);
+      }
       try {
         this.terminal.show(preserveFocus);
       } catch {
-        // Terminal was closed - recreate a fresh pty for the build view.
-        // The logger is independent (the OutputChannel), so it is untouched.
         this.pty = new LogOutputTerminal(logFilePath);
         this.terminal = vscode.window.createTerminal({
           name: `Dev Containers (${BRAND})`,
           pty: this.pty,
         });
+        this.pty.writeLine(`${BRAND} Dev Containers`);
         this.terminal.show(preserveFocus);
       }
     },
   };
 
-  context.subscriptions.push(handle.terminal);
+  // Terminal disposed on extension deactivate (if created).
+  context.subscriptions.push({ dispose: () => handle.terminal?.dispose() });
 
   logger.info(`${BRAND} activating...`);
   logger.info(`Extension path: ${context.extensionPath}`);
   logger.info(`Log file: ${logFilePath}`);
 
-  // Register reveal (build) log terminal command
+  // Reveal the build terminal (build output with colors).
   context.subscriptions.push(
     vscode.commands.registerCommand("artizo.revealLogTerminal", () => {
       handle.show();
+    }),
+  );
+
+  // Reveal the diagnostics output channel (sidebar "Show Log" button).
+  context.subscriptions.push(
+    vscode.commands.registerCommand("artizo.revealOutputLog", () => {
+      getLogger().show();
     }),
   );
 
@@ -240,10 +263,8 @@ export async function validatePlatformRuntime(
   let actual = "unknown";
   let actualDisplay = "";
   try {
-    const fs = require("node:fs");
-    const path = require("node:path");
-    const productPath = path.join(vscode.env.appRoot, "product.json");
-    const product = JSON.parse(fs.readFileSync(productPath, "utf-8"));
+    const productPath = nodePath.join(vscode.env.appRoot, "product.json");
+    const product = JSON.parse(nodeFs.readFileSync(productPath, "utf-8"));
     actual = product?.applicationName ?? "unknown";
     actualDisplay = product?.nameShort ?? product?.nameLong ?? "";
   } catch {
@@ -358,6 +379,7 @@ export function registerResolverEarly(
 ): RemoteAuthorityResolver {
   const resolver = new RemoteAuthorityResolver({
     dockerPath: settings.dockerPath,
+    extensionPath: context.extensionPath,
   });
   registerAuthorityResolver(context, resolver);
   // Ensure SSH tunnels spawned by the State 4 proxy path are torn down on
@@ -424,7 +446,7 @@ export function createServices(
     dockerPath: settings.dockerPath,
     productInfo,
     extensionPath: context.extensionPath,
-    host,
+    host: host!,
   });
 
   // Wire the serverManager into the resolver (it was created without one)
@@ -438,16 +460,13 @@ export function createServices(
   const gitConfigCopier = new GitConfigCopier({
     dockerPath: settings.dockerPath,
     enabled: copyGitConfigEnabled,
-    host,
+    host: host!,
   });
 
   const extensionInstaller = new ExtensionInstaller({
     dockerPath: settings.dockerPath,
-    host,
+    host: host!,
     localExtensionProvider: (extId) => {
-      // Imported lazily so the installer module stays testable without
-      // the vscode API.
-      const vscode = require("vscode") as typeof import("vscode");
       const lower = extId.toLowerCase();
       const ext = vscode.extensions.all.find(
         (e) => e.id.toLowerCase() === lower,
@@ -512,6 +531,9 @@ export function createServices(
       sidebarProvider.loadConfig();
     }),
   );
+
+  // Register the container explorer (host-side only).
+  ContainerExplorerProvider.register(context);
 
   logger.info("Sidebar and config watcher registered");
 

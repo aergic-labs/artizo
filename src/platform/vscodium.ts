@@ -3,8 +3,10 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+import * as vscode from "vscode";
 import * as os from "node:os";
 import * as path from "node:path";
+import { readFileSync } from "node:fs";
 import type { IPlatformAdapter, PlatformConfig } from "./types";
 
 const VSCodium_REH_BASE =
@@ -36,11 +38,8 @@ export class VSCodiumAdapter implements IPlatformAdapter {
 
   private readVSCodiumVersion(): string | undefined {
     try {
-      const vscode = require("vscode");
-      const fs = require("node:fs");
-      const path = require("node:path");
       const productPath = path.join(vscode.env.appRoot, "product.json");
-      const product = JSON.parse(fs.readFileSync(productPath, "utf-8"));
+      const product = JSON.parse(readFileSync(productPath, "utf-8"));
       return typeof product.version === "string" ? product.version : undefined;
     } catch {
       return undefined;
@@ -104,11 +103,8 @@ export class VSCodiumAdapter implements IPlatformAdapter {
 
   isValidRuntime(): boolean {
     try {
-      const vscode = require("vscode");
-      const fs = require("node:fs");
-      const path = require("node:path");
       const productPath = path.join(vscode.env.appRoot, "product.json");
-      const product = JSON.parse(fs.readFileSync(productPath, "utf-8"));
+      const product = JSON.parse(readFileSync(productPath, "utf-8"));
       const appName: string = (product?.applicationName ?? "").toLowerCase();
       return (
         appName.includes("vscodium") ||

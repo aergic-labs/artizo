@@ -7,7 +7,7 @@
     "test-project/**",
     "scripts/**"
   ],
-  "ignoreDependencies": ["ovsx", "@vscode/vsce"],
+  "ignoreDependencies": ["ovsx", "@vscode/vsce", "upng-js"],
   "ignoreExportsUsedInFile": {
     "interface": true,
     "type": true,

@@ -53,6 +53,7 @@ const vscode = {
     openTextDocument: vi.fn().mockResolvedValue({}),
     registerRemoteAuthorityResolver: vi.fn(),
     registerFileSystemProvider: vi.fn(),
+    getRemoteExecServer: vi.fn().mockResolvedValue(undefined),
     fs: {
       readDirectory: vi.fn().mockRejectedValue(new Error("ENOENT")),
       readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),

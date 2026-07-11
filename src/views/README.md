@@ -2,10 +2,21 @@
 
 Tree view providers for VS Code's built-in Remote Explorer panel.
 
-Not wired up. `ContainerExplorerProvider`, `DetailsViewProvider`,
-`VolumesViewProvider`, and `PortViewProvider` all have `.register()`
-methods but none are called from `extension.ts`.
+## Wired
 
-`package.json` declares `artizo.detailsView` and `artizo.portsView` as
-views under the `remote` container, but without a registered provider
-they render empty or are suppressed.
+- `ContainerExplorerProvider` (`containerExplorer.ts`) - registered from
+  `host/services.ts` `createServices()`. Registers the `artizo.explorer`
+  tree view plus per-item commands: connect (current/new window),
+  stop/start/remove, show logs, inspect/remove volume, clone in volume.
+
+## Unwired (retained, not registered)
+
+- `DetailsViewProvider` (`detailsView.ts`) - superseded by the sidebar
+  webview. Class and tests kept, `register()` not called.
+- `VolumesViewProvider` (`volumesView.ts`) - folded into
+  `ContainerExplorerProvider` as the "Volumes" category. Class and tests
+  kept, `register()` not called.
+
+## Elsewhere
+
+- `PortViewProvider` (`ports/portView.ts`) - wired from `services.ts`.

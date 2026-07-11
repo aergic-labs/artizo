@@ -9,6 +9,11 @@ import { EventEmitter } from "node:events";
 vi.mock("../../src/utils/dockerUtils", () => ({
   dockerExec: vi.fn(),
   dockerSpawn: vi.fn(),
+  childPipes: (child: any) => ({
+    stdin: child.stdin,
+    stdout: child.stdout,
+    stderr: child.stderr,
+  }),
 }));
 
 vi.mock("node:child_process", () => {

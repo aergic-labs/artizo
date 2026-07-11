@@ -16,7 +16,7 @@ import type { IPlatformAdapter, PlatformConfig } from "./types";
 
 let _adapter: IPlatformAdapter | undefined;
 
-declare const HAS_KIRO_ADAPTER: boolean;
+// Kiro is the default (else) branch, so its flag isn't referenced here.
 declare const HAS_TRAE_ADAPTER: boolean;
 declare const HAS_DEVIN_ADAPTER: boolean;
 declare const HAS_VSCODIUM_ADAPTER: boolean;

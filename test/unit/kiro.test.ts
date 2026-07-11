@@ -3,8 +3,11 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import vscodeMock from "../__mocks__/vscode";
 import { KiroAdapter } from "../../src/platform/kiro";
+
+vi.mock("vscode", () => ({ default: vscodeMock, ...vscodeMock }));
 
 describe("KiroAdapter", () => {
   const adapter = new KiroAdapter({

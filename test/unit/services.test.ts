@@ -25,10 +25,40 @@ const { mockInitLogger, mockGetLogger, mockLogger } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("vscode", () => ({
+vi.mock("vscode", () => {
+  class TreeItem {
+    label: string;
+    collapsibleState: number;
+    description?: string;
+    tooltip?: string;
+    contextValue?: string;
+    iconPath?: unknown;
+    constructor(label: string, collapsibleState: number) {
+      this.label = label;
+      this.collapsibleState = collapsibleState;
+    }
+  }
+  class ThemeIcon {
+    id: string;
+    constructor(id: string) {
+      this.id = id;
+    }
+  }
+  class EventEmitter {
+    event = vi.fn();
+    fire = vi.fn();
+    dispose = vi.fn();
+  }
+  return {
+  TreeItem,
+  TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+  ThemeIcon,
+  EventEmitter,
   window: {
     showErrorMessage: vi.fn(),
     showInformationMessage: vi.fn(),
+    showWarningMessage: vi.fn(),
+    showTextDocument: vi.fn(),
     createOutputChannel: vi.fn().mockReturnValue({
       trace: vi.fn(),
       debug: vi.fn(),
@@ -44,6 +74,7 @@ vi.mock("vscode", () => ({
       .fn()
       .mockReturnValue({ show: vi.fn(), dispose: vi.fn() }),
     registerWebviewViewProvider: vi.fn().mockReturnValue({ dispose: vi.fn() }),
+    createTreeView: vi.fn().mockReturnValue({ dispose: vi.fn() }),
   },
   commands: {
     registerCommand: vi.fn().mockReturnValue({ dispose: vi.fn() }),
@@ -72,7 +103,8 @@ vi.mock("vscode", () => ({
     setTextDocumentLanguage: vi.fn(),
   },
   extensions: { all: [] },
-}));
+  };
+});
 
 const { mockFsPromises } = vi.hoisted(() => ({
   mockFsPromises: {
@@ -135,6 +167,8 @@ vi.mock("../../src/workflows/logOutputTerminal", () => ({
   LogOutputTerminal: class {
     setLogLevel = vi.fn();
     dispose = vi.fn();
+    write = vi.fn();
+    writeLine = vi.fn();
   },
   LogLevel: { Info: 0, Debug: 1, Trace: 2 },
 }));
@@ -274,6 +308,10 @@ describe("services", () => {
       const context = {
         subscriptions: [],
         extensionUri: { toString: () => "/ext" },
+        globalState: {
+          get: vi.fn((_k: string, d: unknown) => d),
+          update: vi.fn().mockResolvedValue(undefined),
+        },
       } as any;
       const settings: ExtensionSettings = { dockerPath: "docker" };
       const resolver = makeResolver();
@@ -319,6 +357,10 @@ describe("services", () => {
       const context = {
         subscriptions: [],
         extensionUri: { toString: () => "/ext" },
+        globalState: {
+          get: vi.fn((_k: string, d: unknown) => d),
+          update: vi.fn().mockResolvedValue(undefined),
+        },
       } as any;
       const settings: ExtensionSettings = { dockerPath: "docker" };
       const resolver = makeResolver();
@@ -356,6 +398,8 @@ describe("services", () => {
         extensionPath: "/ext",
       } as any;
       const result = initializeLogger(ctx);
+
+      result.buildLogTerminal.show();
 
       expect(vscode.window.createTerminal).toHaveBeenCalledWith(
         expect.objectContaining({ name: "Dev Containers (Artizo)" }),

@@ -25,18 +25,32 @@ export interface DotfilesResult {
 
 export interface DotfilesManagerOptions {
   dockerPath?: string;
-  host?: Host;
+  host: Host;
 }
 
 export interface IDotfilesManager {
   install(containerId: string, config: DotfilesConfig): Promise<DotfilesResult>;
 }
 
+/**
+ * Reject repository values that git would treat as an option or a
+ * remote-helper transport. `ext::`/`fd::` (and any `scheme::address` helper)
+ * let a crafted URL run arbitrary commands via `git clone`; a leading `-`
+ * would be parsed as a flag. Normal URLs (`https://`, `ssh://`, `git://`,
+ * scp-like `user@host:path`) contain a single `:` and pass.
+ */
+export function isSafeRepoUrl(url: string): boolean {
+  if (!url || url.startsWith("-")) return false;
+  // git remote-helper transports use `scheme::address` (double colon).
+  if (/^[a-z][a-z0-9+.-]*::/i.test(url)) return false;
+  return true;
+}
+
 export class DotfilesManager implements IDotfilesManager {
   private readonly host: Host;
 
-  constructor(options?: DotfilesManagerOptions) {
-    this.host = options?.host!;
+  constructor(options: DotfilesManagerOptions) {
+    this.host = options.host;
   }
 
   /** Clone dotfiles and run install command. Failures are non-blocking. */
@@ -97,14 +111,26 @@ export class DotfilesManager implements IDotfilesManager {
     repository: string,
     targetPath: string,
   ): Promise<{ success: boolean; error?: string }> {
-    await this.host.dockerExec(containerId, ["rm", "-rf", targetPath]);
+    if (!isSafeRepoUrl(repository)) {
+      return {
+        success: false,
+        error: `Refusing to clone unsafe dotfiles repository value: ${repository}`,
+      };
+    }
+
+    // `--` guards against a targetPath that begins with `-` being parsed as
+    // an option by rm.
+    await this.host.dockerExec(containerId, ["rm", "-rf", "--", targetPath]);
     // Ignore rm errors; directory may not exist.
 
+    // `--` terminates option parsing so the repository/target can't be
+    // interpreted as git flags.
     const cloneResult = await this.host.dockerExec(containerId, [
       "git",
       "clone",
       "--depth",
       "1",
+      "--",
       repository,
       targetPath,
     ]);

@@ -4,7 +4,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { EventEmitter } from "node:events";
 import vscodeMock from "../__mocks__/vscode";
 
 const {
@@ -103,19 +102,18 @@ vi.mock("../../src/extensions/vsixExtract", () => ({
 import * as vscode from "vscode";
 
 import { __test } from "../../src/remote/sideload";
+import type { RemoteExec, RemoteExecResult } from "../../src/remote/remoteExec";
 
-/** Build a fake child_process child (EventEmitter) with stdin/stdout/stderr. */
-function makeChild(): any {
-  const c = new EventEmitter() as any;
-  c.stdin = new EventEmitter();
-  c.stdin.write = vi.fn();
-  c.stdin.end = vi.fn();
-  c.stdin.on = vi.fn();
-  c.stdout = new EventEmitter();
-  c.stderr = new EventEmitter();
-  c.kill = vi.fn();
-  c.pid = 12345;
-  return c;
+/** Build a mock RemoteExec with vi.fn() for run and streamToStdin. */
+function makeMockExec(): RemoteExec & { run: any; streamToStdin: any } {
+  return {
+    run: vi.fn(async (): Promise<RemoteExecResult> => ({
+      stdout: "",
+      stderr: "",
+      code: 0,
+    })),
+    streamToStdin: vi.fn(async (): Promise<void> => {}),
+  };
 }
 
 const AUTHORITY = "ssh-remote+myhost";
@@ -140,7 +138,7 @@ describe("shellSingleQuote", () => {
   });
 
   it("escapes embedded single quotes", () => {
-    expect(__test.shellSingleQuote("a'b")).toBe("'a'\\\''b'");
+    expect(__test.shellSingleQuote("a'b")).toBe("'a'\\''b'");
   });
 });
 
@@ -208,30 +206,37 @@ describe("markerExists", () => {
 });
 
 describe("detectRemotePlatform", () => {
+  const log = {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  } as any;
+
   beforeEach(() => {
     __test.resetRemotePlatformCache();
-    mockExecFileSync.mockReset();
   });
 
-  it("caches the result across calls", () => {
-    mockExecFileSync.mockReturnValue("Linux x86_64\n");
-    const first = __test.detectRemotePlatform(AUTHORITY);
-    const second = __test.detectRemotePlatform(AUTHORITY);
+  it("caches the result across calls", async () => {
+    const exec = makeMockExec();
+    exec.run.mockResolvedValue({ stdout: "Linux x86_64\n", stderr: "", code: 0 });
+    const first = await __test.detectRemotePlatform(AUTHORITY, exec);
+    const second = await __test.detectRemotePlatform(AUTHORITY, exec);
     expect(first).toBe(second);
-    expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+    expect(exec.run).toHaveBeenCalledTimes(1);
   });
 
-  it("throws when authority cannot be decoded", () => {
-    expect(() => __test.detectRemotePlatform(undefined)).toThrow(
-      /Could not decode SSH authority/,
+  it("throws when authority is undefined", async () => {
+    const exec = makeMockExec();
+    await expect(__test.detectRemotePlatform(undefined, exec)).rejects.toThrow(
+      /No remote authority/,
     );
   });
 
-  it("throws when uname fails", () => {
-    mockExecFileSync.mockImplementation(() => {
-      throw new Error("ssh failed");
-    });
-    expect(() => __test.detectRemotePlatform(AUTHORITY)).toThrow(
+  it("throws when uname fails", async () => {
+    const exec = makeMockExec();
+    exec.run.mockResolvedValue({ stdout: "", stderr: "err", code: 1 });
+    await expect(__test.detectRemotePlatform(AUTHORITY, exec)).rejects.toThrow(
       /Failed to detect remote platform/,
     );
   });
@@ -245,43 +250,30 @@ describe("runRemoteCmd", () => {
     debug: vi.fn(),
   } as any;
 
-  beforeEach(() => {
-    mockSpawn.mockReset();
-  });
-
-  it("rejects when authority cannot be decoded", async () => {
-    await expect(__test.runRemoteCmd("bad-auth", "ls", log)).rejects.toThrow(
-      /Cannot decode SSH authority/,
-    );
-  });
-
   it("captures stdout and resolves on exit 0", async () => {
-    const child = makeChild();
-    mockSpawn.mockReturnValue(child);
-    const p = __test.runRemoteCmd(AUTHORITY, "echo hi", log);
-    child.stdout.emit("data", Buffer.from("hello\n"));
-    child.emit("exit", 0);
-    const result = await p;
+    const exec = makeMockExec();
+    exec.run.mockResolvedValue({ stdout: "hello\n", stderr: "", code: 0 });
+    const result = await __test.runRemoteCmd("echo hi", log, 15_000, undefined, exec);
     expect(result.stdout).toBe("hello\n");
     expect(result.code).toBe(0);
   });
 
-  it("writes stdinInput and closes stdin", async () => {
-    const child = makeChild();
-    mockSpawn.mockReturnValue(child);
-    const p = __test.runRemoteCmd(AUTHORITY, "cat", log, 15_000, "body");
-    child.emit("exit", 0);
-    await p;
-    expect(child.stdin.write).toHaveBeenCalledWith("body");
-    expect(child.stdin.end).toHaveBeenCalled();
+  it("writes stdinInput and passes it to exec.run", async () => {
+    const exec = makeMockExec();
+    exec.run.mockResolvedValue({ stdout: "", stderr: "", code: 0 });
+    await __test.runRemoteCmd("cat", log, 15_000, "body", exec);
+    expect(exec.run).toHaveBeenCalledWith("cat", {
+      stdin: "body",
+      timeout: 15_000,
+    });
   });
 
   it("rejects on spawn error", async () => {
-    const child = makeChild();
-    mockSpawn.mockReturnValue(child);
-    const p = __test.runRemoteCmd(AUTHORITY, "ls", log);
-    child.emit("error", new Error("spawn ENOENT"));
-    await expect(p).rejects.toThrow(/spawn ENOENT/);
+    const exec = makeMockExec();
+    exec.run.mockRejectedValue(new Error("spawn ENOENT"));
+    await expect(
+      __test.runRemoteCmd("ls", log, 15_000, undefined, exec),
+    ).rejects.toThrow(/spawn ENOENT/);
   });
 });
 
@@ -293,37 +285,22 @@ describe("probeRemoteHome", () => {
     debug: vi.fn(),
   } as any;
 
-  beforeEach(() => {
-    mockSpawn.mockReset();
-  });
-
-  it("returns undefined when authority cannot be decoded", async () => {
-    expect(await __test.probeRemoteHome("bad-auth", log)).toBeUndefined();
-  });
-
   it("returns trimmed HOME on exit 0", async () => {
-    const child = makeChild();
-    mockSpawn.mockReturnValue(child);
-    const p = __test.probeRemoteHome(AUTHORITY, log);
-    child.stdout.emit("data", Buffer.from("/home/u\n"));
-    child.emit("exit", 0);
-    expect(await p).toBe("/home/u");
+    const exec = makeMockExec();
+    exec.run.mockResolvedValue({ stdout: "/home/u\n", stderr: "", code: 0 });
+    expect(await __test.probeRemoteHome(log, exec)).toBe("/home/u");
   });
 
   it("returns undefined on non-zero exit", async () => {
-    const child = makeChild();
-    mockSpawn.mockReturnValue(child);
-    const p = __test.probeRemoteHome(AUTHORITY, log);
-    child.emit("exit", 1);
-    expect(await p).toBeUndefined();
+    const exec = makeMockExec();
+    exec.run.mockResolvedValue({ stdout: "", stderr: "", code: 1 });
+    expect(await __test.probeRemoteHome(log, exec)).toBeUndefined();
   });
 
   it("returns undefined on spawn error", async () => {
-    const child = makeChild();
-    mockSpawn.mockReturnValue(child);
-    const p = __test.probeRemoteHome(AUTHORITY, log);
-    child.emit("error", new Error("spawn failed"));
-    expect(await p).toBeUndefined();
+    const exec = makeMockExec();
+    exec.run.mockRejectedValue(new Error("spawn failed"));
+    expect(await __test.probeRemoteHome(log, exec)).toBeUndefined();
   });
 });
 
@@ -337,7 +314,6 @@ describe("resolveRemoteHome", () => {
   let ctx: any;
 
   beforeEach(() => {
-    mockSpawn.mockReset();
     ctx = {
       globalState: {
         get: vi.fn().mockReturnValue(undefined),
@@ -347,25 +323,26 @@ describe("resolveRemoteHome", () => {
   });
 
   it("infers home from wsPath segments", async () => {
+    const exec = makeMockExec();
     expect(
-      await __test.resolveRemoteHome(AUTHORITY, "/home/u/proj", ctx, log),
+      await __test.resolveRemoteHome(AUTHORITY, "/home/u/proj", ctx, log, exec),
     ).toBe("/home/u");
   });
 
   it("uses cached home from globalState", async () => {
+    const exec = makeMockExec();
     ctx.globalState.get.mockReturnValue("/cached/home");
-    expect(await __test.resolveRemoteHome(AUTHORITY, undefined, ctx, log)).toBe(
-      "/cached/home",
-    );
+    expect(
+      await __test.resolveRemoteHome(AUTHORITY, undefined, ctx, log, exec),
+    ).toBe("/cached/home");
   });
 
   it("falls back to ssh probe", async () => {
-    const child = makeChild();
-    mockSpawn.mockReturnValue(child);
-    const p = __test.resolveRemoteHome(AUTHORITY, undefined, ctx, log);
-    child.stdout.emit("data", Buffer.from("/probed/home\n"));
-    child.emit("exit", 0);
-    expect(await p).toBe("/probed/home");
+    const exec = makeMockExec();
+    exec.run.mockResolvedValue({ stdout: "/probed/home\n", stderr: "", code: 0 });
+    expect(
+      await __test.resolveRemoteHome(AUTHORITY, undefined, ctx, log, exec),
+    ).toBe("/probed/home");
     expect(ctx.globalState.update).toHaveBeenCalledWith(
       "remoteHome:ssh-remote+myhost",
       "/probed/home",
@@ -373,19 +350,19 @@ describe("resolveRemoteHome", () => {
   });
 
   it("returns undefined when probe fails", async () => {
-    const child = makeChild();
-    mockSpawn.mockReturnValue(child);
-    const p = __test.resolveRemoteHome(AUTHORITY, undefined, ctx, log);
-    child.emit("exit", 1);
-    expect(await p).toBeUndefined();
+    const exec = makeMockExec();
+    exec.run.mockResolvedValue({ stdout: "", stderr: "", code: 1 });
+    expect(
+      await __test.resolveRemoteHome(AUTHORITY, undefined, ctx, log, exec),
+    ).toBeUndefined();
   });
 
   it("returns undefined for short wsPath", async () => {
-    const child = makeChild();
-    mockSpawn.mockReturnValue(child);
-    const p = __test.resolveRemoteHome(AUTHORITY, "/only", ctx, log);
-    child.emit("exit", 1);
-    expect(await p).toBeUndefined();
+    const exec = makeMockExec();
+    exec.run.mockResolvedValue({ stdout: "", stderr: "", code: 1 });
+    expect(
+      await __test.resolveRemoteHome(AUTHORITY, "/only", ctx, log, exec),
+    ).toBeUndefined();
   });
 });
 
@@ -553,31 +530,17 @@ describe("killRemoteServer", () => {
     debug: vi.fn(),
   } as any;
 
-  beforeEach(() => {
-    mockSpawn.mockReset();
-  });
-
   it("returns 0 when no PIDs found", async () => {
-    const child = makeChild();
-    mockSpawn.mockReturnValue(child);
-    const p = __test.killRemoteServer(AUTHORITY, log);
-    child.stdout.emit("data", Buffer.from(""));
-    child.emit("exit", 0);
-    expect(await p).toBe(0);
+    const exec = makeMockExec();
+    exec.run.mockResolvedValue({ stdout: "", stderr: "", code: 0 });
+    expect(await __test.killRemoteServer(log, exec)).toBe(0);
   });
 
   it("kills found PIDs", async () => {
-    const children = [makeChild(), makeChild()];
-    let i = 0;
-    mockSpawn.mockImplementation(() => {
-      const child = children[i++];
-      // Emit exit on next tick so the promise is subscribed first.
-      queueMicrotask(() => child.emit("exit", 0));
-      return child;
-    });
-    const p = __test.killRemoteServer(AUTHORITY, log);
-    children[0].stdout.emit("data", Buffer.from("111\n222\n"));
-    expect(await p).toBe(2);
+    const exec = makeMockExec();
+    exec.run.mockResolvedValueOnce({ stdout: "111\n222\n", stderr: "", code: 0 });
+    exec.run.mockResolvedValueOnce({ stdout: "", stderr: "", code: 0 });
+    expect(await __test.killRemoteServer(log, exec)).toBe(2);
   });
 });
 
@@ -591,22 +554,23 @@ describe("patchRemoteArgvJson", () => {
 
   beforeEach(() => {
     mockGetPlatformAdapter.mockReset();
-    mockSpawn.mockReset();
     __test.resetPatchScriptCache();
   });
 
   it("skips when adapter does not need argv patch", async () => {
+    const exec = makeMockExec();
     mockGetPlatformAdapter.mockResolvedValue({
       needsArgvPatch: () => false,
       getArgvDataFolderNames: () => [".trae"],
       getRemoteExtensionsDirCandidates: () => [".trae-server/extensions"],
     });
     expect(
-      await __test.patchRemoteArgvJson("/home/u", AUTHORITY, log),
+      await __test.patchRemoteArgvJson("/home/u", log, exec),
     ).toBeUndefined();
   });
 
   it("skips when bundled script is missing", async () => {
+    const exec = makeMockExec();
     mockGetPlatformAdapter.mockResolvedValue({
       needsArgvPatch: () => true,
       getArgvDataFolderNames: () => [".trae"],
@@ -616,7 +580,7 @@ describe("patchRemoteArgvJson", () => {
       throw new Error("ENOENT");
     });
     expect(
-      await __test.patchRemoteArgvJson("/home/u", AUTHORITY, log),
+      await __test.patchRemoteArgvJson("/home/u", log, exec),
     ).toBeUndefined();
   });
 });

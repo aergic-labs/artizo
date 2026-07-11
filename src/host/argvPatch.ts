@@ -13,6 +13,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { parse, modify, applyEdits } from "jsonc-parser";
 
 /**
  * Pure patch: given argv.json content and an extension ID, return the
@@ -23,7 +24,6 @@ export function patchArgvContent(
   content: string,
   extensionId: string,
 ): { patched: string; changed: boolean } | null {
-  const { parse, modify, applyEdits } = require("jsonc-parser");
   const parsed = parse(content) as Record<string, unknown>;
   const existing = parsed["enable-proposed-api"];
   if (Array.isArray(existing) && existing.includes(extensionId)) {

@@ -103,7 +103,7 @@ export interface ServerManagerOptions {
   productInfo?: ProductInfo;
   telemetryLevel?: string;
   extensionPath?: string;
-  host?: Host;
+  host: Host;
 }
 
 /** Server lifecycle manager implementation. */
@@ -114,9 +114,9 @@ export class ServerManager implements IServerManager {
   private readonly telemetryLevel: string;
   private readonly bootstrap: ContainerBootstrap | null;
 
-  constructor(options?: ServerManagerOptions) {
+  constructor(options: ServerManagerOptions) {
     this.dockerPath = options?.dockerPath ?? "docker";
-    this.host = options?.host!;
+    this.host = options.host;
     this.productInfo = options?.productInfo ?? {
       commit: "unknown",
       quality: "stable",
@@ -142,7 +142,7 @@ export class ServerManager implements IServerManager {
    * This avoids fragile home-directory detection across diverse container images.
    */
   async getServerInstallRoot(_containerId: string): Promise<string> {
-    getLogger().info(`[Artizo] getServerInstallRoot...`);
+    getLogger().debug(`[Artizo] getServerInstallRoot...`);
     const adapter = await getPlatformAdapter();
     return adapter.getServerInstallRoot?.() ?? "/tmp";
   }

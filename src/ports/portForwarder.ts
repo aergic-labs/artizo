@@ -15,6 +15,7 @@
 
 import type { ChildProcess } from 'node:child_process';
 import { dockerSpawn, tcpRelayScript, pipeDockerRelay } from '../utils/dockerUtils.js';
+import { getLogger } from '../utils/logger.js';
 import { createServer, type Server, type Socket } from 'node:net';
 import { EventEmitter } from 'node:events';
 
@@ -148,9 +149,16 @@ export class PortForwarder implements IPortForwarder {
     }
     this.disposed = true;
 
-    for (const [containerPort] of this.forwards) {
-      // Fire-and-forget cleanup
-      this.unforwardPort(containerPort);
+    // Snapshot the keys first: unforwardPort() deletes from `this.forwards`
+    // synchronously, and mutating a Map while iterating it with for..of can
+    // skip entries, leaving some servers/relays un-closed. Attach a catch so
+    // fire-and-forget cleanup can't raise an unhandled rejection.
+    for (const containerPort of [...this.forwards.keys()]) {
+      void this.unforwardPort(containerPort).catch((err) => {
+        getLogger().error(
+          `[ports] error unforwarding port ${containerPort} during dispose: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
     }
 
     this.emitter.removeAllListeners();
@@ -212,9 +220,18 @@ export class PortForwarder implements IPortForwarder {
    */
   private listenOnPort(server: Server, port: number): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      server.on('error', reject);
+      const onListenError = (err: Error): void => reject(err);
+      server.once('error', onListenError);
       server.listen(port, '127.0.0.1', () => {
-        server.removeListener('error', reject);
+        server.removeListener('error', onListenError);
+        // Keep a persistent error handler after listening. Without one, a
+        // runtime 'error' event (e.g. an accept failure) has no listener and
+        // Node throws, crashing the extension host.
+        server.on('error', (err: Error) => {
+          getLogger().error(
+            `[ports] server error on port ${port}: ${err.message}`,
+          );
+        });
         resolve();
       });
     });

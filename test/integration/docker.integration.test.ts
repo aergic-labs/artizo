@@ -20,9 +20,8 @@ import * as fs from "node:fs";
 import * as vscode from "vscode";
 
 vi.mock("vscode", () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const realFs = require("node:fs") as typeof import("node:fs");
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+
   const realPath = require("node:path") as typeof import("node:path");
 
   return {
@@ -66,7 +65,7 @@ const TEST_IMAGE = "alpine:3.19";
 const FIXTURE_DIR = path.resolve(__dirname, "fixtures/minimal-image");
 
 // Check if Docker is available before running tests
-let dockerAvailable = false;
+let dockerAvailable: boolean;
 try {
   const { stdout } = await execFileAsync("docker", [
     "info",
@@ -264,7 +263,9 @@ describeWithDocker("Docker Integration Tests", () => {
 
     it("parses the fixture devcontainer.json correctly", async () => {
       const configManager = new ConfigManager();
-      const result = await configManager.readConfig(vscode.Uri.file(FIXTURE_DIR));
+      const result = await configManager.readConfig(
+        vscode.Uri.file(FIXTURE_DIR),
+      );
 
       expect(result.config).not.toBeNull();
       expect((result.config as any).name).toBe("Integration Test - Minimal");
@@ -274,7 +275,9 @@ describeWithDocker("Docker Integration Tests", () => {
 
     it("returns null for a directory with no config", async () => {
       const configManager = new ConfigManager();
-      const configPath = await configManager.getConfigPath(vscode.Uri.file("/tmp"));
+      const configPath = await configManager.getConfigPath(
+        vscode.Uri.file("/tmp"),
+      );
 
       expect(configPath).toBeNull();
     });

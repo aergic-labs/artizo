@@ -4,7 +4,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { DotfilesManager } from "../../src/dotfiles/dotfilesManager";
+import {
+  DotfilesManager,
+  isSafeRepoUrl,
+} from "../../src/dotfiles/dotfilesManager";
 import type { DotfilesConfig } from "../../src/dotfiles/dotfilesManager";
 
 vi.mock("../../src/utils/dockerUtils", () => ({
@@ -82,6 +85,7 @@ describe("DotfilesManager", () => {
       expect(mockHost.dockerExec).toHaveBeenCalledWith("container-123", [
         "rm",
         "-rf",
+        "--",
         "~/dotfiles",
       ]);
     });
@@ -102,6 +106,7 @@ describe("DotfilesManager", () => {
       expect(mockHost.dockerExec).toHaveBeenCalledWith("container-123", [
         "rm",
         "-rf",
+        "--",
         "~/.dotfiles",
       ]);
     });
@@ -144,18 +149,20 @@ describe("DotfilesManager", () => {
       };
       await manager.install("container-123", config);
 
-      // First call: rm -rf
+      // First call: rm -rf -- <target>
       expect(mockHost.dockerExec).toHaveBeenNthCalledWith(1, "container-123", [
         "rm",
         "-rf",
+        "--",
         "/home/user/dots",
       ]);
-      // Second call: git clone with --depth 1
+      // Second call: git clone with --depth 1 and -- guard
       expect(mockHost.dockerExec).toHaveBeenNthCalledWith(2, "container-123", [
         "git",
         "clone",
         "--depth",
         "1",
+        "--",
         "https://github.com/user/dotfiles.git",
         "/home/user/dots",
       ]);
@@ -340,5 +347,28 @@ describe("DotfilesManager", () => {
         "fatal: could not read from remote repository",
       );
     });
+  });
+});
+
+describe("isSafeRepoUrl", () => {
+  it("accepts normal https/ssh/git URLs", () => {
+    expect(isSafeRepoUrl("https://github.com/user/dotfiles.git")).toBe(true);
+    expect(isSafeRepoUrl("ssh://git@github.com/user/dotfiles.git")).toBe(true);
+    expect(isSafeRepoUrl("git://github.com/user/dotfiles.git")).toBe(true);
+    expect(isSafeRepoUrl("git@github.com:user/dotfiles.git")).toBe(true);
+  });
+
+  it("rejects git remote-helper transports that run commands", () => {
+    expect(isSafeRepoUrl("ext::sh -c 'touch /tmp/pwned'")).toBe(false);
+    expect(isSafeRepoUrl("fd::17")).toBe(false);
+  });
+
+  it("rejects values that would be parsed as an option", () => {
+    expect(isSafeRepoUrl("--upload-pack=touch /tmp/pwned")).toBe(false);
+    expect(isSafeRepoUrl("-oProxyCommand=evil")).toBe(false);
+  });
+
+  it("rejects empty values", () => {
+    expect(isSafeRepoUrl("")).toBe(false);
   });
 });

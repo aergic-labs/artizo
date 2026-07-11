@@ -1,4 +1,4 @@
-# Pinned submodule — change VENDOR_CLI_VERSION in Makefile to update.
+# Pinned submodule - change VENDOR_CLI_VERSION in Makefile to update.
 [submodule "vendor/devcontainers-cli"]
 	path = vendor/devcontainers-cli
 	url = https://github.com/devcontainers/cli.git

@@ -4,17 +4,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import vscodeMock from "../__mocks__/vscode";
 
-// Mock vscode module
-vi.mock("vscode", () => ({
-  workspace: {},
-  commands: {
-    registerCommand: vi.fn().mockReturnValue({ dispose: vi.fn() }),
-  },
-  Uri: {
-    parse: (str: string) => ({ toString: () => str }),
-  },
-}));
+vi.mock("vscode", () => ({ default: vscodeMock, ...vscodeMock }));
 
 // Mock child_process for docker commands
 vi.mock("node:child_process", () => ({
@@ -31,7 +23,16 @@ vi.mock("../../src/remote/sshTunnel", () => ({
   startManagedSshTunnel: mockStartManagedSshTunnel,
   pickFreePort: vi.fn(),
 }));
+
+// Mock execServerBridge so proxy path tests don't create real servers.
+const { mockStartExecServerBridge } = vi.hoisted(() => ({
+  mockStartExecServerBridge: vi.fn(),
+}));
+vi.mock("../../src/remote/execServerBridge", () => ({
+  startExecServerBridge: mockStartExecServerBridge,
+}));
 import { execFile } from "node:child_process";
+import * as vscode from "vscode";
 import {
   RemoteAuthorityResolver,
   registerAuthorityResolver,
@@ -363,6 +364,13 @@ describe("RemoteAuthorityResolver - State 4 proxy path", () => {
       isAlive: () => true,
       stop: mockTunnelStop,
     });
+    // Reset the global vscode mock's getRemoteExecServer to return undefined.
+    (vscode.workspace as any).getRemoteExecServer = vi.fn().mockResolvedValue(undefined);
+    mockStartExecServerBridge.mockResolvedValue({
+      localPort: 54321,
+      isAlive: () => true,
+      stop: vi.fn(),
+    });
   });
 
   /** Encode a JSON payload as a bare `artizo-container+<hex>` authority. */
@@ -374,10 +382,11 @@ describe("RemoteAuthorityResolver - State 4 proxy path", () => {
     const authority = proxyAuthority({
       proxy: true,
       sshHost: "34.136.190.14",
-      sshUser: "kerry",
+      sshUser: "dev",
       relayPort: 9888,
       connectionToken: "token-abc",
       workspacePath: "/workspaces",
+      sshAuthority: "ssh-remote+test",
     });
 
     const result = await resolver.resolve(authority);
@@ -391,8 +400,9 @@ describe("RemoteAuthorityResolver - State 4 proxy path", () => {
     // Tunnel was started with the relay port and SSH target from the payload.
     expect(mockStartManagedSshTunnel).toHaveBeenCalledWith({
       sshHost: "34.136.190.14",
-      sshUser: "kerry",
+      sshUser: "dev",
       remotePort: 9888,
+      askpass: undefined,
     });
   });
 
@@ -406,6 +416,7 @@ describe("RemoteAuthorityResolver - State 4 proxy path", () => {
         relayPort: 1,
         connectionToken: "t",
         workspacePath: "/w",
+        sshAuthority: "ssh-remote+test2",
       }),
     );
 
@@ -424,6 +435,7 @@ describe("RemoteAuthorityResolver - State 4 proxy path", () => {
       relayPort: 9,
       connectionToken: "t",
       workspacePath: "/w",
+      sshAuthority: "ssh-remote+errortest",
     });
 
     const result = await resolver.resolve(authority);
@@ -432,6 +444,39 @@ describe("RemoteAuthorityResolver - State 4 proxy path", () => {
       expect(result.message).toContain("Artizo SSH tunnel failed");
       expect(result.message).toContain("connection refused");
     }
+  });
+
+  it("uses ExecServer bridge when getRemoteExecServer returns an execServer", async () => {
+    const mockExecServer = { tcpConnect: vi.fn() };
+    (vscode.workspace as any).getRemoteExecServer = vi.fn().mockResolvedValue(mockExecServer);
+    mockStartExecServerBridge.mockResolvedValueOnce({
+      localPort: 99999,
+      isAlive: () => true,
+      stop: vi.fn(),
+    });
+    const authority = proxyAuthority({
+      proxy: true,
+      sshHost: "h",
+      sshUser: "u",
+      relayPort: 42,
+      connectionToken: "tok",
+      workspacePath: "/w",
+      sshAuthority: "ssh-remote+exec-test",
+    });
+
+    const result = await resolver.resolve(authority);
+
+    expect(result.type).toBe("success");
+    if (result.type !== "success") return;
+    expect(result.authority.port).toBe(99999);
+    expect((vscode.workspace as any).getRemoteExecServer).toHaveBeenCalledWith("ssh-remote+exec-test");
+    expect(mockStartExecServerBridge).toHaveBeenCalledWith(
+      mockExecServer,
+      "127.0.0.1",
+      42,
+    );
+    // ssh tunnel should NOT have been used.
+    expect(mockStartManagedSshTunnel).not.toHaveBeenCalled();
   });
 
   it("falls through to Docker lookup when proxy field is absent", async () => {

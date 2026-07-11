@@ -2,7 +2,7 @@
   "name": "artizo",
   "displayName": "Artizo Dev Containers",
   "description": "Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "aergic",
   "productName": "Artizo",
   "license": "AGPL-3.0-only",
@@ -24,7 +24,15 @@
   },
   "capabilities": {
     "untrustedWorkspaces": {
-      "supported": true
+      "supported": "limited",
+      "description": "Container provisioning, credential forwarding, and dotfiles run commands derived from workspace and user configuration. Settings that feed executables or clone/run scripts are restricted until you trust the workspace.",
+      "restrictedConfigurations": [
+        "artizo.dockerPath",
+        "artizo.sshPath",
+        "artizo.dotfiles.repository",
+        "artizo.dotfiles.installCommand",
+        "artizo.dotfiles.targetPath"
+      ]
     }
   },
   "extensionKind": [
@@ -142,12 +150,14 @@
       {
         "command": "artizo.explorer.connectCurrentWindow",
         "title": "Artizo: Connect in Current Window",
-        "category": "Dev Containers (Artizo)"
+        "category": "Dev Containers (Artizo)",
+        "icon": "$(arrow-down)"
       },
       {
         "command": "artizo.explorer.connectNewWindow",
         "title": "Artizo: Connect in New Window",
-        "category": "Dev Containers (Artizo)"
+        "category": "Dev Containers (Artizo)",
+        "icon": "$(window)"
       },
       {
         "command": "artizo.ports.add",
@@ -183,6 +193,52 @@
         "title": "Artizo: Remove Volume",
         "category": "Dev Containers (Artizo)",
         "icon": "$(trash)"
+      },
+      {
+        "command": "artizo.explorer.stopContainer",
+        "title": "Artizo: Stop Container",
+        "category": "Dev Containers (Artizo)",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "artizo.explorer.startContainer",
+        "title": "Artizo: Start Container",
+        "category": "Dev Containers (Artizo)",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "artizo.explorer.removeContainer",
+        "title": "Artizo: Remove Container",
+        "category": "Dev Containers (Artizo)",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "artizo.explorer.showLogs",
+        "title": "Artizo: Show Container Logs",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.explorer.removeRecentFolder",
+        "title": "Artizo: Remove from Recent",
+        "category": "Dev Containers (Artizo)",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "artizo.explorer.inspectVolume",
+        "title": "Artizo: Inspect Volume",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.explorer.removeVolume",
+        "title": "Artizo: Remove Volume",
+        "category": "Dev Containers (Artizo)",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "artizo.explorer.cloneInVolume",
+        "title": "Artizo: Clone Repo in Volume",
+        "category": "Dev Containers (Artizo)",
+        "icon": "$(repo-clone)"
       }
     ],
     "views": {
@@ -201,9 +257,9 @@
       ],
       "remote": [
         {
-          "id": "artizo.detailsView",
-          "name": "Container Details",
-          "when": "artizo.connected"
+          "id": "artizo.explorer",
+          "name": "Dev Containers",
+          "when": "artizo.hostContext"
         },
         {
           "id": "artizo.portsView",
@@ -274,6 +330,16 @@
           "command": "artizo.ports.add",
           "when": "view == artizo.portsView",
           "group": "navigation"
+        },
+        {
+          "command": "artizo.explorer.refresh",
+          "when": "view == artizo.explorer",
+          "group": "navigation"
+        },
+        {
+          "command": "artizo.addConfiguration",
+          "when": "view == artizo.explorer && workspaceFolderCount != 0",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -286,6 +352,76 @@
           "command": "artizo.ports.setLabel",
           "when": "view == artizo.portsView && viewItem == forwardedPort",
           "group": "navigation"
+        },
+        {
+          "command": "artizo.explorer.connectNewWindow",
+          "when": "view == artizo.explorer && viewItem == container-running",
+          "group": "inline@1"
+        },
+        {
+          "command": "artizo.explorer.connectCurrentWindow",
+          "when": "view == artizo.explorer && viewItem == container-running",
+          "group": "navigation@1"
+        },
+        {
+          "command": "artizo.explorer.connectNewWindow",
+          "when": "view == artizo.explorer && viewItem == container-running",
+          "group": "navigation@2"
+        },
+        {
+          "command": "artizo.explorer.stopContainer",
+          "when": "view == artizo.explorer && viewItem == container-running",
+          "group": "navigation@3"
+        },
+        {
+          "command": "artizo.explorer.showLogs",
+          "when": "view == artizo.explorer && viewItem == container-running",
+          "group": "navigation@4"
+        },
+        {
+          "command": "artizo.explorer.removeContainer",
+          "when": "view == artizo.explorer && viewItem =~ /^container-/",
+          "group": "navigation@9"
+        },
+        {
+          "command": "artizo.explorer.startContainer",
+          "when": "view == artizo.explorer && viewItem == container-stopped",
+          "group": "navigation@1"
+        },
+        {
+          "command": "artizo.explorer.connectNewWindow",
+          "when": "view == artizo.explorer && viewItem == recent-folder",
+          "group": "inline@1"
+        },
+        {
+          "command": "artizo.explorer.connectCurrentWindow",
+          "when": "view == artizo.explorer && viewItem == recent-folder",
+          "group": "navigation@1"
+        },
+        {
+          "command": "artizo.explorer.connectNewWindow",
+          "when": "view == artizo.explorer && viewItem == recent-folder",
+          "group": "navigation@2"
+        },
+        {
+          "command": "artizo.explorer.removeRecentFolder",
+          "when": "view == artizo.explorer && viewItem == recent-folder",
+          "group": "navigation@9"
+        },
+        {
+          "command": "artizo.explorer.inspectVolume",
+          "when": "view == artizo.explorer && viewItem == volume",
+          "group": "navigation@1"
+        },
+        {
+          "command": "artizo.explorer.cloneInVolume",
+          "when": "view == artizo.explorer && viewItem == volume",
+          "group": "navigation@2"
+        },
+        {
+          "command": "artizo.explorer.removeVolume",
+          "when": "view == artizo.explorer && viewItem == volume",
+          "group": "navigation@9"
         }
       ]
     },
@@ -352,6 +488,11 @@
           "default": "",
           "description": "Path to the ssh executable used for remote SSH tunnels and side-load. When empty, Artizo uses the Windows OpenSSH client if present, otherwise ssh from PATH."
         },
+        "artizo.askpass": {
+          "type": "boolean",
+          "default": true,
+          "description": "Surface SSH password and passphrase prompts as VS Code input boxes. When disabled, SSH runs with BatchMode=yes and fails fast instead of prompting - use this if you rely only on key-based auth."
+        },
         "artizo.logLevel": {
           "type": "string",
           "enum": [
@@ -369,8 +510,8 @@
         },
         "artizo.remote.ssh.mirrorExtensions": {
           "type": "boolean",
-          "default": true,
-          "description": "Copy locally-installed extensions to the SSH remote host during setup. Disable to skip mirroring (only Artizo itself is installed)."
+          "default": false,
+          "description": "Copy locally-installed extensions to the SSH remote host during setup. Opt in by enabling this setting."
         }
       }
     }
@@ -393,7 +534,7 @@
     "build": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
     "typecheck": "tsc --noEmit && tsc --noEmit --project tsconfig.test.json",
-    "lint": "tsc --noEmit && tsc --noEmit --project tsconfig.test.json && knip && node scripts/guard-pkg.mjs && node scripts/guard-bundle.mjs",
+    "lint": "tsc --noEmit && tsc --noEmit --project tsconfig.test.json && eslint && knip && node scripts/guard-pkg.mjs && node scripts/guard-bundle.mjs",
     "test": "vitest run --exclude test/integration/**",
     "test:coverage": "vitest run --exclude test/integration/** --coverage",
     "test:integration": "vitest run test/integration/ --testTimeout=60000",
@@ -404,16 +545,20 @@
     "package:vscodium": "node scripts/build-vsix.mjs --target=vscodium"
   },
   "devDependencies": {
+    "@eslint/js": "^9.0.0",
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.85.0",
     "@types/yauzl": "^3.4.0",
     "@vitest/coverage-v8": "^4.1.8",
     "@vscode/vsce": "^3.9.1",
     "esbuild": "^0.25.0",
+    "eslint": "^9.0.0",
     "fast-check": "^3.23.0",
     "knip": "^6.15.0",
     "ovsx": "^0.10.0",
     "typescript": "^5.8.0",
+    "typescript-eslint": "^8.0.0",
+    "upng-js": "^2.1.0",
     "vitest": "^4.1.8"
   }
 }

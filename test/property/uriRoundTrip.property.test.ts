@@ -4,15 +4,9 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import vscodeMock from '../__mocks__/vscode';
 
-vi.mock('vscode', () => ({
-  window: { createTerminal: vi.fn().mockReturnValue({ show: vi.fn(), dispose: vi.fn() }), withProgress: vi.fn() },
-  commands: { executeCommand: vi.fn() },
-  EventEmitter: vi.fn().mockImplementation(() => ({ event: vi.fn(), fire: vi.fn(), dispose: vi.fn() })),
-  ProgressLocation: { Notification: 15 },
-  Uri: { parse: (s: string) => ({ toString: () => s }) },
-  workspace: { workspaceFolders: [{ uri: { fsPath: '/test/workspace' } }] },
-}));
+vi.mock('vscode', () => ({ default: vscodeMock, ...vscodeMock }));
 
 import * as fc from 'fast-check';
 import { encodeAuthority, decodeAuthority } from '../../src/utils/uriUtils';

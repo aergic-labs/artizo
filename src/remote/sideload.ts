@@ -26,7 +26,7 @@ import * as vscode from "vscode";
 import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { getLogger } from "../utils/logger";
 import type { DetectedTier } from "../host/state";
 import { getPlatformAdapter } from "../platform";
@@ -44,9 +44,12 @@ import {
 } from "../extensions/platformDetect";
 import { MarketplaceClient } from "../extensions/marketplaceClient";
 import { extractVsix } from "../extensions/vsixExtract";
-import { resolveSshBinary } from "./sshTunnel";
-import { decodeSshAuthority } from "./containerProxy";
 import { getArgvExtensionId } from "../host/services";
+import {
+  getRemoteExec,
+  type RemoteExec,
+  type RemoteExecResult,
+} from "./remoteExec";
 
 /** Marker file dropped into the side-loaded folder for loop prevention. */
 const SIDELOAD_MARKER = ".artizo-sideloaded";
@@ -116,41 +119,41 @@ let cachedRemotePlatform: TargetPlatform | undefined;
 let remotePlatformDetected = false;
 
 /**
- * Detect the SSH remote's platform by running `uname -ms` over SSH.
- * Cached for the session. Bails hard on failure: if the remote can't
- * answer `uname -ms`, it's broken in a way we can't paper over.
+ * Detect the SSH remote's platform by running `uname -ms`.
+ * Cached for the session. Bails hard on failure.
  */
-function detectRemotePlatform(
+async function detectRemotePlatform(
   remoteAuthority: string | undefined,
-): TargetPlatform {
+  exec: RemoteExec,
+): Promise<TargetPlatform> {
   if (remotePlatformDetected) return cachedRemotePlatform;
   remotePlatformDetected = true;
 
-  const ssh = decodeSshAuthority(remoteAuthority);
-  if (!ssh) {
-    throw new Error("Could not decode SSH authority to detect remote platform");
+  if (!remoteAuthority) {
+    throw new Error("No remote authority for platform detection");
   }
 
-  const sshBinary = resolveSshBinary();
-  const target = `${ssh.sshUser}@${ssh.sshHost}`;
-  getLogger().info(`sideload: detecting remote platform via ssh ${target}`);
+  const log = getLogger();
+  log.info(`sideload: detecting remote platform via remote exec`);
 
   let output: string;
   try {
-    output = execFileSync(sshBinary, [target, "uname", "-ms"], {
-      encoding: "utf-8",
-      timeout: 10_000,
-    });
+    const result = await exec.run("uname -ms", { timeout: 10_000 });
+    if (result.code !== 0) {
+      throw new Error(`uname exited with ${result.code} stderr: ${result.stderr.trim()}`);
+    }
+    output = result.stdout;
   } catch (err) {
     throw new Error(
       `Failed to detect remote platform (uname -ms): ${
         err instanceof Error ? err.message : String(err)
       }`,
+      { cause: err },
     );
   }
 
   cachedRemotePlatform = unameToTargetPlatform(output);
-  getLogger().info(
+  log.info(
     `sideload: remote platform=${cachedRemotePlatform} (uname: ${output.trim()})`,
   );
   return cachedRemotePlatform;
@@ -193,25 +196,15 @@ function resolveTarBinary(): string {
 async function tarStreamToRemote(
   srcDir: string,
   remoteTargetPath: string,
-  remoteAuthority: string | undefined,
+  exec: RemoteExec,
   log: ReturnType<typeof getLogger>,
 ): Promise<void> {
-  const ssh = decodeSshAuthority(remoteAuthority);
-  if (!ssh) {
-    throw new Error("Could not decode SSH authority for tar stream");
-  }
-  const sshBinary = resolveSshBinary();
   const tarBinary = resolveTarBinary();
-  const sshTarget = `${ssh.sshUser}@${ssh.sshHost}`;
 
   diag(`tarStream: src=${srcDir} remote=${remoteTargetPath}`);
-  log.info(
-    `sideload: tar stream ${srcDir} -> ${sshTarget}:${remoteTargetPath}`,
-  );
+  log.info(`sideload: tar stream ${srcDir} -> ${remoteTargetPath}`);
 
-  // Phase 1: tar apex-local dir to a temp file. tar to a real file is
-  // reliable across Windows bsdtar, GNU tar, busybox tar; piping tar
-  // stdout directly into another process stdin on Windows is not.
+  // Phase 1: tar apex-local dir to a temp file.
   const tmpTar = path.join(
     os.tmpdir(),
     `artizo-stream-${Date.now()}-${process.pid}.tar.gz`,
@@ -225,57 +218,27 @@ async function tarStreamToRemote(
     diag(`tarStream: temp tar ${size} bytes`);
     log.info(`sideload: tar built ${size} bytes`);
   } catch (err) {
-    throw new Error(`tar create failed: ${(err as Error).message}`);
+    throw new Error(`tar create failed: ${(err as Error).message}`, {
+      cause: err,
+    });
   }
 
-  // Phase 2: stream the temp file into ssh's stdin. Remote extracts.
-  // Path is controlled (derived from extensions dir + folder name, no
-  // user input) so inline single-quote escaping is safe.
+  // Phase 2: stream the temp file to the remote via exec.stdin.
   const escapedPath = remoteTargetPath.replace(/'/g, "'\\''");
   const remoteCmd = `mkdir -p '${escapedPath}' && tar xzf - -C '${escapedPath}'`;
 
-  await new Promise<void>((resolve, reject) => {
-    const sshProc = spawn(sshBinary, [sshTarget, remoteCmd], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stderrBuf = "";
-    sshProc.stderr?.on("data", (d: Buffer) => {
-      stderrBuf += `[ssh] ${d.toString()}`;
-    });
-
-    // Stream the temp file into ssh stdin. Readable file stream ends
-    // cleanly at EOF; sshProc reads to EOF and exits.
+  try {
     const input = fs.createReadStream(tmpTar);
-    input.on("error", (err) => {
-      diag(`tarStream: read error ${err.message}`);
-      sshProc.kill();
-      reject(new Error(`temp tar read error: ${err.message}`));
-    });
-    input.pipe(sshProc.stdin);
-
-    sshProc.on("exit", (code) => {
-      if (code === 0) {
-        diag(`tarStream: done (ssh=${code})`);
-        log.info("sideload: tar stream complete");
-        resolve();
-      } else {
-        const msg = `tar stream failed (ssh exit=${code}) stderr: ${stderrBuf}`;
-        diag(`tarStream: THROW ${msg}`);
-        reject(new Error(msg));
-      }
-    });
-    sshProc.on("error", (err) => {
-      diag(`tarStream: ssh spawn error ${err.message}`);
-      reject(new Error(`ssh spawn error: ${err.message}`));
-    });
-  }).finally(() => {
-    // Cleanup temp tar regardless of outcome.
+    await exec.streamToStdin(remoteCmd, input);
+    diag(`tarStream: done`);
+    log.info("sideload: tar stream complete");
+  } finally {
     try {
       fs.unlinkSync(tmpTar);
     } catch {
-      // best effort
+      // ignore
     }
-  });
+  }
 }
 
 /**
@@ -304,6 +267,7 @@ async function resolveRemoteHome(
   wsPath: string | undefined,
   context: vscode.ExtensionContext,
   log: ReturnType<typeof getLogger>,
+  exec: RemoteExec,
 ): Promise<string | undefined> {
   // 1. Path inference from the workspace folder.
   if (wsPath) {
@@ -322,7 +286,7 @@ async function resolveRemoteHome(
 
   // 3. Probe via ssh `echo $HOME`.
   try {
-    const probed = await probeRemoteHome(authority, log);
+    const probed = await probeRemoteHome(log, exec);
     if (probed) {
       diag(`resolveRemoteHome: ssh probe returned ${probed}`);
       await context.globalState.update(homeCacheKey(authority), probed);
@@ -343,40 +307,26 @@ async function resolveRemoteHome(
  * platform detection paths. Returns the trimmed path or undefined.
  */
 async function probeRemoteHome(
-  authority: string,
   log: ReturnType<typeof getLogger>,
+  exec: RemoteExec,
 ): Promise<string | undefined> {
-  const ssh = decodeSshAuthority(authority);
-  if (!ssh) {
-    log.warn("sideload: cannot decode SSH authority for home probe");
-    return undefined;
+  log.info("sideload: probing remote $HOME");
+  try {
+    const result = await exec.run("echo $HOME", { timeout: 10_000 });
+    if (result.code === 0 && result.stdout.trim()) {
+      return result.stdout.trim();
+    }
+    log.warn(
+      `sideload: home probe failed (exit=${result.code}) stderr: ${result.stderr}`,
+    );
+  } catch (err) {
+    log.warn(
+      `sideload: home probe failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
   }
-  const sshBinary = resolveSshBinary();
-  const target = `${ssh.sshUser}@${ssh.sshHost}`;
-  log.info(`sideload: probing remote $HOME via ssh ${target}`);
-  return await new Promise<string | undefined>((resolve) => {
-    const proc = spawn(sshBinary, [target, "echo", "$HOME"], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    proc.stdout?.on("data", (d: Buffer) => (stdout += d.toString()));
-    proc.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
-    proc.on("error", (err) => {
-      log.warn(`sideload: ssh home probe spawn error: ${err.message}`);
-      resolve(undefined);
-    });
-    proc.on("exit", (code) => {
-      if (code === 0 && stdout.trim()) {
-        resolve(stdout.trim());
-      } else {
-        log.warn(
-          `sideload: ssh home probe failed (exit=${code}) stderr: ${stderr}`,
-        );
-        resolve(undefined);
-      }
-    });
-  });
+  return undefined;
 }
 
 /** Build a globalState key for caching remote home by SSH authority. */
@@ -397,61 +347,28 @@ function homeCacheKey(authority: string): string {
  * trimmed stderr.
  */
 function runRemoteCmd(
-  authority: string,
   remoteCmd: string,
   log: ReturnType<typeof getLogger>,
-  timeoutMs = 15_000,
-  stdinInput?: string,
-): Promise<{ stdout: string; stderr: string; code: number | null }> {
-  const ssh = decodeSshAuthority(authority);
-  if (!ssh) {
-    return Promise.reject(
-      new Error("Cannot decode SSH authority for remote command"),
-    );
-  }
-  const sshBinary = resolveSshBinary();
-  const target = `${ssh.sshUser}@${ssh.sshHost}`;
-  log.info(`sideload: ssh ${target} ${remoteCmd}`);
-  diag(`runRemoteCmd: ssh ${target} cmd=${remoteCmd}`);
+  timeoutMs: number,
+  stdinInput: string | undefined,
+  exec: RemoteExec,
+): Promise<RemoteExecResult> {
+  log.info(`sideload: remote exec: ${remoteCmd}`);
+  diag(`runRemoteCmd: cmd=${remoteCmd}`);
   if (stdinInput !== undefined) {
     diag(`runRemoteCmd: piping ${stdinInput.length} bytes to stdin`);
   }
-  return new Promise((resolve, reject) => {
-    const proc = spawn(sshBinary, [target, remoteCmd], {
-      stdio: [stdinInput !== undefined ? "pipe" : "ignore", "pipe", "pipe"],
-    });
-    const timer = setTimeout(() => {
-      proc.kill("SIGKILL");
-      diag(`runRemoteCmd: TIMEOUT after ${timeoutMs}ms`);
-      reject(new Error(`ssh command timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    let stdout = "";
-    let stderr = "";
-    proc.stdout?.on("data", (d: Buffer) => (stdout += d.toString()));
-    proc.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
-    proc.on("error", (err) => {
-      clearTimeout(timer);
-      diag(`runRemoteCmd: spawn error ${err.message}`);
-      reject(err);
-    });
-    proc.on("exit", (code) => {
-      clearTimeout(timer);
+  return exec.run(remoteCmd, { stdin: stdinInput, timeout: timeoutMs }).then(
+    (result) => {
       log.info(
-        `sideload: ssh exit=${code} stdout=${stdout.trim()} stderr=${stderr.trim()}`,
+        `sideload: exit=${result.code} stdout=${result.stdout.trim()} stderr=${result.stderr.trim()}`,
       );
       diag(
-        `runRemoteCmd: exit=${code} stdout=${stdout.trim()} stderr=${stderr.trim()}`,
+        `runRemoteCmd: exit=${result.code} stdout=${result.stdout.trim()} stderr=${result.stderr.trim()}`,
       );
-      resolve({ stdout, stderr, code });
-    });
-    if (stdinInput !== undefined && proc.stdin) {
-      proc.stdin.on("error", (err) => {
-        diag(`runRemoteCmd: stdin error ${err.message}`);
-      });
-      proc.stdin.write(stdinInput);
-      proc.stdin.end();
-    }
-  });
+      return result;
+    },
+  );
 }
 
 /**
@@ -515,8 +432,8 @@ function shellSingleQuote(s: string): string {
  */
 async function patchRemoteArgvJson(
   remoteHome: string,
-  authority: string,
   log: ReturnType<typeof getLogger>,
+  exec: RemoteExec,
 ): Promise<string | undefined> {
   const adapter = await getPlatformAdapter();
   if (!adapter.needsArgvPatch()) {
@@ -562,16 +479,22 @@ async function patchRemoteArgvJson(
   diag(`patchRemoteArgvJson: node search=[${nodeSearch.join(", ")}]`);
   const nodeProbe =
     `for n in ${nodeSearch.join(" ")}; do ` +
-    `if [ -x "\$n" ]; then echo "\$n"; break; fi; done`;
+    `if [ -x "$n" ]; then echo "$n"; break; fi; done`;
   const argv = [extensionId, ...candidates].map(shellSingleQuote).join(" ");
   const remoteCmd =
-    `NP=\$(${nodeProbe}); ` +
-    `if [ -z "\$NP" ]; then echo "NO_NODE" >&2; exit 3; fi; ` +
-    `"\$NP" - ${argv}`;
+    `NP=$(${nodeProbe}); ` +
+    `if [ -z "$NP" ]; then echo "NO_NODE" >&2; exit 3; fi; ` +
+    `"$NP" - ${argv}`;
 
   let result;
   try {
-    result = await runRemoteCmd(authority, remoteCmd, log, 20_000, script);
+    result = await runRemoteCmd(
+      remoteCmd,
+      log,
+      20_000,
+      script,
+      exec,
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.warn(`sideload: remote argv patch spawn failed: ${msg}`);
@@ -607,24 +530,28 @@ async function patchRemoteArgvJson(
  * server launcher passes). Returns the number of PIDs signaled.
  */
 async function killRemoteServer(
-  authority: string,
   log: ReturnType<typeof getLogger>,
+  exec: RemoteExec,
 ): Promise<number> {
   // pgrep -f is more portable than ps | grep. Fall back to ps if pgrep
   // is missing. We use pkill-style: list PIDs first so we can log them.
   const cmd =
     `pgrep -f connection-token-file 2>/dev/null || ` +
     `ps -eo pid=,args= 2>/dev/null | grep '[c]onnection-token-file' | awk '{print $1}'`;
-  const result = await runRemoteCmd(authority, cmd, log, 10_000).catch(
-    (err) => {
-      log.warn(
-        `sideload: killRemoteServer spawn failed: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      return { stdout: "", stderr: "", code: 1 };
-    },
-  );
+  const result = await runRemoteCmd(
+    cmd,
+    log,
+    10_000,
+    undefined,
+    exec,
+  ).catch((err) => {
+    log.warn(
+      `sideload: killRemoteServer spawn failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return { stdout: "", stderr: "", code: 1 };
+  });
   const pids = result.stdout
     .split("\n")
     .map((s) => s.trim())
@@ -637,9 +564,13 @@ async function killRemoteServer(
   log.info(`sideload: killing remote server PIDs: ${pids.join(", ")}`);
   diag(`killRemoteServer: PIDs=${pids.join(", ")}`);
   const killCmd = `kill ${pids.join(" ")} 2>/dev/null; sleep 1; kill -9 ${pids.join(" ")} 2>/dev/null; true`;
-  const killResult = await runRemoteCmd(authority, killCmd, log, 10_000).catch(
-    () => ({ stdout: "", stderr: "", code: null }),
-  );
+  const killResult = await runRemoteCmd(
+    killCmd,
+    log,
+    10_000,
+    undefined,
+    exec,
+  ).catch(() => ({ stdout: "", stderr: "", code: null }));
   log.info("sideload: remote server kill issued");
   diag(`killRemoteServer: kill issued, exit=${killResult.code}`);
   return pids.length;
@@ -893,6 +824,7 @@ async function mirrorLocalExtensions(
     targetPlatform: string | undefined;
   },
   report: (message: string, inc?: number) => void,
+  exec: RemoteExec,
 ): Promise<void> {
   // Enumerate apex-installed extensions from disk. vscode.extensions.all
   // on the UI-side exthost doesn't list workspace-kind extensions that
@@ -940,7 +872,7 @@ async function mirrorLocalExtensions(
     if (isPlatformSpecific) {
       diag(`mirror: ${extId} platform-specific, detecting remote platform`);
       try {
-        remotePlatform = detectRemotePlatform(remoteAuthority);
+        remotePlatform = await detectRemotePlatform(remoteAuthority, exec);
         diag(
           `mirror: ${extId} remotePlatform=${remotePlatform ?? "undefined"}`,
         );
@@ -992,7 +924,7 @@ async function mirrorLocalExtensions(
         await tarStreamToRemote(
           srcPath,
           targetFolder.path,
-          remoteAuthority,
+          exec,
           log,
         );
         copied++;
@@ -1019,7 +951,7 @@ async function mirrorLocalExtensions(
           await tarStreamToRemote(
             extractDir,
             targetFolder.path,
-            remoteAuthority,
+            exec,
             log,
           );
           downloaded++;
@@ -1132,197 +1064,227 @@ export async function bootstrapRemoteSideLoad(
     status.text = `$(loading~spin) Artizo: ${message}`;
   };
 
-  const authority = (vscode.env as any).remoteAuthority as string | undefined;
-  diag(`authority=${authority ?? "undefined"}`);
-  if (!authority) {
+  // Detect ExecServer first; fall back to ssh + askpass. When ExecServer
+  // is available, no ssh is spawned and no askpass server starts.
+  const rawAuthority = (vscode.env as any).remoteAuthority as
+    | string
+    | undefined;
+  if (!rawAuthority) {
     diag(`THROW: no remote authority`);
-    throw new Error("No SSH remote authority. Connect to an SSH remote first.");
-  }
-
-  // 1. Resolve remote home and extensions dir.
-  const wsPath = vscode.workspace.workspaceFolders?.[0]?.uri.path;
-  diag(`wsPath=${wsPath ?? "undefined"}`);
-  const homePath = await resolveRemoteHome(authority, wsPath, context, log);
-  diag(`remote home=${homePath ?? "undefined"}`);
-  log.info(`sideload: resolved remote home=${homePath ?? "undefined"}`);
-  if (!homePath) {
-    diag(`THROW: no homePath`);
     throw new Error(
-      "Could not resolve remote home directory. " +
-        "Ensure `ssh <host> 'echo \$HOME'` works from your apex machine.",
+      "No SSH remote authority. Connect to an SSH remote first.",
     );
   }
-
-  const extDir = await findRemoteExtensionsDir(
-    homePath,
+  const authority = rawAuthority;
+  const { exec, askpass } = await getRemoteExec(
     authority,
-    log,
-    context,
+    context.extensionPath,
   );
-  diag(`extDir=${extDir?.toString() ?? "undefined"}`);
-  if (!extDir) {
-    const candidates = await candidateRelDirs();
-    diag(`THROW: no extDir, candidates=${candidates.join(",")}`);
-    throw new Error(
-      "Could not find a remote extensions directory. Probed: " +
-        candidates.join(", "),
-    );
-  }
+  try {
+    diag(`authority=${authority}`);
 
-  // 2. Compute target folder name.
-  const extId = context.extension.id;
-  const version = context.extension.packageJSON.version;
-  const publisherDisplayName: string =
-    context.extension.packageJSON.publisher ?? extId.split(".")[0];
-  const targetPlatform: string | undefined =
-    context.extension.packageJSON.__metadata?.targetPlatform;
-  const folderName = extensionFolderName(extId, version, targetPlatform);
-  const targetFolderUri = vscode.Uri.joinPath(extDir, folderName);
-  diag(
-    `self extId=${extId} version=${version} targetPlatform=${targetPlatform ?? "none"}`,
-  );
-  diag(`self target folder=${targetFolderUri.toString()}`);
-  log.info(`sideload: extId=${extId} version=${version}`);
-  log.info(`sideload: target folder=${targetFolderUri.toString()}`);
-
-  // 3. Copy the installed extension folder to the remote. Skip if the
-  //    marker already exists (idempotent re-run).
-  const alreadyThere = await markerExists(extDir, folderName);
-  diag(`marker alreadyThere=${alreadyThere}`);
-  if (alreadyThere) {
-    diag(`skipping self-copy, marker present`);
-    log.info(
-      `sideload: marker present at ${targetFolderUri.toString()}; skipping copy`,
+    // 1. Resolve remote home and extensions dir.
+    const wsPath = vscode.workspace.workspaceFolders?.[0]?.uri.path;
+    diag(`wsPath=${wsPath ?? "undefined"}`);
+    const homePath = await resolveRemoteHome(
+      authority,
+      wsPath,
+      context,
+      log,
+      exec,
     );
-  } else {
-    report("copying Artizo to remote...");
+    diag(`remote home=${homePath ?? "undefined"}`);
+    log.info(`sideload: resolved remote home=${homePath ?? "undefined"}`);
+    if (!homePath) {
+      diag(`THROW: no homePath`);
+      throw new Error(
+        "Could not resolve remote home directory. " +
+          "Ensure `ssh <host> 'echo $HOME'` works from your apex machine.",
+      );
+    }
+
+    const extDir = await findRemoteExtensionsDir(
+      homePath,
+      authority,
+      log,
+      context,
+    );
+    diag(`extDir=${extDir?.toString() ?? "undefined"}`);
+    if (!extDir) {
+      const candidates = await candidateRelDirs();
+      diag(`THROW: no extDir, candidates=${candidates.join(",")}`);
+      throw new Error(
+        "Could not find a remote extensions directory. Probed: " +
+          candidates.join(", "),
+      );
+    }
+
+    // 2. Compute target folder name.
+    const extId = context.extension.id;
+    const version = context.extension.packageJSON.version;
+    const publisherDisplayName: string =
+      context.extension.packageJSON.publisher ?? extId.split(".")[0];
+    const targetPlatform: string | undefined =
+      context.extension.packageJSON.__metadata?.targetPlatform;
+    const folderName = extensionFolderName(extId, version, targetPlatform);
+    const targetFolderUri = vscode.Uri.joinPath(extDir, folderName);
     diag(
-      `self-copy: ${context.extensionUri.toString()} -> ${targetFolderUri.toString()}`,
+      `self extId=${extId} version=${version} targetPlatform=${targetPlatform ?? "none"}`,
     );
-    log.info(
-      `sideload: copying ${context.extensionUri.toString()} -> ${targetFolderUri.toString()}`,
-    );
-    const t0 = Date.now();
-    // Stream the apex extension folder to the remote via tar over ssh.
-    // Much faster than workspace.fs.copy for trees with many files
-    // (per-file round trip vs one streamed archive).
-    try {
-      await tarStreamToRemote(
-        context.extensionUri.fsPath,
-        targetFolderUri.path,
-        authority,
-        log,
-      );
-    } catch (err) {
-      diag(
-        `THROW in self-copy: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      throw err;
-    }
-    const elapsed = Date.now() - t0;
-    diag(`self-copy done in ${elapsed}ms`);
-    log.info(`sideload: copy done in ${elapsed}ms`);
+    diag(`self target folder=${targetFolderUri.toString()}`);
+    log.info(`sideload: extId=${extId} version=${version}`);
+    log.info(`sideload: target folder=${targetFolderUri.toString()}`);
 
-    // Write the marker file so we can detect the side-load on
-    // re-activation and skip re-copying.
-    const markerUri = vscode.Uri.joinPath(targetFolderUri, SIDELOAD_MARKER);
-    try {
-      await vscode.workspace.fs.writeFile(
-        markerUri,
-        new TextEncoder().encode(`sideloaded ${new Date().toISOString()}\n`),
-      );
-    } catch (err) {
-      diag(
-        `THROW writing marker: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      throw err;
-    }
-    diag(`wrote marker ${markerUri.toString()}`);
-    log.info(`sideload: wrote marker ${markerUri.toString()}`);
-  }
-
-  // 4. Queue self entry for the single batched extensions.json write
-  //    that mirrorLocalExtensions will do at the end.
-  status.text = "$(settings-gear) Artizo: preparing on remote host...";
-  report("preparing extensions...");
-  const selfEntry = {
-    folderName,
-    extId,
-    version,
-    publisherDisplayName,
-    targetPlatform,
-  };
-  diag(`queued self entry for extensions.json commit`);
-
-  // 5. Mirror locally-installed extensions to the remote, unless the
-  //    user opted out. SSH remotes may not have internet access, so we
-  //    copy VSIXs from the apex instead of downloading from the
-  //    marketplace. When mirroring is disabled we still commit our own
-  //    entry to extensions.json so the remote picks us up after reload.
-  const mirrorEnabled = vscode.workspace
-    .getConfiguration("artizo.remote.ssh")
-    .get<boolean>("mirrorExtensions", true);
-  if (mirrorEnabled) {
-    status.text = "$(cloud~upload) Artizo: mirroring extensions to remote...";
-    diag(`calling mirrorLocalExtensions, authority=${authority}`);
-    try {
-      await mirrorLocalExtensions(extDir, log, authority, selfEntry, report);
-      diag(`mirrorLocalExtensions returned without throw`);
-    } catch (err) {
-      diag(
-        `THROW in mirrorLocalExtensions: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      throw err;
-    }
-  } else {
-    diag(`mirror disabled by config, committing self entry only`);
-    log.info("sideload: mirror disabled, committing self entry only");
-    await commitExtensionsJson(extDir, [selfEntry], log);
-  }
-
-  // 6. Patch argv.json on the remote BEFORE reload, then kill the
-  //    running server so it restarts with the patched argv. This avoids
-  //    the second activation-time patch + restart prompt that would
-  //    otherwise fire when the workspace-side extension activates on the
-  //    remote for the first time.
-  diag(`patchRemoteArgvJson start, remoteHome=${homePath}`);
-  log.info(`sideload: patching remote argv.json (home=${homePath})`);
-  report("patching remote argv.json...");
-  const argvPath = await patchRemoteArgvJson(homePath, authority, log);
-  diag(`patchRemoteArgvJson result=${argvPath ?? "undefined"}`);
-  if (argvPath) {
-    log.info(`sideload: argv patched at ${argvPath}, killing server`);
-    report("restarting remote server...");
-    const killed = await killRemoteServer(authority, log);
-    diag(`killRemoteServer killed=${killed}`);
-    // Do NOT wait for the server to come back here. Nothing respawns it
-    // until the window reloads - the vendor SSH extension relaunches the
-    // server when it reconnects on reload. Polling for the server now
-    // would just leave the connection down (and the vendor's "cannot
-    // connect: please reload the window" modal on screen) for the full
-    // timeout. The reload below is what brings the server back, and it
-    // reads the patched argv on start.
-    if (killed === 0) {
+    // 3. Copy the installed extension folder to the remote. Skip if the
+    //    marker already exists (idempotent re-run).
+    const alreadyThere = await markerExists(extDir, folderName);
+    diag(`marker alreadyThere=${alreadyThere}`);
+    if (alreadyThere) {
+      diag(`skipping self-copy, marker present`);
       log.info(
-        "sideload: no server process to kill; argv will be read on next restart",
+        `sideload: marker present at ${targetFolderUri.toString()}; skipping copy`,
+      );
+    } else {
+      report("copying Artizo to remote...");
+      diag(
+        `self-copy: ${context.extensionUri.toString()} -> ${targetFolderUri.toString()}`,
+      );
+      log.info(
+        `sideload: copying ${context.extensionUri.toString()} -> ${targetFolderUri.toString()}`,
+      );
+      const t0 = Date.now();
+      // Stream the apex extension folder to the remote via tar over ssh.
+      // Much faster than workspace.fs.copy for trees with many files
+      // (per-file round trip vs one streamed archive).
+      try {
+        await tarStreamToRemote(
+          context.extensionUri.fsPath,
+          targetFolderUri.path,
+          exec,
+          log,
+        );
+      } catch (err) {
+        diag(
+          `THROW in self-copy: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        throw err;
+      }
+      const elapsed = Date.now() - t0;
+      diag(`self-copy done in ${elapsed}ms`);
+      log.info(`sideload: copy done in ${elapsed}ms`);
+
+      // Write the marker file so we can detect the side-load on
+      // re-activation and skip re-copying.
+      const markerUri = vscode.Uri.joinPath(targetFolderUri, SIDELOAD_MARKER);
+      try {
+        await vscode.workspace.fs.writeFile(
+          markerUri,
+          new TextEncoder().encode(`sideloaded ${new Date().toISOString()}\n`),
+        );
+      } catch (err) {
+        diag(
+          `THROW writing marker: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        throw err;
+      }
+      diag(`wrote marker ${markerUri.toString()}`);
+      log.info(`sideload: wrote marker ${markerUri.toString()}`);
+    }
+
+    // 4. Queue self entry for the single batched extensions.json write
+    //    that mirrorLocalExtensions will do at the end.
+    status.text = "$(settings-gear) Artizo: preparing on remote host...";
+    report("preparing extensions...");
+    const selfEntry = {
+      folderName,
+      extId,
+      version,
+      publisherDisplayName,
+      targetPlatform,
+    };
+    diag(`queued self entry for extensions.json commit`);
+
+    // 5. Mirror local extensions to the remote. SSH remotes may lack
+    //    internet access, so VSIXs are copied from the apex. When
+    //    disabled, we still commit our own entry to extensions.json.
+    const mirrorEnabled = vscode.workspace
+      .getConfiguration("artizo.remote.ssh")
+      .get<boolean>("mirrorExtensions", false);
+    if (mirrorEnabled) {
+      status.text = "$(cloud~upload) Artizo: mirroring extensions to remote...";
+      diag(`calling mirrorLocalExtensions, authority=${authority}`);
+      try {
+        await mirrorLocalExtensions(
+          extDir,
+          log,
+          authority,
+          selfEntry,
+          report,
+          exec,
+        );
+        diag(`mirrorLocalExtensions returned without throw`);
+      } catch (err) {
+        diag(
+          `THROW in mirrorLocalExtensions: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        throw err;
+      }
+    } else {
+      diag(`mirror disabled by config, committing self entry only`);
+      log.info("sideload: mirror disabled, committing self entry only");
+      await commitExtensionsJson(extDir, [selfEntry], log);
+    }
+
+    // 6. Patch argv.json, then kill the server so it restarts with the
+    //    patched argv on reload. Avoids the activation-time patch prompt.
+    diag(`patchRemoteArgvJson start, remoteHome=${homePath}`);
+    log.info(`sideload: patching remote argv.json (home=${homePath})`);
+    report("patching remote argv.json...");
+    const argvPath = await patchRemoteArgvJson(
+      homePath,
+      log,
+      exec,
+    );
+    diag(`patchRemoteArgvJson result=${argvPath ?? "undefined"}`);
+    if (argvPath) {
+      log.info(`sideload: argv patched at ${argvPath}, killing server`);
+      report("restarting remote server...");
+      const killed = await killRemoteServer(log, exec);
+      diag(`killRemoteServer killed=${killed}`);
+      // Don't wait for the server. The vendor SSH extension relaunches
+      // it on reconnect. The reload below brings it back.
+      if (killed === 0) {
+        log.info(
+          "sideload: no server process to kill; argv will be read on next restart",
+        );
+      }
+    } else {
+      log.info(
+        "sideload: remote argv patch skipped or failed; workspace-side patch will run on activation",
       );
     }
-  } else {
-    log.info(
-      "sideload: remote argv patch skipped or failed; workspace-side patch will run on activation",
-    );
-  }
 
-  // 7. Reload immediately. Killing the server dropped this window's
-  //    connection; reloading now re-establishes it (spawning a fresh
-  //    server that reads the patched argv) before the vendor's
-  //    connection-lost modal can settle in. The post-reload activation
-  //    shows the sidebar on the remote.
-  diag(`reloadWindow`);
-  log.info("sideload: reloadWindow");
-  report("reloading window...");
-  status.text = "$(loading~spin) Artizo: reloading window...";
-  vscode.commands.executeCommand("workbench.action.reloadWindow");
+    // 7. Reload. Killing the server dropped the connection; reload
+    //    re-establishes it before the connection-lost modal settles.
+    diag(`reloadWindow`);
+    log.info("sideload: reloadWindow");
+    report("reloading window...");
+    status.text = "$(loading~spin) Artizo: reloading window...";
+    vscode.commands.executeCommand("workbench.action.reloadWindow");
+  } catch (err) {
+    // Evict host passwords so a retry re-prompts instead of reusing
+    // a bad password.
+    if (askpass?.server.usedHostPassword) {
+      diag(`evicting host password cache entries`);
+      askpass.server.evictHostPasswords();
+    }
+    throw err;
+  } finally {
+    // Stop the askpass server.
+    await askpass?.server.stop().catch(() => {
+      /* best effort */
+    });
+  }
 }
 
 // --- Test-only exports (not part of the public API) ---

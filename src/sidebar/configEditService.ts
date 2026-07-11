@@ -20,6 +20,7 @@
 import * as vscode from "vscode";
 import * as os from "node:os";
 import * as path from "node:path";
+import { printParseErrorCode } from "jsonc-parser";
 import { getLogger } from "../utils/logger";
 import type { HostMessage, MountEntry, ConfigParseError } from "./messages";
 import {
@@ -173,7 +174,7 @@ export class ConfigEditService {
         (e) =>
           !e.id.startsWith("vscode.") &&
           !e.extensionPath.startsWith(vscode.env.appRoot) &&
-          !/^aergic\.artizo-/.test(e.id),
+          !/^aergic\.(artizo|zygos)-/.test(e.id),
       )
       .map((e) => ({
         id: e.id,
@@ -412,12 +413,13 @@ export class ConfigEditService {
         source: string;
         target: string;
         type?: string;
+        artizoManaged?: string;
       }>;
       getLogger().debug(
         `toggleOption: current mounts=${JSON.stringify(mounts)}`,
       );
       const updated = computeMountsToggle(
-        mounts as any,
+        mounts,
         patchPath,
         enabled,
         entry.managed,
@@ -668,10 +670,6 @@ export class ConfigEditService {
 
   /** Convert a jsonc-parser error code to a human-readable message. */
   private friendlyError(code: number): string {
-    // require (not await import): friendlyError is synchronous because it is
-    // called from inside the parseErrors .map() in loadConfig.
-    const { printParseErrorCode } =
-      require("jsonc-parser") as typeof import("jsonc-parser");
     return printParseErrorCode(code);
   }
 }

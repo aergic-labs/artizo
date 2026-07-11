@@ -3,8 +3,11 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import vscodeMock from "../__mocks__/vscode";
 import { DevinAdapter } from "../../src/platform/devin";
+
+vi.mock("vscode", () => ({ default: vscodeMock, ...vscodeMock }));
 
 const TEST_CONFIG = {
   name: "Devin",

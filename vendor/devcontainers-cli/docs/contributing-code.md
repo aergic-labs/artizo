@@ -5,7 +5,7 @@ This guide covers everything you need to set up a development environment, build
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) >= 20
-- [Docker](https://www.docker.com/) (required for running integration tests — they create real containers)
+- [Docker](https://www.docker.com/) (required for running integration tests - they create real containers)
 - [Git](https://git-scm.com/)
 - [yarn](https://yarnpkg.com/) (used for dependency installation)
 
@@ -37,7 +37,7 @@ You are ready to build and test.
     yarn install
     ```
 
-    Ensure Docker is running — it is needed for the integration test suite.
+    Ensure Docker is running - it is needed for the integration test suite.
 
     Some tests build containers for non-native architectures (e.g., `linux/arm64` on an x64 host, or vice versa). To run these locally, register QEMU emulators:
 
@@ -47,7 +47,7 @@ You are ready to build and test.
 
     This is needed once per boot (or per WSL session on Windows). On macOS with Docker Desktop, cross-architecture emulation is built in and this step is not required.
 
-3. *(Optional)* Install [Podman](https://podman.io/) if you want to run the Podman-specific tests. The CLI supports both Docker and Podman as container engines, and the test suite includes a separate set of tests (`cli.podman.test.ts`) that verify Podman compatibility using `--docker-path podman`. These tests will fail with `spawn podman ENOENT` if Podman is not installed — this is expected and does not indicate a code problem. The CI GitHub workflow runs these tests on `ubuntu-latest` where Podman is pre-installed.
+3. *(Optional)* Install [Podman](https://podman.io/) if you want to run the Podman-specific tests. The CLI supports both Docker and Podman as container engines, and the test suite includes a separate set of tests (`cli.podman.test.ts`) that verify Podman compatibility using `--docker-path podman`. These tests will fail with `spawn podman ENOENT` if Podman is not installed - this is expected and does not indicate a code problem. The CI GitHub workflow runs these tests on `ubuntu-latest` where Podman is pre-installed.
 
 ## Project structure
 
@@ -57,21 +57,21 @@ The CLI is written in TypeScript and organized as multiple sub-projects using [T
 | --- | --- | --- |
 | `spec-common` | `src/spec-common/` | Shared utilities (async helpers, CLI host, process management, shell server) |
 | `spec-configuration` | `src/spec-configuration/` | Configuration parsing, OCI registry interactions, Features/Templates configuration |
-| `spec-node` | `src/spec-node/` | Core CLI logic — container lifecycle, Docker/Compose integration, Feature utilities |
+| `spec-node` | `src/spec-node/` | Core CLI logic - container lifecycle, Docker/Compose integration, Feature utilities |
 | `spec-shutdown` | `src/spec-shutdown/` | Docker CLI wrapper utilities (container inspection, execution, lifecycle management) |
 | `spec-utils` | `src/spec-utils/` | General utilities (logging, HTTP requests, filesystem helpers) |
 
 Key files:
 
-- `devcontainer.js` — Entry point that loads the bundled CLI from `dist/spec-node/devContainersSpecCLI.js`.
-- `esbuild.js` — Build script that bundles the TypeScript output with esbuild.
-- `src/test/` — Test files and fixture configurations under `src/test/configs/`.
+- `devcontainer.js` - Entry point that loads the bundled CLI from `dist/spec-node/devContainersSpecCLI.js`.
+- `esbuild.js` - Build script that bundles the TypeScript output with esbuild.
+- `src/test/` - Test files and fixture configurations under `src/test/configs/`.
 
 ## Development workflow
 
 ### 1. Build
 
-Start the dev build watchers — run these in separate terminals (or use the [VS Code build task](#vs-code-integration)):
+Start the dev build watchers - run these in separate terminals (or use the [VS Code build task](#vs-code-integration)):
 
 ```sh
 npm run watch            # incremental esbuild (rebuilds on save)
@@ -101,7 +101,7 @@ Before running tests, package the CLI into a tarball:
 npm run package
 ```
 
-Tests install the CLI from the generated `devcontainers-cli-<version>.tgz` and shell out to it as a subprocess. You must re-run `npm run package` after any code change so that the tarball reflects your latest changes. Running `npm run compile` alone is **not** sufficient — it builds the JavaScript output but does not create the tarball that the tests depend on.
+Tests install the CLI from the generated `devcontainers-cli-<version>.tgz` and shell out to it as a subprocess. You must re-run `npm run package` after any code change so that the tarball reflects your latest changes. Running `npm run compile` alone is **not** sufficient - it builds the JavaScript output but does not create the tarball that the tests depend on.
 
 ```sh
 npm test                          # all tests
@@ -140,8 +140,8 @@ The default build task (**Ctrl+Shift+B** / **Cmd+Shift+B**) is **Build Dev Conta
 
 Two launch configurations are provided in `.vscode/launch.json`:
 
-- **Launch CLI - up** — Runs the CLI's `up` command against `src/test/configs/example/`. Edit the `args` array to point at a different config or subcommand.
-- **Launch Tests** — Runs the full Mocha test suite under the debugger.
+- **Launch CLI - up** - Runs the CLI's `up` command against `src/test/configs/example/`. Edit the `args` array to point at a different config or subcommand.
+- **Launch Tests** - Runs the full Mocha test suite under the debugger.
 
 ### Editor settings
 
@@ -173,4 +173,4 @@ docker rm -f $(docker ps -a --format '{{.ID}} {{.Label "com.docker.compose.proje
 
 ### Podman test failures
 
-If you don't have Podman installed, `cli.podman.test.ts` will fail with `spawn podman ENOENT`. This is safe to ignore — CI will run them. See [Local setup](#option-b-local-setup) for details on installing Podman or skipping these tests.
+If you don't have Podman installed, `cli.podman.test.ts` will fail with `spawn podman ENOENT`. This is safe to ignore - CI will run them. See [Local setup](#option-b-local-setup) for details on installing Podman or skipping these tests.

@@ -13,7 +13,7 @@
 import type { ChildProcess } from "node:child_process";
 import { createConnection } from "node:net";
 import type { Host } from "../host/host";
-import { dockerSpawn } from "../utils/dockerUtils";
+import { dockerSpawn, childPipes } from "../utils/dockerUtils";
 
 export interface ISshAgentForwarder {
   setupSshAgentForwarding(
@@ -30,7 +30,7 @@ export interface SshAgentForwarderOptions {
    * If not provided, reads from process.env.SSH_AUTH_SOCK.
    */
   hostSshAuthSock?: string;
-  host?: Host;
+  host: Host;
 }
 
 /** Path inside the container where the forwarded SSH agent socket will be placed */
@@ -61,9 +61,9 @@ export class SshAgentForwarder implements ISshAgentForwarder {
   private readonly hostSshAuthSock: string | undefined;
   private relayProcess: ChildProcess | null = null;
 
-  constructor(options?: SshAgentForwarderOptions) {
+  constructor(options: SshAgentForwarderOptions) {
     this.dockerPath = options?.dockerPath ?? "docker";
-    this.host = options?.host!;
+    this.host = options.host;
     this.hostSshAuthSock =
       options?.hostSshAuthSock ?? process.env.SSH_AUTH_SOCK;
   }
@@ -116,11 +116,13 @@ export class SshAgentForwarder implements ISshAgentForwarder {
         }
       });
 
+      const pipes = childPipes(child);
+
       // Wait for READY signal on stdout before connecting host side
       const onData = (chunk: Buffer) => {
         const text = chunk.toString();
         if (text.includes("READY")) {
-          child.stdout!.removeListener("data", onData);
+          pipes.stdout.removeListener("data", onData);
           if (settled) return;
           settled = true;
 
@@ -129,13 +131,13 @@ export class SshAgentForwarder implements ISshAgentForwarder {
             child.kill();
           });
 
-          child.stdout!.pipe(hostConn);
-          hostConn.pipe(child.stdin!);
+          pipes.stdout.pipe(hostConn);
+          hostConn.pipe(pipes.stdin);
           resolve();
         }
       };
 
-      child.stdout!.on("data", onData);
+      pipes.stdout.on("data", onData);
 
       child.on("exit", () => {
         if (!settled) {

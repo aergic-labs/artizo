@@ -9,6 +9,9 @@
  */
 
 import * as vscode from "vscode";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { getLogger } from "./utils/logger";
 import { BRAND } from "./utils/constants";
 import { Host } from "./host/host";
@@ -24,6 +27,7 @@ import {
 } from "./host/services";
 import { registerCoreCommands, type CommandContext } from "./host/commands";
 import { bootstrapRemoteSideLoad } from "./remote/sideload";
+import { clearAllCached } from "./ssh/askpassCache";
 
 import type { LogOutputTerminal } from "./workflows/logOutputTerminal";
 import {
@@ -104,7 +108,7 @@ export async function activate(
         cancellable: false,
       },
       (p) =>
-        bootstrapRemoteSideLoad(context, detected, status, p).catch((err) => {
+        bootstrapRemoteSideLoad(context, detected, status, p).catch(async (err) => {
           const msg = err instanceof Error ? err.message : String(err);
           try {
             getLogger().error(
@@ -118,9 +122,6 @@ export async function activate(
           // Also write to the diag log so we see the failure even when the
           // logger isn't up yet.
           try {
-            const fs = require("node:fs");
-            const os = require("node:os");
-            const path = require("node:path");
             fs.appendFileSync(
               path.join(os.tmpdir(), "artizo-sideload.log"),
               `[${new Date().toISOString()}] CATCH in activate: ${msg}\n`,
@@ -130,9 +131,15 @@ export async function activate(
           }
           status.text = "$(error) Artizo: setup failed - see log";
           status.tooltip = msg;
-          vscode.window.showErrorMessage(
+          const action = await vscode.window.showErrorMessage(
             "Artizo remote setup failed. Check the log for details.",
+            "Retry",
           );
+          if (action === "Retry") {
+            await vscode.commands.executeCommand(
+              "workbench.action.reloadWindow",
+            );
+          }
           throw err;
         }),
     );
@@ -288,5 +295,11 @@ export function deactivate(): void {
     getLogger().info(`${BRAND} deactivating...`);
   } catch {
     // Logger may not be initialized if activation failed
+  }
+  // Clear cached SSH passwords/passphrases.
+  try {
+    clearAllCached();
+  } catch {
+    // ignore
   }
 }

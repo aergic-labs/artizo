@@ -37,7 +37,7 @@ export async function rebuildContainer(
   const { workspaceFolder, workspaceUri, noCache, reconnect } = params;
 
   let configResult: ReadConfigResult | undefined;
-  let perContainerDisable = false;
+  let perContainerDisable: boolean;
 
   try {
     // Phase 1: Config

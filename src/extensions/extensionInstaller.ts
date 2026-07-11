@@ -75,7 +75,7 @@ export type LocalExtensionProvider = (extId: string) => string | undefined;
 export interface ExtensionInstallerOptions {
   dockerPath?: string;
   marketplaceOptions?: MarketplaceClientOptions;
-  host?: Host;
+  host: Host;
   /**
    * Override the container-side extensions directory.
    * Defaults to resolving via the platform adapter.
@@ -104,9 +104,9 @@ export class ExtensionInstaller {
   // filesystem scans when installing multiple extensions.
   private localExtCache = new Map<string, string | undefined>();
 
-  constructor(options?: ExtensionInstallerOptions) {
+  constructor(options: ExtensionInstallerOptions) {
     this.dockerPath = options?.dockerPath ?? "docker";
-    this.host = options?.host!;
+    this.host = options.host;
     this.marketplace = new MarketplaceClient(options?.marketplaceOptions);
     this.extensionsDirOverride = options?.extensionsDir;
     this.localExtensionProvider =

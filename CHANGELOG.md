@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.0
+
+- ExecServer bridge replaces ssh -L tunnel when zygos is the
+ resolver, eliminating the second SSH auth and password prompt
+- Lazy-load sidebar data on visibility instead of eager fetch
+- Lazy-create build terminal on first show() with header to fix
+ empty terminal on first build
+- Sidebar "Show Log" now opens diagnostics output, not build terminal
+- Exclude aergic.zygos-* from extension list in devcontainer.json
+ editor
+- Downgrade getServerInstallRoot log to debug
+- Fix socket resume race in bridge
+
 ## 0.3.0
 
 - SSH remote support: open folders on a remote SSH host and run

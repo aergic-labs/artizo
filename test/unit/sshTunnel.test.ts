@@ -6,7 +6,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as net from "node:net";
 
-// Mock vscode (required by the logger import chain)
+// Mock vscode (required by the logger import chain and sshTunnel's
+// onDidChangeWindowState listener)
 vi.mock("vscode", () => ({
   window: {
     createOutputChannel: vi.fn(() => ({
@@ -14,6 +15,7 @@ vi.mock("vscode", () => ({
       show: vi.fn(),
       dispose: vi.fn(),
     })),
+    onDidChangeWindowState: vi.fn(() => ({ dispose: vi.fn() })),
   },
 }));
 
@@ -98,7 +100,7 @@ describe("sshTunnel", () => {
       try {
         const result = await startSshTunnel({
           sshHost: "34.136.190.14",
-          sshUser: "kerry",
+          sshUser: "dev",
           remotePort: 9888,
           localPort,
         });
@@ -112,7 +114,7 @@ describe("sshTunnel", () => {
         // Verify the args contain the key options
         expect(args).toContain("-L");
         expect(args).toContain(`${localPort}:127.0.0.1:9888`);
-        expect(args).toContain("kerry@34.136.190.14");
+        expect(args).toContain("dev@34.136.190.14");
         expect(args).toContain("-N");
         expect(args).toContain("-E");
         // The -E arg should be followed by a path containing "artizo"

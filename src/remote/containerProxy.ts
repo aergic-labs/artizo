@@ -49,8 +49,8 @@ export interface ProxyAuthorityInfo {
   /** Workspace path inside the container (e.g. /workspaces). */
   workspacePath: string;
   /**
-   * Workspace path on the SSH host (e.g. /home/kerry/test-folder). Used by
-   * "Reopen in Host" to reopen the SSH-remote folder, not the container.
+   * Workspace path on the SSH host. Used by "Reopen in Host" to reopen
+   * the SSH-remote folder, not the container.
    */
   hostWorkspacePath: string;
   /**
@@ -258,7 +258,7 @@ export function sweepStaleRelays(): number {
 /**
  * Decode an SSH remote authority (`ssh-remote+<hex>`) to extract host and user.
  *
- * The hex payload is a JSON object like `{"hostName":"34.136.190.14","user":"kerry"}`.
+ * The hex payload is a JSON object like `{"hostName":"34.136.190.14","user":"dev"}`.
  * Returns undefined if the authority isn't an SSH remote or can't be decoded.
  */
 export function decodeSshAuthority(
@@ -399,6 +399,7 @@ const MAX_FAILURES = ${maxFailures};
 
 let consecutiveFailures = 0;
 let idleTimer = null;
+let activeConnections = 0;
 
 function resetIdleTimer() {
   if (idleTimer) clearTimeout(idleTimer);
@@ -418,6 +419,7 @@ fs.writeFileSync(PID_FILE, String(process.pid));
 
 const server = net.createServer({ pauseOnConnect: true }, (socket) => {
   consecutiveFailures = 0; // connection arrived, reset failure count
+  activeConnections++;
   if (idleTimer) clearTimeout(idleTimer);
 
   const child = spawn(
@@ -429,9 +431,17 @@ const server = net.createServer({ pauseOnConnect: true }, (socket) => {
   socket.pipe(child.stdin);
   child.stdout.pipe(socket);
 
+  // done() runs once per connection (socket close/error and child error/exit
+  // all call it). When the last connection ends, re-arm the idle timer so the
+  // daemon can still exit after being idle - it was only cleared on connect.
+  let finished = false;
   const done = () => {
+    if (finished) return;
+    finished = true;
     try { child.kill("SIGTERM"); } catch {}
     try { socket.destroy(); } catch {}
+    activeConnections--;
+    if (activeConnections <= 0) resetIdleTimer();
   };
 
   socket.on("close", done);

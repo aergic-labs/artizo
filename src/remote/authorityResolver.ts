@@ -25,6 +25,8 @@ import {
 import type { IServerManager } from "./serverManager";
 import type { ProxyAuthorityInfo } from "./containerProxy";
 import { startManagedSshTunnel, type TunnelController } from "./sshTunnel";
+import { startExecServerBridge, type ExecServer as ExecServerLike } from "./execServerBridge";
+import { startAskpass } from "../ssh/askpass";
 
 /** File-based logger that works regardless of window state. */
 const LOG_FILE = path.join(os.tmpdir(), "artizo-resolver.log");
@@ -80,6 +82,8 @@ const LABEL_LOCAL_FOLDER_SPEC = "devcontainer.local_folder";
 export interface AuthorityResolverOptions {
   dockerPath?: string;
   serverManager?: IServerManager;
+  /** Extension install path - used to locate the askpass scripts. */
+  extensionPath?: string;
 }
 
 /**
@@ -95,6 +99,8 @@ export class RemoteAuthorityResolver {
   private readonly dockerPath: string;
   private serverManager: IServerManager | undefined;
   private forwardServer: net.Server | undefined;
+  /** Extension install path (for locating bundled askpass scripts). */
+  private readonly extensionPath: string | undefined;
   /**
    * Active SSH tunnels keyed by the local port returned to VS Code. Allows
    * `dispose()` to tear down tunnels (and stop respawn) on extension
@@ -105,6 +111,7 @@ export class RemoteAuthorityResolver {
   constructor(options?: AuthorityResolverOptions) {
     this.dockerPath = options?.dockerPath ?? "docker";
     this.serverManager = options?.serverManager;
+    this.extensionPath = options?.extensionPath;
     logToFile("=== RemoteAuthorityResolver created ===");
   }
 
@@ -204,6 +211,46 @@ export class RemoteAuthorityResolver {
   }
 
   /**
+   * Try to get an ExecServer from the SSH resolver via the proposed API.
+   * Returns undefined if the API is unavailable or the resolver doesn't
+   * implement resolveExecServer.
+   */
+  private async tryGetExecServer(
+    sshAuthority: string,
+  ): Promise<ExecServerLike | undefined> {
+    logToFile(`[Resolver] trying getRemoteExecServer for authority: ${sshAuthority}`);
+    try {
+      const getExecServer = (vscode.workspace as unknown as {
+        getRemoteExecServer?: (authority: string) => Promise<ExecServerLike | undefined>;
+      }).getRemoteExecServer;
+      if (typeof getExecServer !== "function") {
+        logToFile("[Resolver] getRemoteExecServer API not available (not a function)");
+        return undefined;
+      }
+      const execServer = await getExecServer.call(vscode.workspace, sshAuthority);
+      if (execServer) {
+        const hasSpawn = typeof execServer.spawn === "function";
+        const hasTcpConnect = typeof execServer.tcpConnect === "function";
+        const hasFs = !!execServer.fs;
+        logToFile(
+          `[Resolver] ExecServer available: spawn=${hasSpawn} tcpConnect=${hasTcpConnect} fs=${hasFs}`,
+        );
+        if (!hasTcpConnect) {
+          logToFile("[Resolver] ExecServer has no tcpConnect, cannot use for bridge");
+          return undefined;
+        }
+        return execServer;
+      }
+      logToFile("[Resolver] getRemoteExecServer returned undefined (resolver does not implement resolveExecServer)");
+    } catch (err: unknown) {
+      logToFile(
+        `[Resolver] getRemoteExecServer threw: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return undefined;
+  }
+
+  /**
    * State 4 proxy path. The authority was encoded by the workspace-side
    * extension (running on the SSH host) with the relay daemon's listener
    * port, the container's connection token, and the SSH endpoint. The apex
@@ -211,7 +258,12 @@ export class RemoteAuthorityResolver {
    * the relay on the SSH host, then returns `127.0.0.1:<local_port>` so VS
    * Code connects through the tunnel. No Docker lookup happens here.
    *
-   * Tunnels are tracked in `this.tunnels` for cleanup on `dispose()`.
+   * When the SSH resolver implements resolveExecServer (zygos), an
+   * ExecServer bridge is used instead of ssh -L. No ssh process spawned,
+   * no askpass, no password prompt.
+   *
+   * Tunnels and bridges are tracked in `this.tunnels` for cleanup on
+   * `dispose()`.
    */
   private async resolveViaProxy(
     proxy: ProxyAuthorityInfo,
@@ -219,32 +271,126 @@ export class RemoteAuthorityResolver {
     logToFile(
       `[Resolver] proxy payload: ssh=${proxy.sshUser}@${proxy.sshHost} relayPort=${proxy.relayPort} token=${proxy.connectionToken} workspace=${proxy.workspacePath}`,
     );
+
+    // Try ExecServer first. When the SSH resolver implements
+    // resolveExecServer (zygos does), we get an already-authenticated
+    // connection. No ssh -L tunnel, no askpass, no password prompt.
+    const execServer = await this.tryGetExecServer(proxy.sshAuthority);
+    if (execServer) {
+      logToFile(`[Resolver] using ExecServer bridge for relayPort=${proxy.relayPort}`);
+      try {
+        const controller = await startExecServerBridge(
+          execServer,
+          "127.0.0.1",
+          proxy.relayPort,
+        );
+        const localPort = controller.localPort;
+        this.tunnels.set(localPort, controller);
+        logToFile(
+          `[Resolver] execServer bridge up: 127.0.0.1:${localPort} -> 127.0.0.1:${proxy.relayPort} (via ExecServer)`,
+        );
+        return {
+          type: "success",
+          authority: {
+            host: "127.0.0.1",
+            port: localPort,
+            connectionToken: proxy.connectionToken,
+          },
+        };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        logToFile(`[Resolver] execServer bridge failed: ${message}`);
+        const action = await vscode.window.showErrorMessage(
+          `Artizo remote setup failed: ${message}`,
+          "Retry",
+        );
+        if (action === "Retry") {
+          await vscode.commands.executeCommand(
+            "workbench.action.reloadWindow",
+          );
+        }
+        return {
+          type: "error",
+          message: `Artizo execServer bridge failed: ${message}`,
+        };
+      }
+    }
+
+    // Fallback: ssh -L tunnel with askpass.
+    logToFile("[Resolver] ExecServer unavailable, falling back to ssh -L tunnel");
+    let askpassOwned = false;
+    let askpass: Awaited<ReturnType<typeof startAskpass>>;
     try {
-      const controller = await startManagedSshTunnel({
-        sshHost: proxy.sshHost,
-        sshUser: proxy.sshUser,
-        remotePort: proxy.relayPort,
-      });
-      const localPort = controller.localPort;
-      this.tunnels.set(localPort, controller);
-      logToFile(
-        `[Resolver] tunnel up: 127.0.0.1:${localPort} -> ${proxy.sshUser}@${proxy.sshHost}:127.0.0.1:${proxy.relayPort}`,
-      );
-      return {
-        type: "success",
-        authority: {
-          host: "127.0.0.1",
-          port: localPort,
-          connectionToken: proxy.connectionToken,
-        },
-      };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      logToFile(`[Resolver] proxy tunnel failed: ${message}`);
-      return {
-        type: "error",
-        message: `Artizo SSH tunnel failed: ${message}`,
-      };
+      askpass = this.extensionPath
+        ? await startAskpass(this.extensionPath, {
+            title: `Artizo: SSH password for ${proxy.sshHost}`,
+            modalPrompt: true,
+          })
+        : undefined;
+      try {
+        const controller = await startManagedSshTunnel({
+          sshHost: proxy.sshHost,
+          sshUser: proxy.sshUser,
+          remotePort: proxy.relayPort,
+          askpass,
+        });
+        const localPort = controller.localPort;
+        // Tear down the askpass server alongside the tunnel so we don't
+        // leave a listening socket/pipe orphaned on extension deactivation.
+        if (askpass) {
+          askpassOwned = true;
+          const askpassServer = askpass.server;
+          const originalStop = controller.stop.bind(controller);
+          controller.stop = () => {
+            originalStop();
+            void askpassServer.stop().catch(() => {
+              /* best effort */
+            });
+          };
+        }
+        this.tunnels.set(localPort, controller);
+        logToFile(
+          `[Resolver] tunnel up: 127.0.0.1:${localPort} -> ${proxy.sshUser}@${proxy.sshHost}:127.0.0.1:${proxy.relayPort}`,
+        );
+        return {
+          type: "success",
+          authority: {
+            host: "127.0.0.1",
+            port: localPort,
+            connectionToken: proxy.connectionToken,
+          },
+        };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        logToFile(`[Resolver] proxy tunnel failed: ${message}`);
+        // Evict host passwords so a retry re-prompts instead of reusing
+        // a bad password.
+        if (askpass?.server.usedHostPassword) {
+          logToFile("[Resolver] evicting host password cache entries");
+          askpass.server.evictHostPasswords();
+        }
+        const action = await vscode.window.showErrorMessage(
+          `Artizo SSH tunnel failed: ${message}`,
+          "Retry",
+        );
+        if (action === "Retry") {
+          await vscode.commands.executeCommand(
+            "workbench.action.reloadWindow",
+          );
+        }
+        return {
+          type: "error",
+          message: `Artizo SSH tunnel failed: ${message}`,
+        };
+      }
+    } finally {
+      // Stop the askpass server only if the controller didn't take
+      // ownership of its lifecycle (i.e. the tunnel failed).
+      if (askpass && !askpassOwned) {
+        await askpass.server.stop().catch(() => {
+          /* best effort */
+        });
+      }
     }
   }
 
@@ -451,9 +597,7 @@ function tryParseProxyPayload(id: string): ProxyAuthorityInfo | undefined {
   if (typeof parsed.relayPort !== "number") return undefined;
   if (typeof parsed.connectionToken !== "string") return undefined;
   if (typeof parsed.workspacePath !== "string") return undefined;
-  // hostWorkspacePath + sshAuthority were added later for "Reopen in Host".
-  // Tolerate their absence so older payloads (e.g. from a prior install on
-  // the SSH host) still resolve the container, just without host-reopen.
+  // hostWorkspacePath + sshAuthority are optional (added later).
   const hostWorkspacePath =
     typeof parsed.hostWorkspacePath === "string"
       ? parsed.hostWorkspacePath

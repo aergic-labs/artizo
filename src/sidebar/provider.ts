@@ -94,10 +94,17 @@ export class SidebarProvider
     }
     this._pendingMessages = [];
 
-    this.configEdit.loadConfig(true);
-    this.refreshContainers();
-    this.refreshVolumes();
-    void this.refreshCommands();
+    // Lazy load: data is fetched when the webview becomes visible.
+    // The ready message fires when JS loads (even if hidden), gated on
+    // visibility there. If hidden at ready, onDidChangeVisibility picks up.
+    this._disposables.push(
+      webviewView.onDidChangeVisibility(() => {
+        if (this._view?.visible) {
+          this.loadData();
+        }
+      }),
+    );
+
 
     // Reload config whenever devcontainer.json is saved to disk.
     // Catches manual user edits, AI writes, and git changes - not just
@@ -137,6 +144,14 @@ export class SidebarProvider
    */
   loadConfig(checkErrors = false): Promise<void> {
     return this.configEdit.loadConfig(checkErrors);
+  }
+
+  /** Load config, containers, volumes, and commands. Called on first visibility. */
+  private loadData(): void {
+    this.configEdit.loadConfig();
+    this.refreshContainers();
+    this.refreshVolumes();
+    void this.refreshCommands();
   }
 
   dispose(): void {
@@ -204,10 +219,9 @@ export class SidebarProvider
     ) => void | Promise<void>;
   }> = {
     ready: () => {
-      this.configEdit.loadConfig();
-      this.refreshContainers();
-      this.refreshVolumes();
-      this.refreshCommands();
+      if (this._view?.visible) {
+        this.loadData();
+      }
     },
     toggleSoftware: (m) =>
       this.configEdit.toggleSoftware(m.featureRef, m.enabled),

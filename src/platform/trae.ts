@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+import * as vscode from "vscode";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
@@ -41,7 +42,6 @@ async function detectCdnBase(): Promise<string> {
 
 function readCdnConfig(): Record<string, string> {
   try {
-    const vscode = require("vscode");
     const productPath = path.join(vscode.env.appRoot, "product.json");
     if (fs.existsSync(productPath)) {
       const product = JSON.parse(fs.readFileSync(productPath, "utf-8"));
@@ -155,9 +155,6 @@ export class TraeAdapter implements IPlatformAdapter {
 
   isValidRuntime(): boolean {
     try {
-      const vscode = require("vscode");
-      const fs = require("node:fs");
-      const path = require("node:path");
       const productPath = path.join(vscode.env.appRoot, "product.json");
       const product = JSON.parse(fs.readFileSync(productPath, "utf-8"));
       const appName: string = (product?.applicationName ?? "").toLowerCase();

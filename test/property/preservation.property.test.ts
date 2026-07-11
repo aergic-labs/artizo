@@ -4,40 +4,16 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import vscodeMock from "../__mocks__/vscode";
 
-vi.mock("vscode", () => ({
-  window: {
-    createTerminal: vi
-      .fn()
-      .mockReturnValue({ show: vi.fn(), dispose: vi.fn() }),
-    withProgress: vi.fn(),
-  },
-  commands: { executeCommand: vi.fn() },
-  EventEmitter: vi.fn().mockImplementation(() => ({
-    event: vi.fn(),
-    fire: vi.fn(),
-    dispose: vi.fn(),
-  })),
-  ProgressLocation: { Notification: 15 },
-  Uri: { parse: (s: string) => ({ toString: () => s }) },
-  workspace: { workspaceFolders: [{ uri: { fsPath: "/test/workspace" } }] },
-}));
+vi.mock("vscode", () => ({ default: vscodeMock, ...vscodeMock }));
 
 import * as fc from "fast-check";
 
 /**
- * Preservation property tests. These verify existing correct behavior
- * that MUST be preserved through the bugfix.
+ * Preservation property tests. These verify current behavior that must not
+ * regress through future changes.
  */
-
-// Mock vscode module (required by authorityResolver.ts)
-vi.mock("vscode", () => ({
-  Uri: {
-    parse: (s: string) => ({ toString: () => s }),
-  },
-  workspace: {},
-  commands: {},
-}));
 
 // Mock node:child_process for authorityResolver's internal execFilePromise
 const mockExecFile = vi.fn();
@@ -187,8 +163,10 @@ describe("Property 2.2: Container lookup by ID", () => {
 
           expect(result.type).toBe("success");
           if (result.type === "success") {
-            // The current (unfixed) code returns host=containerId, port=0
-            // This is the EXISTING behavior we're preserving for container lookup
+            // With no serverManager injected, resolveContainerById falls back
+            // to host=containerId, port=0. The production path injects a
+            // serverManager and returns 127.0.0.1 + a forwarded port + token
+            // (see bugCondition.property.test.ts property 1.3).
             expect(result.authority.host).toBe(containerId);
             expect(result.authority.port).toBe(0);
           }

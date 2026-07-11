@@ -620,12 +620,5 @@ export function registerCoreCommands(
     ),
   );
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand("artizo.explorer.refresh", () => {
-      ctx.sidebarProvider.expandSection("containers");
-    }),
-    vscode.commands.registerCommand("artizo.volumes.refresh", () => {
-      ctx.sidebarProvider.expandSection("volumes");
-    }),
-  );
+  // Explorer refresh commands are registered by ContainerExplorerProvider.register().
 }

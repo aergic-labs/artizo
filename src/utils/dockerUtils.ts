@@ -10,6 +10,7 @@ import {
   spawn,
   type ChildProcess,
   type SpawnOptions,
+  type ExecFileException,
 } from "node:child_process";
 import type { Socket } from "node:net";
 
@@ -49,6 +50,14 @@ export interface ContainerInfo {
   networkSettings: {
     ports: Record<string, Array<{ hostIp: string; hostPort: string }> | null>;
   };
+}
+
+/** Raw mount entry from `docker inspect` JSON. */
+interface DockerMountRaw {
+  Type: string;
+  Source: string;
+  Destination: string;
+  Mode: string;
 }
 
 /** Image-level architecture fields from `docker inspect <image>`. */
@@ -142,7 +151,7 @@ export async function dockerInspect(
       env: raw.Config?.Env ?? [],
       workingDir: raw.Config?.WorkingDir ?? "",
     },
-    mounts: (raw.Mounts || []).map((m: any) => ({
+    mounts: (raw.Mounts || []).map((m: DockerMountRaw) => ({
       type: m.Type,
       source: m.Source,
       destination: m.Destination,
@@ -166,11 +175,43 @@ export async function isContainerRunning(
   }
 }
 
+/**
+ * Return a spawned child's stdio pipes, asserting they exist. `spawn` with
+ * `stdio: ['pipe','pipe','pipe']` always creates them, but the types are
+ * nullable (they'd be null for 'ignore'/'inherit'), so this turns a would-be
+ * bare NPE into a descriptive error if stdio is ever misconfigured or the
+ * process fails to expose its pipes.
+ */
+export function childPipes(child: ChildProcess): {
+  stdin: NonNullable<ChildProcess["stdin"]>;
+  stdout: NonNullable<ChildProcess["stdout"]>;
+  stderr: NonNullable<ChildProcess["stderr"]>;
+} {
+  if (!child.stdin || !child.stdout || !child.stderr) {
+    throw new Error(
+      "Child process stdio pipes are unavailable (spawn failed or stdio was not 'pipe')",
+    );
+  }
+  return { stdin: child.stdin, stdout: child.stdout, stderr: child.stderr };
+}
+
 // Pipe a local socket bidirectionally to a docker exec child process.
 // Cleans up on both sides.
 export function pipeDockerRelay(child: ChildProcess, socket: Socket): void {
-  socket.pipe(child.stdin!);
-  child.stdout!.pipe(socket);
+  // With stdio 'pipe' these are always present; guard defensively so a
+  // misconfigured/failed spawn tears the relay down cleanly rather than
+  // throwing a bare NPE inside the connection handler.
+  if (!child.stdin || !child.stdout) {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* already dead */
+    }
+    socket.destroy();
+    return;
+  }
+  socket.pipe(child.stdin);
+  child.stdout.pipe(socket);
 
   socket.on("close", () => {
     try {
@@ -228,17 +269,24 @@ export function execFilePromise(
   args: string[],
 ): Promise<ExecResult> {
   return new Promise((resolve) => {
-    execFile(command, args, (error: any, stdout: string, stderr: string) => {
-      if (error) {
-        resolve({
-          exitCode: error.status ?? error.code ?? 1,
-          stdout: error.stdout ?? stdout ?? "",
-          stderr: error.stderr ?? stderr ?? "",
-        });
-      } else {
-        resolve({ exitCode: 0, stdout: stdout ?? "", stderr: stderr ?? "" });
-      }
-    });
+    execFile(
+      command,
+      args,
+      (error: ExecFileException | null, stdout: string, stderr: string) => {
+        if (error) {
+          // `error.code` is the numeric exit code (or a string like "ENOENT"
+          // for spawn failures). Use 1 as the failure sentinel for non-numeric.
+          const exitCode = typeof error.code === "number" ? error.code : 1;
+          resolve({
+            exitCode,
+            stdout: error.stdout ?? stdout ?? "",
+            stderr: error.stderr ?? stderr ?? "",
+          });
+        } else {
+          resolve({ exitCode: 0, stdout: stdout ?? "", stderr: stderr ?? "" });
+        }
+      },
+    );
   });
 }
 

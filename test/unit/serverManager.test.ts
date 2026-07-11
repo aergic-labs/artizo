@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../src/utils/logger", () => ({
-  getLogger: () => ({ info: vi.fn(), error: vi.fn() }),
+  getLogger: () => ({ info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), show: vi.fn(), append: vi.fn() }),
 }));
 
 vi.mock("node:fs", async () => ({

@@ -51,7 +51,7 @@ export async function reportProvisionFailure(
   ctx.buildLogTerminal.show(true);
 
   const ai = await getAiAssist();
-  let aiAvailable = false;
+  let aiAvailable: boolean;
   try {
     aiAvailable = await ai.isAvailable();
   } catch {

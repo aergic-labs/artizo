@@ -3,9 +3,12 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import vscodeMock from "../__mocks__/vscode";
 import { VSCodiumAdapter } from "../../src/platform/vscodium";
 import type { PlatformConfig } from "../../src/platform/types";
+
+vi.mock("vscode", () => ({ default: vscodeMock, ...vscodeMock }));
 
 const BASE_CONFIG: PlatformConfig = {
   name: "VSCodium",

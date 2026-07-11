@@ -13,6 +13,11 @@
 
 import type { ConfigToggles, SoftwareFeature } from "./messages";
 
+/** A devcontainer.json mount entry with an artizoManaged tag. */
+interface ManagedMount extends Record<string, unknown> {
+  artizoManaged?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Option path table
 // ---------------------------------------------------------------------------
@@ -34,9 +39,7 @@ export interface OptionPath {
  * @param homePath - Host home directory, pre-escaped for the current platform
  * @returns Record keyed by feature name
  */
-export function optionPaths(
-  homePath: string,
-): Record<string, OptionPath> {
+export function optionPaths(homePath: string): Record<string, OptionPath> {
   return {
     gpu: { path: ["runArgs", "--gpus", "all"], managed: "gpu" },
     waylandSocket: {
@@ -48,12 +51,7 @@ export function optionPaths(
       managed: "waylandSocket",
     },
     mountHome: {
-      path: [
-        "mounts",
-        `source=${homePath}`,
-        "target=/host-home",
-        "type=bind",
-      ],
+      path: ["mounts", `source=${homePath}`, "target=/host-home", "type=bind"],
       managed: "home",
     },
     privileged: { path: ["runArgs", "--privileged"], managed: "privileged" },
@@ -116,21 +114,21 @@ export function computeRunArgsToggle(
  * @returns The updated mounts array
  */
 export function computeMountsToggle(
-  mounts: Record<string, unknown>[],
+  mounts: ManagedMount[],
   patchPath: string[],
   enabled: boolean,
   managed: string,
-): Record<string, unknown>[] {
+): ManagedMount[] {
   if (enabled) {
     const source = patchPath[1].replace("source=", "");
     const target = patchPath[2].replace("target=", "");
-    const mountEntry: Record<string, unknown> = { source, target };
+    const mountEntry: ManagedMount = { source, target };
     if (patchPath[3] && patchPath[3].startsWith("type=")) {
       mountEntry.type = patchPath[3].replace("type=", "");
     }
     mountEntry.artizoManaged = managed;
 
-    const idx = mounts.findIndex((m) => (m as any).artizoManaged === managed);
+    const idx = mounts.findIndex((m) => m.artizoManaged === managed);
     if (idx >= 0) {
       const updated = [...mounts];
       updated[idx] = mountEntry;
@@ -139,7 +137,7 @@ export function computeMountsToggle(
     return [...mounts, mountEntry];
   }
 
-  return mounts.filter((m) => (m as any).artizoManaged !== managed);
+  return mounts.filter((m) => m.artizoManaged !== managed);
 }
 
 // ---------------------------------------------------------------------------
@@ -154,9 +152,7 @@ export function computeMountsToggle(
  */
 export function extractToggles(raw: Record<string, unknown>): ConfigToggles {
   const runArgs = (raw.runArgs as string[]) || [];
-  const mounts = (raw.mounts || raw.Mounts || []) as Array<
-    Record<string, unknown>
-  >;
+  const mounts = (raw.mounts || raw.Mounts || []) as ManagedMount[];
   const forwardPortsRaw = (raw.forwardPorts as (number | string)[]) || [];
   const forwardPorts: { port: number; label: string }[] = forwardPortsRaw.map(
     (p) => {
@@ -177,12 +173,10 @@ export function extractToggles(raw: Record<string, unknown>): ConfigToggles {
 
   return {
     gpu: runArgs.includes("--gpus"),
-    waylandSocket: mounts.some(
-      (m) => (m as any).artizoManaged === "waylandSocket",
-    ),
-    mountHome: mounts.some((m) => (m as any).artizoManaged === "home"),
+    waylandSocket: mounts.some((m) => m.artizoManaged === "waylandSocket"),
+    mountHome: mounts.some((m) => m.artizoManaged === "home"),
     privileged: runArgs.includes("--privileged"),
-    sshAgent: mounts.some((m) => (m as any).artizoManaged === "sshAgent"),
+    sshAgent: mounts.some((m) => m.artizoManaged === "sshAgent"),
     copyGitConfig: !(raw.disableCopyGitConfig as boolean),
     forwardPorts,
     extensions,

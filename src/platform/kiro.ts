@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+import * as vscode from "vscode";
 import * as os from "node:os";
 import * as path from "node:path";
 import { existsSync, readFileSync } from "node:fs";
@@ -76,11 +77,8 @@ export class KiroAdapter implements IPlatformAdapter {
 
   isValidRuntime(): boolean {
     try {
-      const vscode = require("vscode");
-      const fs = require("node:fs");
-      const path = require("node:path");
       const productPath = path.join(vscode.env.appRoot, "product.json");
-      const product = JSON.parse(fs.readFileSync(productPath, "utf-8"));
+      const product = JSON.parse(readFileSync(productPath, "utf-8"));
       const appName: string = (product?.applicationName ?? "").toLowerCase();
       return appName.includes("kiro");
     } catch {

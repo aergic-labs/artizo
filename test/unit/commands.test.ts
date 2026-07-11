@@ -857,8 +857,6 @@ describe("command handlers", () => {
           "artizo.rebuildContainerNoCache",
           "artizo.reopenInHost",
           "artizo.closeRemoteConnection",
-          "artizo.explorer.refresh",
-          "artizo.volumes.refresh",
         ]),
       );
     });
@@ -869,29 +867,23 @@ describe("command handlers", () => {
 
       registerCoreCommands(context, ctx);
 
-      // 7 raw registerCommand calls push disposables onto subscriptions.
-      expect(context.subscriptions.length).toBeGreaterThanOrEqual(7);
+      // Raw registerCommand calls (rebuild menu/reopen-in-host/close-remote)
+      // push disposables onto subscriptions.
+      expect(context.subscriptions.length).toBeGreaterThanOrEqual(5);
     });
 
-    it("refresh commands expand the right sidebar section", async () => {
+    it("does not register tree-view refresh commands (owned by ContainerExplorerProvider)", () => {
       const ctx = mockCtx();
       const context = mockContext();
       registerCoreCommands(context, ctx);
 
-      const calls = vi.mocked(vscode.commands.registerCommand).mock.calls;
-      const explorerRefresh = calls.find(
-        (c) => c[0] === "artizo.explorer.refresh",
-      );
-      const volumesRefresh = calls.find(
-        (c) => c[0] === "artizo.volumes.refresh",
-      );
-      await (explorerRefresh![1] as any)();
-      await (volumesRefresh![1] as any)();
-
-      expect(ctx.sidebarProvider.expandSection).toHaveBeenCalledWith(
-        "containers",
-      );
-      expect(ctx.sidebarProvider.expandSection).toHaveBeenCalledWith("volumes");
+      const ids = vi
+        .mocked(vscode.commands.registerCommand)
+        .mock.calls.map((c) => c[0]);
+      // Tree-view refresh moved to ContainerExplorerProvider.register();
+      // registerCoreCommands must not re-register them (would collide).
+      expect(ids).not.toContain("artizo.explorer.refresh");
+      expect(ids).not.toContain("artizo.volumes.refresh");
     });
 
     it("reopenInHost raw handler reports error when reopenInHostHandler throws", async () => {

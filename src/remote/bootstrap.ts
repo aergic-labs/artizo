@@ -13,7 +13,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { get as httpsGet } from "node:https";
 import { getLogger } from "../utils/logger";
-import { dockerSpawn as realDockerSpawn } from "../utils/dockerUtils";
+import {
+  dockerSpawn as realDockerSpawn,
+  childPipes,
+} from "../utils/dockerUtils";
 
 // Constants
 const ARTIZO_BIN = "/tmp/.artizo/bin";
@@ -129,11 +132,12 @@ export class ContainerBootstrap {
         "/tmp/.artizo/bin/busybox --install -s /tmp/.artizo/bin",
     ]);
 
+    const pipes = childPipes(child);
     let stderr = "";
-    child.stderr!.on("data", (c: Buffer) => (stderr += c.toString()));
+    pipes.stderr.on("data", (c: Buffer) => (stderr += c.toString()));
 
-    child.stdin!.write(busyboxBuf);
-    child.stdin!.end();
+    pipes.stdin.write(busyboxBuf);
+    pipes.stdin.end();
 
     const exitCode = await new Promise<number>((resolve) => {
       child.on("close", resolve);
@@ -170,11 +174,12 @@ export class ContainerBootstrap {
       ARTIZO_BIN,
     ]);
 
+    const pipes = childPipes(child);
     let stderr = "";
-    child.stderr!.on("data", (c: Buffer) => (stderr += c.toString()));
+    pipes.stderr.on("data", (c: Buffer) => (stderr += c.toString()));
 
-    child.stdin!.write(tarBuf);
-    child.stdin!.end();
+    pipes.stdin.write(tarBuf);
+    pipes.stdin.end();
 
     const exitCode = await new Promise<number>((resolve) => {
       child.on("close", resolve);
@@ -207,10 +212,11 @@ export class ContainerBootstrap {
     // Spawn first so setup.sh is ready to read from stdin
     const child = this.spawner(this.dockerPath, args);
 
+    const pipes = childPipes(child);
     let stdout = "";
     let stderr = "";
-    child.stdout!.on("data", (c: Buffer) => (stdout += c.toString()));
-    child.stderr!.on("data", (c: Buffer) => (stderr += c.toString()));
+    pipes.stdout.on("data", (c: Buffer) => (stdout += c.toString()));
+    pipes.stderr.on("data", (c: Buffer) => (stderr += c.toString()));
 
     const exitCodePromise = new Promise<number>((resolve) => {
       child.on("close", resolve);
@@ -225,10 +231,10 @@ export class ContainerBootstrap {
     // one `read` before piping the remaining stdin (the tarball) into gzip.
     if (sendToken) {
       const tokenB64 = Buffer.from(authToken!).toString("base64");
-      child.stdin!.write(Buffer.from(`${tokenB64}\n`));
+      pipes.stdin.write(Buffer.from(`${tokenB64}\n`));
     }
-    child.stdin!.write(serverBuf);
-    child.stdin!.end();
+    pipes.stdin.write(serverBuf);
+    pipes.stdin.end();
 
     const exitCode = await exitCodePromise;
 

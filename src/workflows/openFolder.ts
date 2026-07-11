@@ -40,7 +40,7 @@ export async function openFolderInContainer(
   const { configManager } = deps;
 
   let configResult: ReadConfigResult;
-  let perContainerDisable = false;
+  let perContainerDisable: boolean;
 
   try {
     const folder = params.folder ?? (await ui.pickFolder());

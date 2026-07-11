@@ -5,6 +5,7 @@
 
 import * as vscode from "vscode";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 /**
@@ -36,7 +37,7 @@ export class LogOutputTerminal implements vscode.Pseudoterminal {
     this.logPath =
       logPath ||
       path.join(
-        require("node:os").tmpdir(),
+        os.tmpdir(),
         `artizo-${this.sessionStart.toISOString().replace(/[:.]/g, "-")}.log`,
       );
   }

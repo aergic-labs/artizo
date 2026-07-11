@@ -1,4 +1,4 @@
-# Artizo — local development and release automation
+# Artizo - local development and release automation
 # =================================================
 #
 # ── Boundary ───────────────────────────────────────────────────
@@ -23,9 +23,10 @@
 #   make distclean        Nuclear clean (auto-recovers on next make)
 #
 # Make uses sentinel files to auto-resolve dependencies:
-#   node_modules/.package-lock.json   tracks root npm install
-#   vendor/devcontainers-cli/.git      tracks the vendored submodule checkout
-# If either is missing or out-of-date, Make rebuilds it automatically.
+#   node_modules/.package-lock.json                  tracks root npm install
+#   vendor/devcontainers-cli/.git                     tracks the vendored submodule checkout
+#   vendor/devcontainers-cli/node_modules/.package-… tracks vendored CLI dep install
+# If any is missing or out-of-date, Make rebuilds it automatically.
 #
 # Publishing requires:
 #   OVSX_PAT environment variable (Personal Access Token from open-vsx.org)
@@ -37,6 +38,7 @@
 
 NODE_MODULES := node_modules/.package-lock.json
 VENDOR_CLI   := vendor/devcontainers-cli/src/spec-node/devContainers.ts
+VENDOR_NM    := vendor/devcontainers-cli/node_modules/.package-lock.json
 
 # Change this to update the vendored CLI. make does the rest.
 VENDOR_CLI_VERSION := v0.87.0
@@ -55,13 +57,20 @@ $(VENDOR_CLI):
 		rm -rf vendor/devcontainers-cli/node_modules vendor/devcontainers-cli/dist; \
 	fi
 
+# Install the vendored CLI's npm deps so esbuild can resolve imports
+# like `tar`, `proxy-agent`, `ncp`, `shell-quote` when bundling the CLI
+# source directly (no separate compile step). Re-runs after distclean
+# or a version switch removes node_modules.
+$(VENDOR_NM): $(VENDOR_CLI)
+	cd vendor/devcontainers-cli && npm install --ignore-scripts && rm -f package-lock.json
+
 # ── Explicit setup (convenience, equivalent to the chain above) ─
 
 setup: $(VENDOR_CLI)
 
 # ── Quality gates ──────────────────────────────────────────────
 
-check: $(NODE_MODULES) lint test-all
+check: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) lint test-all
 	@echo "=== All checks passed ==="
 
 lint:
@@ -81,7 +90,7 @@ test-coverage:
 
 # ── Build ──────────────────────────────────────────────────────
 
-build: $(NODE_MODULES) $(VENDOR_CLI)
+build: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM)
 	npm run package:kiro
 	npm run package:trae
 	npm run package:devin
@@ -112,7 +121,7 @@ publish:
 
 # ── Clean ──────────────────────────────────────────────────────
 # clean:     removes build artifacts only (dist/, coverage/).
-#            node_modules/ sentinel is untouched — no re-setup needed.
+#            node_modules/ sentinel is untouched - no re-setup needed.
 # distclean: also removes node_modules/ + vendored CLI build.
 #            sentinels are gone → next make auto-recovers.
 

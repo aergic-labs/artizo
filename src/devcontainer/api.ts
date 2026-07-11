@@ -18,6 +18,10 @@ let _vendor: any;
 
 function vendor() {
   if (!_vendor) {
+    // Intentional dynamic require: the vendored CLI is a large in-process
+    // module loaded lazily on first use (not at import time), and is not an
+    // ES module. A static import would eagerly pull it into activation.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     _vendor = require("../../vendor/devcontainers-cli/src/spec-node/devContainers");
   }
   return _vendor;
@@ -61,10 +65,10 @@ export async function launchProvision(
 export interface ProvisionOptions {
   workspaceFolder: string;
   log: (text: string) => void;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
-const defaults: Record<string, any> = {
+const defaults: Record<string, unknown> = {
   dockerPath: "docker",
   logLevel: 1,
   logFormat: "json",
