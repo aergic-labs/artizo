@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+- Fix `updateRemoteUserUID` being ignored in devcontainer.json by
+ defaulting `updateRemoteUserUIDDefault` to `on` instead of `never`
+- Minor doc/build fixes (Makefile wording, VSIX ignores)
+
 ## 0.4.1
 
 - Install REH server to `bin/<reh-commit>/` using the tarball's

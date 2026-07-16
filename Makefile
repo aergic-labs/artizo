@@ -16,9 +16,9 @@
 # Makefile targets:
 #   make setup            Explicit one-time setup (also runs automatically when needed)
 #   make check            Full quality gate (lint + test:all)
-#   make build            Build all three platform VSIX files
+#   make build            Build all platform VSIX files
 #   make release VERSION=x.y.z   Bump version, check, build, tag
-#   make publish          Publish all three VSIX files to Open VSX
+#   make publish          Publish all VSIX files to Open VSX
 #   make clean            Remove build artifacts (safe, no re-setup needed)
 #   make distclean        Nuclear clean (auto-recovers on next make)
 #

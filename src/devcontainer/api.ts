@@ -80,7 +80,7 @@ const defaults: Record<string, unknown> = {
   skipNonBlocking: false,
   prebuild: false,
   additionalMounts: [],
-  updateRemoteUserUIDDefault: "never",
+  updateRemoteUserUIDDefault: "on",
   remoteEnv: {},
   additionalCacheFroms: [],
   useBuildKit: "auto",

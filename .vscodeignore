@@ -20,6 +20,7 @@ tsconfig.json
 tsconfig.test.json
 vitest.config.ts
 esbuild.config.mjs
+eslint.config.mjs
 
 # Development files
 coverage/**
@@ -48,3 +49,4 @@ tmp/
 .zed/
 AGENTS.md
 artizo-summary.md
+nul

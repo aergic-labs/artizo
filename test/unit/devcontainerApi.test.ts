@@ -35,7 +35,7 @@ describe("devcontainer/api", () => {
       expect(result.skipNonBlocking).toBe(false);
       expect(result.prebuild).toBe(false);
       expect(result.additionalMounts).toEqual([]);
-      expect(result.updateRemoteUserUIDDefault).toBe("never");
+      expect(result.updateRemoteUserUIDDefault).toBe("on");
       expect(result.remoteEnv).toEqual({});
       expect(result.additionalCacheFroms).toEqual([]);
       expect(result.useBuildKit).toBe("auto");
@@ -73,6 +73,32 @@ describe("devcontainer/api", () => {
       expect(result.removeExistingContainer).toBe(true);
       // Un-overridden defaults should stay
       expect(result.postCreateEnabled).toBe(true);
+    });
+
+    it("defaults updateRemoteUserUIDDefault to on (matches CLI + spec default)", () => {
+      const log = vi.fn();
+      const result = withDefaults({ workspaceFolder: "/ws", log });
+      expect(result.updateRemoteUserUIDDefault).toBe("on");
+    });
+
+    it("allows overriding updateRemoteUserUIDDefault to off", () => {
+      const log = vi.fn();
+      const result = withDefaults({
+        workspaceFolder: "/ws",
+        log,
+        updateRemoteUserUIDDefault: "off",
+      });
+      expect(result.updateRemoteUserUIDDefault).toBe("off");
+    });
+
+    it("allows overriding updateRemoteUserUIDDefault to never", () => {
+      const log = vi.fn();
+      const result = withDefaults({
+        workspaceFolder: "/ws",
+        log,
+        updateRemoteUserUIDDefault: "never",
+      });
+      expect(result.updateRemoteUserUIDDefault).toBe("never");
     });
 
     it("passes through extra keys", () => {
