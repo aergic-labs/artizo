@@ -142,7 +142,7 @@ function createMockServerManager(
     stop: vi.fn().mockResolvedValue(undefined),
     getStatus: vi.fn().mockResolvedValue(null),
     getCompatibleVersion: vi.fn().mockReturnValue("1.96.0"),
-    getExtensionsDir: vi.fn().mockResolvedValue("/tmp/test-extensions"),
+    getUserExtensionsDir: vi.fn().mockResolvedValue("/tmp/test-extensions"),
     ...overrides,
   };
 }

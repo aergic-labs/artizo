@@ -13,7 +13,7 @@
 import * as vscode from "vscode";
 import * as nodeFs from "node:fs";
 import * as nodePath from "node:path";
-import { initLogger, getLogger, LogLevel } from "../utils/logger";
+import { getLogger } from "../utils/logger";
 import { BRAND } from "../utils/constants";
 import { ConfigManager } from "../config/configManager";
 import { ServerManager } from "../remote/serverManager";
@@ -151,32 +151,17 @@ async function ensureArgvProposedApi(
 }
 
 /**
- * Initialize the log terminal and logger.
- * Returns the Pty and Terminal instances for downstream use.
+ * Create the docker build output terminal - a pseudo-terminal that mirrors
+ * `docker build` / provision output in a familiar colored terminal view.
+ * This is NOT the app logger; diagnostics go through getLogger() to a
+ * LogOutputChannel (initialized in activate). This terminal is a
+ * build-output mirror only.
  */
-export function initializeLogger(context: vscode.ExtensionContext): {
+export function createBuildLogTerminal(context: vscode.ExtensionContext): {
   buildLogPty: LogOutputTerminal;
   buildLogTerminal: { show(preserveFocus?: boolean): void };
 } {
   const logFilePath = nodePath.join(context.logPath, "artizo.log");
-
-  // Authoritative diagnostics sink: a LogOutputChannel in the Output panel.
-  // Always available (no renderer / early-activation gap), reliable, ordered.
-  const channel = vscode.window.createOutputChannel(BRAND, { log: true });
-  context.subscriptions.push(channel);
-
-  const logLevelConfig = vscode.workspace
-    .getConfiguration("artizo")
-    .get<string>("logLevel", "info");
-  const logLevelMap: Record<string, LogLevel> = {
-    info: LogLevel.Info,
-    debug: LogLevel.Debug,
-    trace: LogLevel.Trace,
-  };
-  const level = logLevelMap[logLevelConfig] ?? LogLevel.Info;
-
-  const logger = initLogger(channel);
-  logger.setLevel(level);
 
   // Docker build output is mirrored to a pty terminal for the familiar
   // colored build view. The logger no longer writes here.
@@ -220,21 +205,10 @@ export function initializeLogger(context: vscode.ExtensionContext): {
   // Terminal disposed on extension deactivate (if created).
   context.subscriptions.push({ dispose: () => handle.terminal?.dispose() });
 
-  logger.info(`${BRAND} activating...`);
-  logger.info(`Extension path: ${context.extensionPath}`);
-  logger.info(`Log file: ${logFilePath}`);
-
   // Reveal the build terminal (build output with colors).
   context.subscriptions.push(
     vscode.commands.registerCommand("artizo.revealLogTerminal", () => {
       handle.show();
-    }),
-  );
-
-  // Reveal the diagnostics output channel (sidebar "Show Log" button).
-  context.subscriptions.push(
-    vscode.commands.registerCommand("artizo.revealOutputLog", () => {
-      getLogger().show();
     }),
   );
 
@@ -466,6 +440,8 @@ export function createServices(
   const extensionInstaller = new ExtensionInstaller({
     dockerPath: settings.dockerPath,
     host: host!,
+    getUserExtensionsDir: (containerId) =>
+      serverManager.getUserExtensionsDir(containerId),
     localExtensionProvider: (extId) => {
       const lower = extId.toLowerCase();
       const ext = vscode.extensions.all.find(

@@ -22,6 +22,9 @@ const { mockInitLogger, mockGetLogger, mockLogger } = vi.hoisted(() => ({
     warn: vi.fn(),
     debug: vi.fn(),
     trace: vi.fn(),
+    setLevel: vi.fn(),
+    show: vi.fn(),
+    append: vi.fn(),
   },
 }));
 
@@ -203,7 +206,7 @@ import {
   loadProductInfo,
   autoDetectDevcontainer,
   createServices,
-  initializeLogger,
+  createBuildLogTerminal,
   ensureResolversAvailable,
   validatePlatformRuntime,
   getArgvExtensionId,
@@ -390,14 +393,14 @@ describe("services", () => {
     });
   });
 
-  describe("initializeLogger", () => {
+  describe("createBuildLogTerminal", () => {
     it("creates terminal with branded name", () => {
       const ctx = {
         subscriptions: [],
         logPath: "/logs",
         extensionPath: "/ext",
       } as any;
-      const result = initializeLogger(ctx);
+      const result = createBuildLogTerminal(ctx);
 
       result.buildLogTerminal.show();
 
@@ -406,7 +409,6 @@ describe("services", () => {
       );
       expect(result.buildLogPty).toBeDefined();
       expect(result.buildLogTerminal).toBeDefined();
-      expect(mockInitLogger).toHaveBeenCalled();
     });
 
     it("registers revealLogTerminal command", () => {
@@ -415,7 +417,7 @@ describe("services", () => {
         logPath: "/logs",
         extensionPath: "/ext",
       } as any;
-      initializeLogger(ctx);
+      createBuildLogTerminal(ctx);
 
       expect(vscode.commands.registerCommand).toHaveBeenCalledWith(
         "artizo.revealLogTerminal",
@@ -443,7 +445,7 @@ describe("services", () => {
           }) as any,
       );
 
-      const result = initializeLogger(ctx);
+      const result = createBuildLogTerminal(ctx);
       result.buildLogTerminal.show();
 
       // Should have created a second terminal

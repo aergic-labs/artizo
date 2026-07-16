@@ -12,17 +12,17 @@ import * as vscode from "vscode";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { getLogger } from "./utils/logger";
+import { getLogger, initLogger, LogLevel } from "./utils/logger";
 import { BRAND } from "./utils/constants";
 import { Host } from "./host/host";
 import {
-  initializeLogger,
   validatePlatformRuntime,
   ensureResolversAvailable,
   readSettings,
   registerResolverEarly,
   loadProductInfo,
   createServices,
+  createBuildLogTerminal,
   autoDetectDevcontainer,
 } from "./host/services";
 import { registerCoreCommands, type CommandContext } from "./host/commands";
@@ -51,12 +51,42 @@ import {
 export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
+  // Create the OutputChannel first so all subsequent steps can log to it.
+  // This is the authoritative diagnostics sink - always available (no
+  // renderer / early-activation gap), reliable, ordered. Docker build output
+  // is mirrored to a separate pty terminal (see createBuildLogTerminal).
+  const channel = vscode.window.createOutputChannel(BRAND, { log: true });
+  context.subscriptions.push(channel);
+  initLogger(channel);
+
+  // Apply the configured log level (artizo.logLevel) to the logger.
+  const logLevelConfig = vscode.workspace
+    .getConfiguration("artizo")
+    .get<string>("logLevel", "info");
+  const logLevelMap: Record<string, LogLevel> = {
+    info: LogLevel.Info,
+    debug: LogLevel.Debug,
+    trace: LogLevel.Trace,
+  };
+  getLogger().setLevel(logLevelMap[logLevelConfig] ?? LogLevel.Info);
+
+  // Reveal the diagnostics output channel (sidebar "Show Log" button).
+  context.subscriptions.push(
+    vscode.commands.registerCommand("artizo.revealOutputLog", () => {
+      getLogger().show();
+    }),
+  );
+
+  getLogger().info(`${BRAND} activating...`);
+  getLogger().info(`Extension path: ${context.extensionPath}`);
+  getLogger().info(`Log file: ${path.join(context.logPath, "artizo.log")}`);
+
   // 0. Detect execution tier and cache it. Must happen before any code
   //    queries isInDevContainer()/canDriveDocker()/getTier().
-  //    Logger isn't initialized yet; use console so the diagnostic survives.
   const detected = initTier(context.extension.extensionKind);
-  console.log(
-    `[artizo] tier=${detected.tier} owner=${detected.owner} ` +
+  getLogger().info(
+    `activate enter tier=${detected.tier} ` +
+      `owner=${detected.owner} ` +
       `remoteName=${detected.remoteName ?? "none"} ` +
       `kind=${detected.extensionKind ?? "none"} ` +
       `authority=${detected.remoteAuthority ?? "none"}`,
@@ -67,16 +97,16 @@ export async function activate(
     detected.extensionKind === vscode.ExtensionKind.Workspace &&
     isDevContainerTier(detected.tier)
   ) {
-    console.log(
-      "[artizo] skipping activation: workspace-side inside devcontainer",
+    getLogger().info(
+      "skipping activation: workspace-side inside devcontainer",
     );
     return;
   }
 
   // Unsupported remotes (wsl/codespaces/tunnel): no-op on both sides.
   if (detected.tier === ExecutionTier.UnknownRemote) {
-    console.log(
-      `[artizo] skipping activation: unsupported remote ${detected.remoteName}`,
+    getLogger().info(
+      `skipping activation: unsupported remote ${detected.remoteName}`,
     );
     return;
   }
@@ -116,8 +146,8 @@ export async function activate(
               err instanceof Error ? err : new Error(msg),
             );
           } catch {
-            // Logger may not be initialized; console is the last resort.
-            console.error(`[artizo] remote side-load failed: ${msg}`);
+            // Logger is initialized; this only fails if activate threw
+            // before initLogger, which can't happen now.
           }
           // Also write to the diag log so we see the failure even when the
           // logger isn't up yet.
@@ -156,8 +186,10 @@ export async function activate(
   // 1b. Set context key for package.json when clauses (host vs managed).
   // Deferred to activateInternal after reading productInfo.
 
-  // 2. Init logger
-  const { buildLogPty, buildLogTerminal } = initializeLogger(context);
+  // 2. Init build terminal/pty handle (logger is already up from activate).
+  //    The pty terminal mirrors docker build / provision output in a colored
+  //    terminal view; it is NOT the app logger.
+  const { buildLogPty, buildLogTerminal } = createBuildLogTerminal(context);
 
   try {
     await activateInternal(context, buildLogPty, buildLogTerminal, detected);

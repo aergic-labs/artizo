@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.1
+
+- Install REH server to `bin/<reh-commit>/` using the tarball's
+ product.json commit, not the IDE's
+- Drop `--extensions-dir`; the server discovers user extensions via
+ `--server-data-dir`
+- Reword extension install bullet in READMEs
+- Separate build terminal creation from logger init
+- Skip README.md at VSIX copy stage to avoid case-collision
+
 ## 0.4.0
 
 - ExecServer bridge replaces ssh -L tunnel when zygos is the

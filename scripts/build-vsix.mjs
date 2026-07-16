@@ -194,6 +194,7 @@ try {
     if (SKIP.has(name)) continue;
     if (name.startsWith(".artizo-pack-")) continue;
     if (name.startsWith("package.json.bak") || name.endsWith(".vsix")) continue;
+    if (name.toLowerCase() === "readme.md") continue;
     const src = path.join(root, name);
     const dest = path.join(stageDir, name);
     if (entry.isDirectory()) {
@@ -203,7 +204,6 @@ try {
     }
   }
 
-  // Write vendor README after copy so it replaces any root README.md that was copied
   fs.writeFileSync(path.join(stageDir, "readme.md"), readme);
 
   // Write merged package.json after copy so it replaces the root one

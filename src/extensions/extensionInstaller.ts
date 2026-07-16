@@ -41,7 +41,6 @@ import {
   dockerArchToTargetPlatform,
   hasPlatformVariants,
 } from "./platformDetect";
-import { getPlatformAdapter } from "../platform";
 import { getLogger } from "../utils/logger";
 import { dockerInspect, dockerInspectImage } from "../utils/dockerUtils";
 
@@ -77,10 +76,17 @@ export interface ExtensionInstallerOptions {
   marketplaceOptions?: MarketplaceClientOptions;
   host: Host;
   /**
-   * Override the container-side extensions directory.
-   * Defaults to resolving via the platform adapter.
+   * Override the container-side extensions directory (tests).
+   * In production this is resolved via `getUserExtensionsDir` from
+   * ServerManager, ensuring the installer and server agree.
    */
   extensionsDir?: string;
+  /**
+   * Provider for the container-side user extensions directory.
+   * Wired to `ServerManager.getUserExtensionsDir()` in production so
+   * the installer and server share one source of truth.
+   */
+  getUserExtensionsDir?: (containerId: string) => Promise<string>;
   /**
    * Provider for locally-installed extensions (copy-from-apex path).
    * Defaults to a no-op provider (always download).
@@ -96,6 +102,9 @@ export class ExtensionInstaller {
   private readonly host: Host;
   private readonly marketplace: MarketplaceClient;
   private readonly extensionsDirOverride: string | undefined;
+  private readonly extensionsDirProvider:
+    | ((containerId: string) => Promise<string>)
+    | undefined;
   private readonly localExtensionProvider: LocalExtensionProvider;
   // Cache of resolved target platform per container ID. Avoids
   // repeated docker inspect calls within a single install batch.
@@ -109,6 +118,7 @@ export class ExtensionInstaller {
     this.host = options.host;
     this.marketplace = new MarketplaceClient(options?.marketplaceOptions);
     this.extensionsDirOverride = options?.extensionsDir;
+    this.extensionsDirProvider = options?.getUserExtensionsDir;
     this.localExtensionProvider =
       options?.localExtensionProvider ?? (() => undefined);
   }
@@ -116,20 +126,18 @@ export class ExtensionInstaller {
   /**
    * Resolve the container-side extensions directory.
    *
-   * Uses the explicit override if provided (tests use this), otherwise
-   * derives it from the platform adapter's remote extensions dir
-   * candidates - these encode the `.<name>-server/extensions`
-   * convention per platform.
+   * Explicit override (tests) → provider (ServerManager in production)
+   * → throw. The provider is wired so the installer and server share
+   * one source of truth and can never diverge.
    */
-  private async resolveExtensionsDir(): Promise<string> {
+  private async resolveExtensionsDir(containerId: string): Promise<string> {
     if (this.extensionsDirOverride) return this.extensionsDirOverride;
-    const adapter = await getPlatformAdapter();
-    const installRoot = adapter.getServerInstallRoot?.() ?? "/tmp";
-    const candidates = adapter.getRemoteExtensionsDirCandidates();
-    // Candidates are relative to home (e.g. ".<name>-server/extensions").
-    // The container install root is /tmp, so build an absolute path.
-    const rel = candidates[0] ?? `${adapter.dataFolderName}-server/extensions`;
-    return `${installRoot}/${rel}`;
+    if (this.extensionsDirProvider) {
+      return this.extensionsDirProvider(containerId);
+    }
+    throw new Error(
+      "ExtensionInstaller has no extensions dir provider or override",
+    );
   }
 
   /**
@@ -220,7 +228,7 @@ export class ExtensionInstaller {
     }
 
     const log = getLogger();
-    const extensionsDir = await this.resolveExtensionsDir();
+    const extensionsDir = await this.resolveExtensionsDir(containerId);
 
     // Resolve the full dependency tree, dedup, topo-sort so deps come first.
     // Target platform is resolved lazily: only fetched from docker inspect

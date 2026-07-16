@@ -155,14 +155,13 @@ describe("serverManager", () => {
 
   describe("buildStartCommand", () => {
     const params = {
-      installPath: "/tmp/.kiro-server/abc123",
+      installPath: "/tmp/.kiro-server/bin/abc123",
       binaryName: "kiro-reh",
-      tokenFilePath: "/tmp/.kiro-server/abc123/.connection-token",
-      serverDataDir: "/tmp/.kiro-server/abc123/data",
-      extensionsDir: "/tmp/.kiro-server/extensions",
+      tokenFilePath: "/tmp/.kiro-server/bin/abc123/connection-token",
+      serverDataDir: "/tmp/.kiro-server",
       telemetryLevel: "off",
-      logFile: "/tmp/.kiro-server/abc123/server.log",
-      pidFile: "/tmp/.kiro-server/abc123/server.pid",
+      logFile: "/tmp/.kiro-server/bin/abc123/server.log",
+      pidFile: "/tmp/.kiro-server/bin/abc123/server.pid",
     };
 
     it("returns a sh -c command array", () => {
@@ -174,7 +173,7 @@ describe("serverManager", () => {
 
     it("includes the binary path", () => {
       const cmd = buildStartCommand(params);
-      expect(cmd[2]).toContain("/tmp/.kiro-server/abc123/bin/kiro-reh");
+      expect(cmd[2]).toContain("/tmp/.kiro-server/bin/abc123/bin/kiro-reh");
     });
 
     it("includes standard server flags", () => {
@@ -188,7 +187,7 @@ describe("serverManager", () => {
     it("includes connection token file path", () => {
       const cmd = buildStartCommand(params);
       expect(cmd[2]).toContain(
-        '--connection-token-file "/tmp/.kiro-server/abc123/.connection-token"',
+        '--connection-token-file "/tmp/.kiro-server/bin/abc123/connection-token"',
       );
     });
 
@@ -199,34 +198,20 @@ describe("serverManager", () => {
 
     it("includes the install path in mkdir", () => {
       const cmd = buildStartCommand(params);
-      expect(cmd[2]).toContain('mkdir -m 700 -p "/tmp/.kiro-server/abc123"');
+      expect(cmd[2]).toContain('mkdir -m 700 -p "/tmp/.kiro-server/bin/abc123" "/tmp/.kiro-server"');
     });
 
     it("redirects output to log and captures pid", () => {
       const cmd = buildStartCommand(params);
-      expect(cmd[2]).toContain('> "/tmp/.kiro-server/abc123/server.log" 2>&1');
+      expect(cmd[2]).toContain('> "/tmp/.kiro-server/bin/abc123/server.log" 2>&1');
       expect(cmd[2]).toContain(
-        'echo $! > "/tmp/.kiro-server/abc123/server.pid"',
+        'echo $! > "/tmp/.kiro-server/bin/abc123/server.pid"',
       );
     });
 
     it("uses nohup for background execution", () => {
       const cmd = buildStartCommand(params);
       expect(cmd[2]).toContain("nohup");
-    });
-
-    it("includes --extensions-dir flag", () => {
-      const cmd = buildStartCommand(params);
-      expect(cmd[2]).toContain(
-        '--extensions-dir "/tmp/.kiro-server/extensions"',
-      );
-    });
-
-    it("creates extensions dir in mkdir", () => {
-      const cmd = buildStartCommand(params);
-      expect(cmd[2]).toContain(
-        'mkdir -m 700 -p "/tmp/.kiro-server/abc123" "/tmp/.kiro-server/abc123/data" "/tmp/.kiro-server/extensions"',
-      );
     });
   });
 
@@ -250,9 +235,9 @@ describe("serverManager", () => {
       });
     });
 
-    describe("getExtensionsDir", () => {
+    describe("getUserExtensionsDir", () => {
       it("returns extensions path under the server data folder", async () => {
-        const dir = await manager.getExtensionsDir("container1");
+        const dir = await manager.getUserExtensionsDir("container1");
         expect(dir).toBe(
           `/tmp/${TEST_PRODUCT_INFO.serverDataFolderName}/extensions`,
         );
@@ -293,13 +278,21 @@ describe("serverManager", () => {
 
     describe("isServerBinaryPresent", () => {
       it("returns true when server binary exists at expected path", async () => {
-        setupExecFileResponses([{ stdout: "" }]);
+        setupExecFileResponses([
+          // resolveServerCommit: glob finds product.json with commit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
+          // test -f binaryPath
+          { stdout: "" },
+        ]);
         const present = await manager.isServerBinaryPresent("container1");
         expect(present).toBe(true);
       });
 
       it("returns false when server binary does not exist", async () => {
         setupExecFileResponses([
+          // resolveServerCommit: glob finds nothing
+          { stdout: "", exitCode: 1 },
+          // test -f binaryPath (using IDE commit fallback)
           { stdout: "", stderr: "test failed", exitCode: 1 },
         ]);
         const present = await manager.isServerBinaryPresent("container1");
@@ -312,6 +305,8 @@ describe("serverManager", () => {
         setupExecFileResponses([
           // detectArch: uname -m
           { stdout: "x86_64\n" },
+          // resolveServerCommit: glob finds product.json with commit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // isServerBinaryPresent: test -f bin/kiro-reh
           { stdout: "" },
         ]);
@@ -321,25 +316,33 @@ describe("serverManager", () => {
         expect(info.commit).toBe(TEST_PRODUCT_INFO.commit);
         expect(info.arch).toBe("x64");
         expect(info.installPath).toBe(
-          `/tmp/${TEST_PRODUCT_INFO.serverDataFolderName}`,
+          `/tmp/${TEST_PRODUCT_INFO.serverDataFolderName}/bin/${TEST_PRODUCT_INFO.commit}`,
         );
-        // Only 2 calls: uname + test-f (no download)
-        expect(mockHost.dockerExec).toHaveBeenCalledTimes(2);
+        // Only 3 calls: uname, glob, test-f (no download)
+        expect(mockHost.dockerExec).toHaveBeenCalledTimes(3);
       });
 
       it("installs when binary is not present", async () => {
         setupExecFileResponses([
           { stdout: "x86_64\n" },
+          // resolveServerCommit: glob finds nothing
+          { stdout: "", exitCode: 1 },
+          // isServerBinaryPresent: test -f (using IDE commit fallback)
           { stdout: "", stderr: "test failed", exitCode: 1 },
-          { stdout: "" }, // rm -rf
+          // installServer: rm -rf staging
+          { stdout: "" },
+          // installServer: cat product.json from staging
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
+          // installServer: mv staging to final
+          { stdout: "" },
         ]);
 
         const info = await manager.ensureInstalled("container1");
 
         expect(info.commit).toBe(TEST_PRODUCT_INFO.commit);
         expect(info.arch).toBe("x64");
-        // 3 dockerExec: uname, test-f, rm
-        expect(mockHost.dockerExec).toHaveBeenCalledTimes(3);
+        // 6 dockerExec: uname, glob, test-f, rm, cat, mv
+        expect(mockHost.dockerExec).toHaveBeenCalledTimes(6);
         // bootstrap called for busybox + deploy + setup
         expect(mockBootstrapBusybox).toHaveBeenCalledWith("container1", "x64");
         expect(mockDeployTools).toHaveBeenCalledWith("container1");
@@ -357,8 +360,16 @@ describe("serverManager", () => {
 
         setupExecFileResponses([
           { stdout: "x86_64\n" },
+          // resolveServerCommit: glob finds nothing
+          { stdout: "", exitCode: 1 },
+          // isServerBinaryPresent: test -f
           { stdout: "", stderr: "test failed", exitCode: 1 },
-          { stdout: "" }, // rm -rf
+          // installServer: rm -rf staging
+          { stdout: "" },
+          // installServer: cat product.json from staging
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
+          // installServer: mv staging to final
+          { stdout: "" },
         ]);
 
         await manager.ensureInstalled("container1");
@@ -375,7 +386,15 @@ describe("serverManager", () => {
       it("installs on arm64 when binary is not present", async () => {
         setupExecFileResponses([
           { stdout: "aarch64\n" },
+          // resolveServerCommit: glob finds nothing
           { stdout: "", exitCode: 1 },
+          // isServerBinaryPresent: test -f
+          { stdout: "", exitCode: 1 },
+          // installServer: rm -rf staging
+          { stdout: "" },
+          // installServer: cat product.json from staging
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
+          // installServer: mv staging to final
           { stdout: "" },
         ]);
 
@@ -383,7 +402,7 @@ describe("serverManager", () => {
 
         expect(info.commit).toBe(TEST_PRODUCT_INFO.commit);
         expect(info.arch).toBe("arm64");
-        expect(mockHost.dockerExec).toHaveBeenCalledTimes(3);
+        expect(mockHost.dockerExec).toHaveBeenCalledTimes(6);
         expect(mockBootstrapBusybox).toHaveBeenCalledWith(
           "container1",
           "arm64",
@@ -393,7 +412,11 @@ describe("serverManager", () => {
       it("throws when bootstrap busybox fails", async () => {
         setupExecFileResponses([
           { stdout: "x86_64\n" },
+          // resolveServerCommit: glob finds nothing
           { stdout: "", exitCode: 1 },
+          // isServerBinaryPresent: test -f
+          { stdout: "", exitCode: 1 },
+          // installServer: rm -rf staging
           { stdout: "" },
         ]);
 
@@ -409,7 +432,11 @@ describe("serverManager", () => {
       it("throws when setup script fails", async () => {
         setupExecFileResponses([
           { stdout: "x86_64\n" },
+          // resolveServerCommit: glob finds nothing
           { stdout: "", exitCode: 1 },
+          // isServerBinaryPresent: test -f
+          { stdout: "", exitCode: 1 },
+          // installServer: rm -rf staging
           { stdout: "" },
         ]);
 
@@ -428,6 +455,8 @@ describe("serverManager", () => {
     describe("ensureConnectionToken", () => {
       it("creates a connection token file atomically", async () => {
         setupExecFileResponses([
+          // resolveServerCommit: glob finds product.json with commit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // token command returns the UUID
           { stdout: "test-uuid-1234-5678-abcd-ef0123456789\n" },
         ]);
@@ -438,12 +467,15 @@ describe("serverManager", () => {
 
       it("uses umask 377 for restrictive permissions", async () => {
         setupExecFileResponses([
+          // resolveServerCommit: glob finds product.json with commit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
+          // token command
           { stdout: "test-uuid-1234-5678-abcd-ef0123456789\n" },
         ]);
 
         await manager.ensureConnectionToken("container1");
 
-        const callArgs = mockHost.dockerExec.mock.calls[0];
+        const callArgs = mockHost.dockerExec.mock.calls[1];
         const args = callArgs[1] as string[];
         const shCmdIndex = args.indexOf("-c");
         const shellCmd = args[shCmdIndex + 1];
@@ -453,6 +485,9 @@ describe("serverManager", () => {
 
       it("throws when token creation fails", async () => {
         setupExecFileResponses([
+          // resolveServerCommit: glob finds product.json with commit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
+          // token command fails
           { stdout: "", stderr: "Permission denied", exitCode: 1 },
         ]);
 
@@ -462,7 +497,12 @@ describe("serverManager", () => {
       });
 
       it("throws when token file is empty", async () => {
-        setupExecFileResponses([{ stdout: "\n" }]);
+        setupExecFileResponses([
+          // resolveServerCommit: glob finds product.json with commit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
+          // token command returns empty
+          { stdout: "\n" },
+        ]);
 
         await expect(
           manager.ensureConnectionToken("container1"),
@@ -475,6 +515,8 @@ describe("serverManager", () => {
         setupExecFileResponses([
           // detectArch
           { stdout: "x86_64\n" },
+          // resolveServerCommit: glob finds product.json
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "my-connection-token\n" },
           // stop: cat pidFile (no existing server)
@@ -499,6 +541,8 @@ describe("serverManager", () => {
         setupExecFileResponses([
           // detectArch
           { stdout: "x86_64\n" },
+          // resolveServerCommit: glob finds product.json
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "my-token\n" },
           // stop: cat pidFile (no existing server)
@@ -513,8 +557,8 @@ describe("serverManager", () => {
 
         await manager.start("container1");
 
-        // The nohup start command is the 5th call (index 4)
-        const startCallArgs = mockHost.dockerExec.mock.calls[4];
+        // The nohup start command is the 6th call (index 5)
+        const startCallArgs = mockHost.dockerExec.mock.calls[5];
         const args = startCallArgs[1] as string[];
         const shCmdIndex = args.indexOf("-c");
         expect(shCmdIndex).toBeGreaterThan(-1);
@@ -533,6 +577,8 @@ describe("serverManager", () => {
         setupExecFileResponses([
           // detectArch
           { stdout: "x86_64\n" },
+          // resolveServerCommit: glob finds product.json
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "my-token\n" },
           // stop: cat pidFile (no existing server)
@@ -547,7 +593,7 @@ describe("serverManager", () => {
 
         await manager.start("container1");
 
-        const startCallArgs = mockHost.dockerExec.mock.calls[4];
+        const startCallArgs = mockHost.dockerExec.mock.calls[5];
         const args = startCallArgs[1] as string[];
         const shCmdIndex = args.indexOf("-c");
         const shellCmd = args[shCmdIndex + 1];
@@ -559,6 +605,8 @@ describe("serverManager", () => {
         setupExecFileResponses([
           // detectArch
           { stdout: "aarch64\n" },
+          // resolveServerCommit: glob finds product.json
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "arm-token\n" },
           // stop: cat pidFile (no existing server)
@@ -580,6 +628,8 @@ describe("serverManager", () => {
         setupExecFileResponses([
           // detectArch
           { stdout: "x86_64\n" },
+          // resolveServerCommit: glob finds product.json
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "my-token\n" },
           // stop: cat pidFile (no existing server)
@@ -599,6 +649,8 @@ describe("serverManager", () => {
         setupExecFileResponses([
           // detectArch
           { stdout: "x86_64\n" },
+          // resolveServerCommit: glob finds product.json
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "my-token\n" },
           // stop: cat pidFile (no existing server)
@@ -613,7 +665,7 @@ describe("serverManager", () => {
 
         await manager.start("container1");
 
-        const startCallArgs = mockHost.dockerExec.mock.calls[4];
+        const startCallArgs = mockHost.dockerExec.mock.calls[5];
         const args = startCallArgs[1] as string[];
         const shCmdIndex = args.indexOf("-c");
         const shellCmd = args[shCmdIndex + 1];
@@ -624,6 +676,8 @@ describe("serverManager", () => {
         setupExecFileResponses([
           // detectArch
           { stdout: "x86_64\n" },
+          // resolveServerCommit: glob finds product.json
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "my-token\n" },
           // stop: cat pidFile (no existing server)
@@ -663,6 +717,8 @@ describe("serverManager", () => {
     describe("stop", () => {
       it("stops via PID file when available", async () => {
         setupExecFileResponses([
+          // resolveServerCommit: glob finds product.json with commit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // cat pidFile succeeds
           { stdout: "12345\n" },
           // kill succeeds
@@ -673,8 +729,8 @@ describe("serverManager", () => {
 
         await manager.stop("container1");
 
-        // Verify kill was called with SIGTERM
-        const killCallArgs = mockHost.dockerExec.mock.calls[1];
+        // Verify kill was called with SIGTERM (glob=[0], cat=[1], kill=[2])
+        const killCallArgs = mockHost.dockerExec.mock.calls[2];
         const args = killCallArgs[1] as string[];
         expect(args).toContain("kill");
         expect(args).toContain("-TERM");
@@ -683,6 +739,8 @@ describe("serverManager", () => {
 
       it("falls back to pgrep when PID file missing", async () => {
         setupExecFileResponses([
+          // resolveServerCommit: glob finds product.json with commit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // cat pidFile fails
           { stdout: "", exitCode: 1 },
           // pgrep finds PID
@@ -693,8 +751,8 @@ describe("serverManager", () => {
 
         await manager.stop("container1");
 
-        // Verify pgrep searched for kiro-reh
-        const pgrepCallArgs = mockHost.dockerExec.mock.calls[1];
+        // Verify pgrep searched for kiro-reh (glob=[0], cat=[1], pgrep=[2])
+        const pgrepCallArgs = mockHost.dockerExec.mock.calls[2];
         const args = pgrepCallArgs[1] as string[];
         expect(args).toContain("pgrep");
         expect(args).toContain("-f");
@@ -704,6 +762,8 @@ describe("serverManager", () => {
 
       it("handles multiple PIDs from pgrep fallback", async () => {
         setupExecFileResponses([
+          // resolveServerCommit: glob finds product.json with commit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // cat pidFile fails
           { stdout: "", exitCode: 1 },
           // pgrep finds multiple PIDs
@@ -716,11 +776,14 @@ describe("serverManager", () => {
 
         await manager.stop("container1");
 
-        expect(mockHost.dockerExec).toHaveBeenCalledTimes(4);
+        // 5 calls: glob, cat, pgrep, kill, kill
+        expect(mockHost.dockerExec).toHaveBeenCalledTimes(5);
       });
 
       it("does nothing when no server process is found", async () => {
         setupExecFileResponses([
+          // resolveServerCommit: glob finds product.json with commit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // cat pidFile fails
           { stdout: "", exitCode: 1 },
           // pgrep finds nothing
@@ -729,8 +792,8 @@ describe("serverManager", () => {
 
         await manager.stop("container1");
 
-        // Only 2 calls (cat pidFile + pgrep), no kill
-        expect(mockHost.dockerExec).toHaveBeenCalledTimes(2);
+        // 3 calls (glob + cat pidFile + pgrep), no kill
+        expect(mockHost.dockerExec).toHaveBeenCalledTimes(3);
       });
     });
 
@@ -741,6 +804,8 @@ describe("serverManager", () => {
           { stdout: "12345\n" },
           // detectArch
           { stdout: "x86_64\n" },
+          // resolveServerCommit: glob finds product.json with commit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
         ]);
 
         const status = await manager.getStatus("container1");
@@ -767,6 +832,8 @@ describe("serverManager", () => {
           { stdout: "12345\n" },
           // detectArch fails
           { stdout: "", stderr: "exec failed", exitCode: 1 },
+          // resolveServerCommit: glob finds product.json with commit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
         ]);
 
         const status = await manager.getStatus("container1");
@@ -803,9 +870,18 @@ describe("serverManager", () => {
     describe("download URL construction", () => {
       it("passes server download URL to bootstrap runSetup", async () => {
         setupExecFileResponses([
+          // detectArch
           { stdout: "x86_64\n" },
+          // resolveServerCommit: glob finds nothing (falls back to IDE commit)
+          { stdout: "", exitCode: 1 },
+          // isServerBinaryPresent: test -f (not present)
           { stdout: "", stderr: "test failed", exitCode: 1 },
-          { stdout: "" }, // rm -rf
+          // installServer: rm -rf staging
+          { stdout: "" },
+          // installServer: cat staging product.json
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
+          // installServer: mv staging to final
+          { stdout: "" },
         ]);
 
         await manager.ensureInstalled("container1");
@@ -828,6 +904,8 @@ describe("serverManager", () => {
         setupExecFileResponses([
           // detectArch
           { stdout: "x86_64\n" },
+          // resolveServerCommit: glob finds product.json with commit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "my-token\n" },
           // stop: cat pidFile (no existing server)
@@ -842,7 +920,8 @@ describe("serverManager", () => {
 
         await customManager.start("container1");
 
-        const startCallArgs = mockHost.dockerExec.mock.calls[4];
+        // The nohup start command is the 6th call (index 5)
+        const startCallArgs = mockHost.dockerExec.mock.calls[5];
         const args = startCallArgs[1] as string[];
         const shCmdIndex = args.indexOf("-c");
         const shellCmd = args[shCmdIndex + 1];

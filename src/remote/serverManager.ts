@@ -3,9 +3,31 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-/** Server lifecycle manager for kiro-reh inside containers. */
+/**
+ * Server lifecycle manager for the remote extension host (REH) inside
+ * dev containers.
+ *
+ * Path layout mirrors the official VS Code remote extension:
+ *
+ *   installRoot/serverDataFolderName/
+ *   ├── bin/<reh-commit>/   ← installPath (tarball extracts here)
+ *   │   ├── bin/<binaryName>
+ *   │   ├── node
+ *   │   ├── extensions/       ← built-ins (shipped in tarball)
+ *   │   ├── product.json      ← REH's own product.json (commit source)
+ *   │   └── connection-token
+ *   ├── extensions/           ← user-installed extensions
+ *   └── data/                 ← server user data (User, Machine, logs)
+ *
+ * The <reh-commit> is read from the extracted tarball's product.json,
+ * NOT from the IDE's product.json. This matters when the REH commit
+ * differs from the IDE commit (custom REH builds, vscode-oss using
+ * vscodium REH, apex→remote-ssh→devcontainer chains where each hop
+ * may have a different commit).
+ */
 
 import { randomUUID } from "node:crypto";
+import { posix as pathPosix } from "node:path";
 import type { Host } from "../host/host";
 import { type ProductInfo, buildServerDownloadUrl } from "./productInfo";
 import { getPlatformAdapter } from "../platform";
@@ -33,11 +55,13 @@ export interface IServerManager {
   getStatus(containerId: string): Promise<ServerInfo | null>;
   getCompatibleVersion(): string;
   /**
-   * Container-side extensions directory for this platform's server.
-   * Used by ExtensionInstaller to know where to unzip VSIXs, and
-   * passed to the server via --extensions-dir on start.
+   * Container-side directory for user-installed extensions.
+   * Distinct from the server's built-in extensions (shipped in the
+   * tarball under bin/<commit>/extensions/). The server discovers
+   * this path itself via --server-data-dir; we do NOT pass
+   * --extensions-dir.
    */
-  getExtensionsDir(containerId: string): Promise<string>;
+  getUserExtensionsDir(containerId: string): Promise<string>;
 }
 
 export function validateArch(unameArch: string): string {
@@ -64,7 +88,6 @@ export function buildStartCommand(params: {
   binaryName: string;
   tokenFilePath: string;
   serverDataDir: string;
-  extensionsDir: string;
   telemetryLevel: string;
   logFile: string;
   pidFile: string;
@@ -74,7 +97,6 @@ export function buildStartCommand(params: {
     binaryName,
     tokenFilePath,
     serverDataDir,
-    extensionsDir,
     telemetryLevel,
     logFile,
     pidFile,
@@ -83,14 +105,13 @@ export function buildStartCommand(params: {
   return [
     "sh",
     "-c",
-    `mkdir -m 700 -p "${installPath}" "${serverDataDir}" "${extensionsDir}"; ` +
+    `mkdir -m 700 -p "${installPath}" "${serverDataDir}"; ` +
       `export PATH=/tmp/.artizo/bin:$PATH; ` +
       `nohup "${installPath}/bin/${binaryName}" ` +
       `--host 127.0.0.1 ` +
       `--port 0 ` +
       `--connection-token-file "${tokenFilePath}" ` +
       `--server-data-dir "${serverDataDir}" ` +
-      `--extensions-dir "${extensionsDir}" ` +
       `--telemetry-level ${telemetryLevel} ` +
       `--accept-server-license-terms ` +
       `--start-server ` +
@@ -113,6 +134,14 @@ export class ServerManager implements IServerManager {
   private readonly productInfo: ProductInfo;
   private readonly telemetryLevel: string;
   private readonly bootstrap: ContainerBootstrap | null;
+
+  /**
+   * Cached REH commit, resolved from the extracted tarball's product.json.
+   * Set after installServer() completes, or after resolveServerCommit()
+   * discovers an existing install via glob. Falls back to the IDE's
+   * product.json commit when no install exists yet.
+   */
+  private resolvedCommit: string | undefined;
 
   constructor(options: ServerManagerOptions) {
     this.dockerPath = options?.dockerPath ?? "docker";
@@ -147,32 +176,101 @@ export class ServerManager implements IServerManager {
     return adapter.getServerInstallRoot?.() ?? "/tmp";
   }
 
-  // No commit hash in path; avoids stale-container mismatches.
-  // Version tracking is done via a .version file inside this directory.
-  getInstallPathWithRoot(installRoot: string): string {
-    return `${installRoot}/${this.productInfo.serverDataFolderName}`;
-  }
-
-  private getTokenFilePath(installRoot: string): string {
-    return `${this.getInstallPathWithRoot(installRoot)}/connection-token`;
-  }
-
+  /**
+   * The server data directory, passed to the server via --server-data-dir.
+   * This is installRoot/serverDataFolderName — the root that
+   * contains bin/, extensions/, data/, etc. Matches the official
+   * extension's tp() (serverDataFolder) and MW() (--server-data-dir).
+   */
   private getServerDataDir(installRoot: string): string {
-    return `${installRoot}/${this.productInfo.serverDataFolderName}/data`;
+    return pathPosix.join(
+      installRoot,
+      this.productInfo.serverDataFolderName,
+    );
   }
 
   /**
-   * Container-side extensions directory.
+   * Directory where the REH tarball is extracted (the server binary,
+   * node, built-in extensions, and product.json all live here).
    *
-   * `${installRoot}/${serverDataFolderName}/extensions` - matches
-   * the `.<name>-server/extensions` convention used by each platform's
-   * remote extension host.
+   * serverDataDir/bin/<commit> — matches the official extension's
+   * doe() function. The commit is the REH's actual commit, NOT the
+   * IDE's, so callers must pass through resolveServerCommit() first.
    */
-  getExtensionsDir(containerId: string): Promise<string> {
-    return this.getServerInstallRoot(containerId).then(
-      (installRoot) =>
-        `${installRoot}/${this.productInfo.serverDataFolderName}/extensions`,
+  getInstallPathWithRoot(installRoot: string, commit: string): string {
+    return pathPosix.join(
+      this.getServerDataDir(installRoot),
+      "bin",
+      commit,
     );
+  }
+
+  private getTokenFilePath(installRoot: string, commit: string): string {
+    return pathPosix.join(
+      this.getInstallPathWithRoot(installRoot, commit),
+      "connection-token",
+    );
+  }
+
+  /**
+   * Container-side directory for user-installed extensions.
+   *
+   * serverDataDir/extensions — matches the official extension's
+   * NW() function. Distinct from built-in extensions at
+   * installPath/extensions (inside bin/<commit>/). The server
+   * discovers this path itself via --server-data-dir; we do NOT pass
+   * --extensions-dir.
+   */
+  getUserExtensionsDir(containerId: string): Promise<string> {
+    return this.getServerInstallRoot(containerId).then((installRoot) =>
+      pathPosix.join(this.getServerDataDir(installRoot), "extensions"),
+    );
+  }
+
+  /**
+   * Resolve the actual REH commit from the extracted tarball.
+   *
+   * Returns the cached value if already resolved (from a prior install
+   * or glob). Otherwise globs for product.json under bin/ in the
+   * server data dir and reads the commit field. If no install exists
+   * or the product.json lacks a commit, falls back to the IDE's commit.
+   */
+  private async resolveServerCommit(containerId: string): Promise<string> {
+    if (this.resolvedCommit) return this.resolvedCommit;
+
+    const installRoot = await this.getServerInstallRoot(containerId);
+    const serverDataDir = this.getServerDataDir(installRoot);
+    const glob = pathPosix.join(serverDataDir, "bin", "*", "product.json");
+
+    getLogger().debug(`[Artizo] resolveServerCommit: glob ${glob}`);
+    const result = await this.host.dockerExec(containerId, [
+      "sh",
+      "-c",
+      `for f in ${glob}; do [ -f "$f" ] && { cat "$f"; break; }; done`,
+    ]);
+
+    if (result.exitCode === 0 && result.stdout.trim()) {
+      try {
+        const product = JSON.parse(result.stdout);
+        if (typeof product.commit === "string" && product.commit) {
+          this.resolvedCommit = product.commit;
+          getLogger().info(
+            `[Artizo] resolveServerCommit: reh commit=${product.commit}`,
+          );
+          return product.commit;
+        }
+      } catch {
+        // Fall through to IDE commit fallback.
+      }
+    }
+
+    getLogger().debug(
+      `[Artizo] resolveServerCommit: no reh install found, using ide commit`,
+    );
+    // Cache the fallback too so we don't glob repeatedly. installServer
+    // will overwrite this with the actual REH commit when it runs.
+    this.resolvedCommit = this.productInfo.commit;
+    return this.resolvedCommit;
   }
 
   async detectArch(containerId: string): Promise<string> {
@@ -192,9 +290,10 @@ export class ServerManager implements IServerManager {
   // When the IDE updates, the container will be rebuilt anyway.
   async isServerBinaryPresent(containerId: string): Promise<boolean> {
     const installRoot = await this.getServerInstallRoot(containerId);
-    const installPath = this.getInstallPathWithRoot(installRoot);
+    const commit = await this.resolveServerCommit(containerId);
+    const installPath = this.getInstallPathWithRoot(installRoot, commit);
     const binaryName = this.productInfo.serverApplicationName;
-    const binaryPath = `${installPath}/bin/${binaryName}`;
+    const binaryPath = pathPosix.join(installPath, "bin", binaryName);
     getLogger().info(`[Artizo] isServerBinaryPresent: test -f ${binaryPath}`);
 
     const result = await this.host.dockerExec(containerId, [
@@ -210,9 +309,6 @@ export class ServerManager implements IServerManager {
     getLogger().info(`[Artizo] checking arch...`);
     const arch = await this.detectArch(containerId);
     getLogger().info(`[Artizo] arch=${arch}`);
-    const installRoot = await this.getServerInstallRoot(containerId);
-    const installPath = this.getInstallPathWithRoot(installRoot);
-    getLogger().info(`[Artizo] installPath=${installPath}`);
 
     const binaryPresent = await this.isServerBinaryPresent(containerId);
     getLogger().info(`[Artizo] binaryPresent=${binaryPresent}`);
@@ -221,8 +317,13 @@ export class ServerManager implements IServerManager {
       await this.installServer(containerId, arch);
     }
 
+    const installRoot = await this.getServerInstallRoot(containerId);
+    const commit = await this.resolveServerCommit(containerId);
+    const installPath = this.getInstallPathWithRoot(installRoot, commit);
+    getLogger().info(`[Artizo] installPath=${installPath}`);
+
     return {
-      commit: this.productInfo.commit,
+      commit,
       arch,
       installPath,
       port: 0,
@@ -242,11 +343,23 @@ export class ServerManager implements IServerManager {
     const url = await buildServerDownloadUrl(this.productInfo, arch);
     getLogger().info(`[Artizo] installServer: url=${url}`);
     const installRoot = await this.getServerInstallRoot(containerId);
-    const installPath = this.getInstallPathWithRoot(installRoot);
+    const serverDataDir = this.getServerDataDir(installRoot);
 
-    getLogger().info(`[Artizo] clean install, path=${installPath}`);
+    // Extract to a staging directory first so we can read the actual REH
+    // commit from product.json before moving to the final bin/<commit>/
+    // path. The staging dir is under serverDataDir so the mv is a rename
+    // (same filesystem, atomic).
+    const stagingDir = pathPosix.join(
+      serverDataDir,
+      `.staging-${randomUUID()}`,
+    );
 
-    await this.host.dockerExec(containerId, ["rm", "-rf", installPath]);
+    getLogger().info(`[Artizo] staging at ${stagingDir}`);
+    await this.host.dockerExec(containerId, [
+      "rm",
+      "-rf",
+      stagingDir,
+    ]);
 
     getLogger().info(`[Artizo] deploying busybox...`);
     await this.bootstrap.bootstrapBusybox(containerId, arch);
@@ -262,11 +375,44 @@ export class ServerManager implements IServerManager {
     await this.bootstrap.runSetup(
       containerId,
       url,
-      installPath,
+      stagingDir,
       authToken,
       authTokenPath,
     );
     getLogger().info(`[Artizo] setup done`);
+
+    // Read the actual REH commit from the extracted product.json.
+    // This is the commit the tarball was built with, which may differ
+    // from the IDE's commit (custom REH, vscode-oss using vscodium REH,
+    // etc.). Falls back to the IDE's commit if missing.
+    const productResult = await this.host.dockerExec(containerId, [
+      "cat",
+      pathPosix.join(stagingDir, "product.json"),
+    ]);
+
+    let rehCommit = this.productInfo.commit;
+    if (productResult.exitCode === 0 && productResult.stdout.trim()) {
+      try {
+        const product = JSON.parse(productResult.stdout);
+        if (typeof product.commit === "string" && product.commit) {
+          rehCommit = product.commit;
+        }
+      } catch {
+        // Fall through to IDE commit fallback.
+      }
+    }
+
+    this.resolvedCommit = rehCommit;
+    getLogger().info(`[Artizo] reh commit=${rehCommit}`);
+
+    // Move staging to the final bin/<commit>/ path.
+    const finalDir = this.getInstallPathWithRoot(installRoot, rehCommit);
+    getLogger().info(`[Artizo] moving to ${finalDir}`);
+    await this.host.dockerExec(containerId, [
+      "sh",
+      "-c",
+      `rm -rf "${finalDir}" && mkdir -p "${pathPosix.dirname(finalDir)}" && mv "${stagingDir}" "${finalDir}"`,
+    ]);
   }
 
   /**
@@ -277,7 +423,8 @@ export class ServerManager implements IServerManager {
    */
   async ensureConnectionToken(containerId: string): Promise<string> {
     const installRoot = await this.getServerInstallRoot(containerId);
-    const tokenPath = this.getTokenFilePath(installRoot);
+    const commit = await this.resolveServerCommit(containerId);
+    const tokenPath = this.getTokenFilePath(installRoot, commit);
     const uuid = randomUUID();
 
     const tokenCmd = [
@@ -335,14 +482,14 @@ export class ServerManager implements IServerManager {
   async start(containerId: string): Promise<ServerInfo> {
     const arch = await this.detectArch(containerId);
     const installRoot = await this.getServerInstallRoot(containerId);
+    const commit = await this.resolveServerCommit(containerId);
     const connectionToken = await this.ensureConnectionToken(containerId);
-    const installPath = this.getInstallPathWithRoot(installRoot);
-    const tokenFilePath = this.getTokenFilePath(installRoot);
+    const installPath = this.getInstallPathWithRoot(installRoot, commit);
+    const tokenFilePath = this.getTokenFilePath(installRoot, commit);
     const serverDataDir = this.getServerDataDir(installRoot);
-    const extensionsDir = await this.getExtensionsDir(containerId);
     const binaryName = this.productInfo.serverApplicationName;
-    const logFile = `${installPath}/server.log`;
-    const pidFile = `${installPath}/server.pid`;
+    const logFile = pathPosix.join(installPath, "server.log");
+    const pidFile = pathPosix.join(installPath, "server.pid");
 
     await this.stop(containerId);
 
@@ -351,7 +498,6 @@ export class ServerManager implements IServerManager {
       binaryName,
       tokenFilePath,
       serverDataDir,
-      extensionsDir,
       telemetryLevel: this.telemetryLevel,
       logFile,
       pidFile,
@@ -379,7 +525,7 @@ export class ServerManager implements IServerManager {
     }
 
     return {
-      commit: this.productInfo.commit,
+      commit,
       arch,
       installPath,
       port,
@@ -419,9 +565,10 @@ export class ServerManager implements IServerManager {
 
   async stop(containerId: string): Promise<void> {
     const installRoot = await this.getServerInstallRoot(containerId);
-    const installPath = this.getInstallPathWithRoot(installRoot);
+    const commit = await this.resolveServerCommit(containerId);
+    const installPath = this.getInstallPathWithRoot(installRoot, commit);
     const binaryName = this.productInfo.serverApplicationName;
-    const pidFile = `${installPath}/server.pid`;
+    const pidFile = pathPosix.join(installPath, "server.pid");
 
     const pidResult = await this.host.dockerExec(containerId, ["cat", pidFile]);
 
@@ -473,10 +620,11 @@ export class ServerManager implements IServerManager {
     }
 
     const installRoot = await this.getServerInstallRoot(containerId);
-    const installPath = this.getInstallPathWithRoot(installRoot);
+    const commit = await this.resolveServerCommit(containerId);
+    const installPath = this.getInstallPathWithRoot(installRoot, commit);
 
     return {
-      commit: this.productInfo.commit,
+      commit,
       arch,
       installPath,
       port: 0,

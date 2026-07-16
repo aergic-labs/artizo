@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const {
-  mockInitializeLogger,
+  mockCreateBuildLogTerminal,
   mockValidatePlatformRuntime,
   mockEnsureResolversAvailable,
   mockReadSettings,
@@ -18,7 +18,7 @@ const {
   mockHostCreate,
   mockGetPlatformAdapter,
 } = vi.hoisted(() => ({
-  mockInitializeLogger: vi.fn(),
+  mockCreateBuildLogTerminal: vi.fn(),
   mockValidatePlatformRuntime: vi.fn(),
   mockEnsureResolversAvailable: vi.fn(),
   mockReadSettings: vi.fn(),
@@ -33,6 +33,16 @@ const {
 
 vi.mock("vscode", () => ({
   window: {
+    createOutputChannel: vi.fn().mockReturnValue({
+      info: vi.fn(),
+      debug: vi.fn(),
+      trace: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      append: vi.fn(),
+      show: vi.fn(),
+      dispose: vi.fn(),
+    }),
     createTerminal: vi
       .fn()
       .mockReturnValue({ show: vi.fn(), dispose: vi.fn() }),
@@ -62,7 +72,7 @@ vi.mock("vscode", () => ({
 }));
 
 vi.mock("../../src/host/services", () => ({
-  initializeLogger: mockInitializeLogger,
+  createBuildLogTerminal: mockCreateBuildLogTerminal,
   validatePlatformRuntime: mockValidatePlatformRuntime,
   ensureResolversAvailable: mockEnsureResolversAvailable,
   readSettings: mockReadSettings,
@@ -85,13 +95,27 @@ vi.mock("../../src/platform/index", () => ({
 }));
 
 vi.mock("../../src/utils/logger", () => ({
+  initLogger: vi.fn(() => ({
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+    trace: vi.fn(),
+    setLevel: vi.fn(),
+    show: vi.fn(),
+    append: vi.fn(),
+  })),
   getLogger: () => ({
     info: vi.fn(),
     error: vi.fn(),
     warn: vi.fn(),
     debug: vi.fn(),
     trace: vi.fn(),
+    setLevel: vi.fn(),
+    show: vi.fn(),
+    append: vi.fn(),
   }),
+  LogLevel: { Info: 0, Debug: 1, Trace: 2 },
 }));
 
 vi.mock("../../src/utils/constants", () => ({
@@ -120,7 +144,7 @@ function createMockContext(): any {
 describe("extension activation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockInitializeLogger.mockReturnValue({
+    mockCreateBuildLogTerminal.mockReturnValue({
       buildLogPty: { writeLine: vi.fn(), dispose: vi.fn() },
       buildLogTerminal: { show: vi.fn(), dispose: vi.fn() },
     });
@@ -155,7 +179,7 @@ describe("extension activation", () => {
     await activate(context);
 
     // Core wiring: logger → platform check → settings → resolvers → services → commands
-    expect(mockInitializeLogger).toHaveBeenCalledWith(context);
+    expect(mockCreateBuildLogTerminal).toHaveBeenCalledWith(context);
     expect(mockValidatePlatformRuntime).toHaveBeenCalledWith(context);
     expect(mockReadSettings).toHaveBeenCalled();
     expect(mockHostCreate).toHaveBeenCalledWith(

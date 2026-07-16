@@ -20,7 +20,8 @@ on first connect.
 - **Sidebar panel** - toggle GPU, privileged mode, mounts, ports, extensions
 - **Container lifecycle** - start, stop, rebuild, remove
 - **Port forwarding** - auto-detect and forward container ports
-- **Extension install** - sync local extensions into the container
+- **Extension install** - install extensions from devcontainer.json
+config into the container
 - **Extension mirroring** - copy locally-installed extensions onto SSH
 remotes during setup
 - **SSH agent forwarding** - use host SSH keys inside the container
