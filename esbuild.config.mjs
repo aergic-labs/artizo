@@ -21,7 +21,7 @@ const flags = {
 const buildOptions = {
   entryPoints: ["src/extension.ts"],
   bundle: true,
-  outfile: "dist/extension.js",
+  outfile: "dist/extension/extension.js",
   external: ["vscode"],
   format: "cjs",
   platform: "node",
@@ -108,7 +108,7 @@ async function main() {
 
     // Report bundle size
     if (result.metafile) {
-      const output = result.metafile.outputs["dist/extension.js"];
+      const output = result.metafile.outputs["dist/extension/extension.js"];
       if (output) {
         const sizeKB = (output.bytes / 1024).toFixed(1);
         console.log(`Bundle size: ${sizeKB} KB`);

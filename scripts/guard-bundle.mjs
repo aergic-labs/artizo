@@ -128,9 +128,9 @@ if (invokedDirectly) {
     process.exit(1);
   }
 
-  const distBundle = path.join(root, "dist", "extension.js");
+  const distBundle = path.join(root, "dist", "extension", "extension.js");
   if (!existsSync(distBundle)) {
-    console.error("guard-bundle: dist/extension.js not found, build first");
+    console.error("guard-bundle: dist/extension/extension.js not found, build first");
     process.exit(1);
   }
 

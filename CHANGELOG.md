@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.3
+
+- Fix `updateUID.Dockerfile` missing from VSIX causing container
+ provisioning to fail when `updateRemoteUserUID` runs; restructure
+ bundle to `dist/extension/extension.js` so the vendored CLI's
+ `path.join(__dirname, '..', '..')` resolves to the extension root
+ and finds `scripts/updateUID.Dockerfile`
+
 ## 0.4.2
 
 - Fix `updateRemoteUserUID` being ignored in devcontainer.json by

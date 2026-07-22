@@ -1,7 +1,7 @@
 # Root README is supplied via --readme-path in build script; exclude the file
 README.md
 
-# Source files (bundled into dist/extension.js)
+# Source files (bundled into dist/extension/extension.js)
 src/**
 !src/webview/**
 !src/ai/prompts/**
@@ -36,6 +36,7 @@ vendor/**
 plans/**
 scripts/**
 !scripts/askpass/**
+!scripts/updateUID.Dockerfile
 Makefile
 package.json.bak
 

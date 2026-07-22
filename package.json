@@ -2,7 +2,7 @@
   "name": "artizo",
   "displayName": "Artizo Dev Containers",
   "description": "Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "publisher": "aergic",
   "productName": "Artizo",
   "license": "AGPL-3.0-only",
@@ -63,7 +63,7 @@
     "onStartupFinished",
     "*"
   ],
-  "main": "./dist/extension.js",
+  "main": "./dist/extension/extension.js",
   "contributes": {
     "commands": [
       {

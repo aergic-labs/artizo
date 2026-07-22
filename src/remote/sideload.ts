@@ -380,16 +380,16 @@ let patchScriptLoadAttempted = false;
 
 /**
  * Load the bundled argv-patch-remote.cjs script from disk. It is emitted
- * by esbuild next to dist/extension.js, so __dirname (dist/ in the
- * bundle) is the primary location; a dev/test fallback covers running
+ * by esbuild next to dist/extension/extension.js, so __dirname (dist/extension/
+ * in the bundle) is the primary location; a dev/test fallback covers running
  * from source. Returns undefined if not found.
  */
 function loadRemotePatchScript(): string | undefined {
   if (patchScriptLoadAttempted) return cachedPatchScript;
   patchScriptLoadAttempted = true;
   const candidates = [
+    path.join(__dirname, "..", "argv-patch-remote.cjs"),
     path.join(__dirname, "argv-patch-remote.cjs"),
-    path.join(__dirname, "..", "dist", "argv-patch-remote.cjs"),
     path.join(process.cwd(), "dist", "argv-patch-remote.cjs"),
   ];
   for (const p of candidates) {
