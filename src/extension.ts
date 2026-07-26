@@ -27,7 +27,10 @@ import {
 } from "./host/services";
 import { registerCoreCommands, type CommandContext } from "./host/commands";
 import { bootstrapRemoteSideLoad } from "./remote/sideload";
-import { clearAllCached } from "./ssh/askpassCache";
+import { clearAllCached, initCache, disposeCache } from "./ssh/askpassCache";
+import { initVscodiumFeed } from "./remote/vscodiumFeed";
+import { registerServerDownloadPanel } from "./webviews/serverDownloadPanel";
+import { FORK_TEMPLATES } from "./platform/forkTemplates";
 
 import type { LogOutputTerminal } from "./workflows/logOutputTerminal";
 import {
@@ -80,6 +83,35 @@ export async function activate(
   getLogger().info(`${BRAND} activating...`);
   getLogger().info(`Extension path: ${context.extensionPath}`);
   getLogger().info(`Log file: ${path.join(context.logPath, "artizo.log")}`);
+
+  // Initialize the VSCodium release feed used by the code-oss fork
+  // (nearest-version lookup for VSCodium REH tarballs).
+  initVscodiumFeed({
+    bundledPath: path.join(context.extensionPath, "tools", "vscodium", "versions.json"),
+    cachePath: path.join(os.homedir(), ".artizo", "vscodium-versions.json"),
+  });
+
+  // Register the server-download config panel (available in all builds).
+  registerServerDownloadPanel(context, {
+    configNamespace: "artizo",
+    commandId: "artizo.configureServerDownload",
+    panelTitle: "Artizo Server Download",
+    productName: "Artizo",
+    webviewSubdir: "resources/serverDownload",
+    logger: getLogger(),
+    getDownloadInfo: async () => {
+      const { getProductInfo } = await import("./remote/productInfo.js");
+      const { getPlatformAdapter } = await import("./platform/index.js");
+      const adapter = await getPlatformAdapter();
+      const info = await getProductInfo(vscode.env.appRoot);
+      return { adapter, info };
+    },
+    readProductJson: async () => {
+      const { readProductJson } = await import("./remote/productInfo.js");
+      return readProductJson(vscode.env.appRoot);
+    },
+    forkTemplates: FORK_TEMPLATES,
+  });
 
   // 0. Detect execution tier and cache it. Must happen before any code
   //    queries isInDevContainer()/canDriveDocker()/getTier().
@@ -224,21 +256,45 @@ async function activateInternal(
   // 3. Read product.json for commit and platform info (used by ServerManager)
   const productInfo = await loadProductInfo();
 
+  // Initialize the persistent askpass cache before any resolve attempt.
+  // Only on the UI-side (apex) - the workspace-side host doesn't run askpass.
+  if (detected.extensionKind !== vscode.ExtensionKind.Workspace) {
+    const storageDir = context.globalStorageUri.fsPath;
+    try {
+      fs.mkdirSync(storageDir, { recursive: true });
+      const ttlHours = vscode.workspace
+        .getConfiguration("artizo")
+        .get<number>("askpassCacheTtl", 8);
+      const rotationDays = vscode.workspace
+        .getConfiguration("artizo")
+        .get<number>("askpassKeyRotationDays", 7);
+      getLogger().info(
+        `[activate] askpass cache TTL: ${ttlHours}h, key rotation: ${rotationDays}d`,
+      );
+      await initCache(
+        context.secrets,
+        path.join(storageDir, "askpass.db"),
+        getLogger(),
+        "artizo.askpass.masterkey",
+        ttlHours,
+        rotationDays,
+      );
+    } catch (err) {
+      getLogger().warn(
+        `[activate] askpass cache init failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   const host = Host.create({
     dockerPath: settings.dockerPath,
   });
 
   // Set context keys
-  // artizo.hostContext: true when this host can drive Docker (states 1/3,
-  // and UI-side in states 2/4). Drives command visibility in package.json.
+  // artizo.hasDevContainerConfig: false until a config is detected.
   vscode.commands.executeCommand(
     "setContext",
-    "artizo.hostContext",
-    canDriveDocker(),
-  );
-  vscode.commands.executeCommand(
-    "setContext",
-    "artizo.hasDevcontainerConfig",
+    "artizo.hasDevContainerConfig",
     false,
   );
 
@@ -285,6 +341,15 @@ async function activateInternal(
     return; // restart needed
   }
 
+  // Set artizo.hostContext only after the resolver-restart gate. Setting it
+  // before would expose artizo commands in the palette that fail with
+  // "command not found" when activate bails mid-way for a restart.
+  vscode.commands.executeCommand(
+    "setContext",
+    "artizo.hostContext",
+    canDriveDocker(),
+  );
+
   // 5. Register authority resolver early (before any async work)
   const resolver = registerResolverEarly(context, settings);
 
@@ -322,15 +387,16 @@ async function activateInternal(
 }
 
 /** Called when the extension is deactivated. */
-export function deactivate(): void {
+export async function deactivate(): Promise<void> {
   try {
     getLogger().info(`${BRAND} deactivating...`);
   } catch {
     // Logger may not be initialized if activation failed
   }
-  // Clear cached SSH passwords/passphrases.
+  // Clear cached SSH passwords/passphrases and close the askpass db.
   try {
-    clearAllCached();
+    await clearAllCached();
+    await disposeCache();
   } catch {
     // ignore
   }

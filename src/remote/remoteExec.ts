@@ -35,6 +35,7 @@ export interface RemoteExec {
 export class SshRemoteExec implements RemoteExec {
   private readonly sshBinary: string;
   private readonly target: string;
+  private readonly sshPort: number;
   private readonly askpass?: AskpassHandle;
 
   constructor(authority: string, askpass?: AskpassHandle) {
@@ -44,7 +45,13 @@ export class SshRemoteExec implements RemoteExec {
     }
     this.sshBinary = resolveSshBinary();
     this.target = `${ssh.sshUser}@${ssh.sshHost}`;
+    this.sshPort = ssh.sshPort;
     this.askpass = askpass;
+  }
+
+  /** Args for the ssh target: `-p port` only when not the default. */
+  private targetArgs(): string[] {
+    return this.sshPort !== 22 ? ["-p", String(this.sshPort)] : [];
   }
 
   run(
@@ -62,7 +69,7 @@ export class SshRemoteExec implements RemoteExec {
     return new Promise((resolve, reject) => {
       const proc = spawn(
         this.sshBinary,
-        [...batchModeArgs(!!this.askpass), this.target, cmd],
+        [...batchModeArgs(!!this.askpass), ...this.targetArgs(), this.target, cmd],
         {
           stdio: [stdinInput !== undefined ? "pipe" : "ignore", "pipe", "pipe"],
           env: sshEnvForAskpass(this.askpass),
@@ -86,7 +93,7 @@ export class SshRemoteExec implements RemoteExec {
       });
       if (stdinInput !== undefined && proc.stdin) {
         proc.stdin.on("error", () => {
-          // ignore — exit/error handlers will reject
+          // ignore; exit/error handlers will reject
         });
         proc.stdin.write(stdinInput);
         proc.stdin.end();
@@ -98,7 +105,7 @@ export class SshRemoteExec implements RemoteExec {
     await new Promise<void>((resolve, reject) => {
       const proc = spawn(
         this.sshBinary,
-        [...batchModeArgs(!!this.askpass), this.target, cmd],
+        [...batchModeArgs(!!this.askpass), ...this.targetArgs(), this.target, cmd],
         {
           stdio: ["pipe", "pipe", "pipe"],
           env: sshEnvForAskpass(this.askpass),
@@ -179,14 +186,20 @@ class ExecServerRemoteExec implements RemoteExec {
       proc.stdin.write(new TextEncoder().encode(opts.stdin));
       proc.stdin.end();
     }
-    const timer = setTimeout(() => {
-      try { proc.kill("SIGKILL"); } catch { /* best effort */ }
-    }, timeoutMs);
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const exit = await proc.onExit;
+      const exit = await Promise.race([
+        proc.onExit,
+        new Promise<{ status: number | null; signal: string | null }>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            try { proc.kill("SIGKILL"); } catch { /* best effort */ }
+            reject(new Error(`ExecServer command timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
+        }),
+      ]);
       return { stdout, stderr, code: exit.status };
     } finally {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
     }
   }
 
@@ -196,18 +209,32 @@ class ExecServerRemoteExec implements RemoteExec {
     proc.stderr.onDidReceiveMessage((data: Uint8Array) => {
       stderrBuf += Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString();
     });
-    input.on("data", (chunk: Buffer) => {
-      proc.stdin.write(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const settle = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        try { proc.kill("SIGKILL"); } catch { /* best effort */ }
+        reject(err);
+      };
+      input.on("data", (chunk: Buffer) => {
+        proc.stdin.write(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+      });
+      input.on("end", () => proc.stdin.end());
+      input.on("error", (err) => {
+        settle(new Error(`input stream error: ${err.message}`));
+      });
+      proc.onExit.then((exit) => {
+        if (settled) return;
+        if (exit.status !== 0) {
+          settle(new Error(`stream failed (exit=${exit.status}) stderr: ${stderrBuf}`));
+        } else {
+          resolve();
+        }
+      }).catch((err) => {
+        settle(err instanceof Error ? err : new Error(String(err)));
+      });
     });
-    input.on("end", () => proc.stdin.end());
-    input.on("error", (err) => {
-      try { proc.kill("SIGKILL"); } catch { /* best effort */ }
-      throw new Error(`input stream error: ${err.message}`);
-    });
-    const exit = await proc.onExit;
-    if (exit.status !== 0) {
-      throw new Error(`stream failed (exit=${exit.status}) stderr: ${stderrBuf}`);
-    }
   }
 }
 

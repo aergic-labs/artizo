@@ -62,7 +62,32 @@ export class DotfilesManager implements IDotfilesManager {
       return { success: true, cloned: false, installed: false };
     }
 
-    const targetPath = config.targetPath ?? "~/dotfiles";
+    // Expand a leading `~` in targetPath against the container's HOME. The
+    // value is passed as a literal argv element to `git clone` (no shell), so
+    // an unexpanded `~` clones into a literal directory named `~` and the
+    // later `docker exec -w ~/dotfiles` fails (Docker does no tilde expansion
+    // on --workdir).
+    let targetPath = config.targetPath ?? "~/dotfiles";
+    if (targetPath.startsWith("~/")) {
+      const homeResult = await this.host.dockerExec(containerId, [
+        "sh",
+        "-c",
+        "printf %s \"$HOME\"",
+      ]);
+      const containerHome = homeResult.stdout.trim();
+      if (containerHome && homeResult.exitCode === 0) {
+        targetPath = containerHome + targetPath.slice(1);
+      } else {
+        // HOME unset in the container. Fall back to /root for root, but this
+        // is unusual; surface the issue rather than clone into a literal `~`.
+        return {
+          success: false,
+          cloned: false,
+          installed: false,
+          error: `Cannot resolve HOME in container for dotfiles targetPath "${targetPath}"`,
+        };
+      }
+    }
 
     const cloneResult = await this.cloneRepository(
       containerId,

@@ -132,13 +132,14 @@ export async function buildContainerAuthority(params: {
     proxy: true,
     sshHost: ssh.sshHost,
     sshUser: ssh.sshUser,
+    sshPort: ssh.sshPort,
     relayPort: relay.relayPort,
     connectionToken,
     workspacePath,
     hostWorkspacePath: workspaceFolder,
     sshAuthority:
       remoteAuthority ??
-      `ssh-remote+${Buffer.from(JSON.stringify({ hostName: ssh.sshHost, user: ssh.sshUser })).toString("hex")}`,
+      `ssh-remote+${Buffer.from(JSON.stringify({ hostName: ssh.sshHost, user: ssh.sshUser, port: ssh.sshPort })).toString("hex")}`,
   };
 
   // Encode the JSON payload as the authority id. The apex-side resolver's

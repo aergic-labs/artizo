@@ -18,7 +18,7 @@
  * out of single quotes: a literal single quote itself.
  *
  * Example:
- *   escapeShellArg("it's working") → 'it'\''s working'
+ *   escapeShellArg("it's working") -> 'it'\''s working'
  */
 export function escapeShellArg(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;

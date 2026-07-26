@@ -7,9 +7,10 @@
  * Platform adapter factory.
  *
  * Selects the correct IPlatformAdapter at build time via dynamic imports
- * gated by HAS_*_ADAPTER flags. esbuild eliminates unused branches; only
- * one adapter module ships per vendor VSIX. No competitor names or code
- * survive in non-target builds.
+ * gated by HAS_*_ADAPTER flags. Each fork has its own adapter module that
+ * carries fork-specific configuration (data folder, server application name,
+ * argv-patch needs, docker run args, etc.); esbuild keeps only the selected
+ * branch and discards the others.
  */
 
 import type { IPlatformAdapter, PlatformConfig } from "./types";

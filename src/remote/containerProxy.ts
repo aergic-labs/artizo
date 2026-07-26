@@ -17,7 +17,7 @@
  * extension host. The container window (opened on Windows) reaches the relay
  * through an `ssh -L` tunnel (Phase 3) and the byte stream flows:
  *
- *   Windows client → ssh -L tunnel → SSH-host relay → docker exec → container
+ *   Windows client -> ssh -L tunnel -> SSH-host relay -> docker exec -> container
  *
  * Lifecycle:
  * - PID file at `/tmp/artizo-relay-<containerId>.pid` for stale detection.
@@ -42,6 +42,8 @@ export interface ProxyAuthorityInfo {
   sshHost: string;
   /** SSH user. */
   sshUser: string;
+  /** SSH port (default 22 when not specified by the authority). */
+  sshPort: number;
   /** Port the relay daemon is listening on (on the SSH host, 127.0.0.1). */
   relayPort: number;
   /** Connection token for the container's server-main.js. */
@@ -70,7 +72,7 @@ export interface RelayDaemonInfo {
   pid: number;
 }
 
-/** Idle timeout in ms (30 min). No connections → daemon exits. */
+/** Idle timeout in ms (30 min). No connections -> daemon exits. */
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
 /** Max consecutive docker exec failures before daemon exits. */
@@ -191,10 +193,21 @@ export async function startRelayDaemon(params: {
   }
 
   // Wait for the port file to appear (daemon writes it once listening).
-  const relayPort = await waitForPortFile(portFile, portFileTimeoutMs);
-  log.info(`[relay] daemon listening on 127.0.0.1:${relayPort}`);
-
-  return { relayPort, pidFile, pid: child.pid };
+  try {
+    const relayPort = await waitForPortFile(portFile, portFileTimeoutMs);
+    log.info(`[relay] daemon listening on 127.0.0.1:${relayPort}`);
+    return { relayPort, pidFile, pid: child.pid };
+  } catch (err) {
+    // Daemon failed to report a port. Kill the detached child so we don't
+    // leave an orphaned `artizo-remote-ssh-helper` (it has a 30-min idle
+    // timeout, but that's a long time to hold the container connection).
+    try {
+      if (child.pid) process.kill(child.pid, "SIGTERM");
+    } catch {
+      /* already dead */
+    }
+    throw err;
+  }
 }
 
 /**
@@ -263,7 +276,7 @@ export function sweepStaleRelays(): number {
  */
 export function decodeSshAuthority(
   remoteAuthority: string | undefined,
-): { sshHost: string; sshUser: string } | undefined {
+): { sshHost: string; sshUser: string; sshPort: number } | undefined {
   if (!remoteAuthority) return undefined;
   const plusIdx = remoteAuthority.indexOf("+");
   if (plusIdx === -1) return undefined;
@@ -282,13 +295,18 @@ export function decodeSshAuthority(
       const parsed = JSON.parse(json) as {
         hostName?: unknown;
         user?: unknown;
+        port?: unknown;
       };
       if (typeof parsed.hostName === "string") {
         const sshUser =
           typeof parsed.user === "string"
             ? parsed.user
             : os.userInfo().username;
-        return { sshHost: parsed.hostName, sshUser };
+        const sshPort =
+          typeof parsed.port === "number" && parsed.port > 0
+            ? parsed.port
+            : 22;
+        return { sshHost: parsed.hostName, sshUser, sshPort };
       }
       return undefined;
     }
@@ -306,10 +324,15 @@ export function decodeSshAuthority(
   const hostPart = atIdx >= 0 ? unescaped.substring(atIdx + 1) : unescaped;
   const sshUser =
     atIdx >= 0 ? unescaped.substring(0, atIdx) : os.userInfo().username;
-  // Strip a trailing :port if present - the ssh target uses just the host.
+  // Strip a trailing :port if present - ssh gets -p <port> separately.
   const colonIdx = hostPart.lastIndexOf(":");
   const sshHost = colonIdx >= 0 ? hostPart.substring(0, colonIdx) : hostPart;
-  if (sshHost) return { sshHost, sshUser };
+  let sshPort = 22;
+  if (colonIdx >= 0) {
+    const portStr = hostPart.substring(colonIdx + 1);
+    if (/^\d+$/.test(portStr)) sshPort = Number(portStr);
+  }
+  if (sshHost) return { sshHost, sshUser, sshPort };
 
   return undefined;
 }

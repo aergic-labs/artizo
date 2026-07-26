@@ -163,4 +163,12 @@ export class TraeAdapter implements IPlatformAdapter {
       return true;
     }
   }
+
+  // Trae CDN provides MD5 sidecar checksums.
+  getChecksumConfig(): {
+    checksumMethod: "sidecar";
+    checksumAlgo: "md5";
+  } {
+    return { checksumMethod: "sidecar", checksumAlgo: "md5" };
+  }
 }

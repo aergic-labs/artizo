@@ -6,8 +6,8 @@
 /**
  * Message protocol between extension host and sidebar webview.
  *
- * Extension → Webview messages push state updates.
- * Webview → Extension messages request actions or state changes.
+ * Extension -> Webview messages push state updates.
+ * Webview -> Extension messages request actions or state changes.
  */
 
 // Data types
@@ -56,7 +56,7 @@ export interface SoftwareFeature {
   enabled: boolean;
 }
 
-// Extension → Webview
+// Extension -> Webview
 export interface ConfigLoadedMessage {
   type: "configLoaded";
   path: string;
@@ -76,7 +76,7 @@ export interface UpdateVolumesMessage {
   volumes: VolumeInfo[];
 }
 
-// Webview → Extension
+// Webview -> Extension
 export type WebviewMessage =
   | { type: "ready" }
   | {
@@ -139,7 +139,7 @@ export interface CommandInfo {
   children?: { id: string; label: string }[];
 }
 
-// Extension → Webview
+// Extension -> Webview
 export type HostMessage =
   | ConfigLoadedMessage
   | { type: "optionToggled"; feature: string; enabled: boolean }

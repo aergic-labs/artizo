@@ -202,6 +202,14 @@ function defaultHttpDownload(
 
         const fileStream = fs.createWriteStream(destPath);
         res.pipe(fileStream);
+        res.on("error", (err) => {
+          // Without this handler, a socket error mid-download never settles
+          // the promise, the WriteStream stays open, and a partial file is
+          // left on disk. Destroy the stream, unlink, and reject.
+          fileStream.destroy();
+          fs.unlink(destPath, () => {});
+          reject(err);
+        });
         fileStream.on("finish", () => {
           fileStream.close();
           resolve();
@@ -271,19 +279,25 @@ export class MarketplaceClient {
 
     const deps = Array.isArray(data.dependencies)
       ? data.dependencies
-          .map(
-            (d: { namespace: string; extension: string }) =>
-              `${d.namespace}.${d.extension}`,
+          .filter(
+            (d: unknown): d is { namespace: string; extension: string } =>
+              typeof d === "object" &&
+              d !== null &&
+              typeof (d as { namespace?: unknown }).namespace === "string" &&
+              typeof (d as { extension?: unknown }).extension === "string",
           )
-          .filter((id: string) => typeof id === "string")
+          .map((d: { namespace: string; extension: string }) => `${d.namespace}.${d.extension}`)
       : [];
     const bundled = Array.isArray(data.bundledExtensions)
       ? data.bundledExtensions
-          .map(
-            (d: { namespace: string; extension: string }) =>
-              `${d.namespace}.${d.extension}`,
+          .filter(
+            (d: unknown): d is { namespace: string; extension: string } =>
+              typeof d === "object" &&
+              d !== null &&
+              typeof (d as { namespace?: unknown }).namespace === "string" &&
+              typeof (d as { extension?: unknown }).extension === "string",
           )
-          .filter((id: string) => typeof id === "string")
+          .map((d: { namespace: string; extension: string }) => `${d.namespace}.${d.extension}`)
       : [];
 
     return {
@@ -328,13 +342,34 @@ export class MarketplaceClient {
     metadata: ExtensionMetadata,
     targetDir: string,
   ): Promise<string> {
+    // Registry-controlled fields form the destination filename. Validate so a
+    // custom/malicious registry can't write outside targetDir via `../` in
+    // namespace/name/version.
+    const fieldRe = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+    if (
+      !fieldRe.test(metadata.namespace) ||
+      !fieldRe.test(metadata.name) ||
+      !fieldRe.test(metadata.version)
+    ) {
+      throw new Error(
+        `Refusing unsafe VSIX filename from registry metadata: ${metadata.namespace}.${metadata.name}-${metadata.version}`,
+      );
+    }
     const fileName = `${metadata.namespace}.${metadata.name}-${metadata.version}.vsix`;
     const destPath = path.join(targetDir, fileName);
+    // Defense in depth: the validated components can't contain separators,
+    // but assert the resolved path stays under targetDir anyway.
+    const resolved = path.resolve(destPath);
+    if (!resolved.startsWith(path.resolve(targetDir) + path.sep) && resolved !== path.resolve(targetDir)) {
+      throw new Error(
+        `Refusing VSIX download outside target directory: ${resolved}`,
+      );
+    }
 
-    await this.httpDownload(metadata.downloadUrl, destPath);
-    await this.verifyChecksum(metadata.downloadUrl, destPath);
+    await this.httpDownload(metadata.downloadUrl, resolved);
+    await this.verifyChecksum(metadata.downloadUrl, resolved);
 
-    return destPath;
+    return resolved;
   }
 
   /**

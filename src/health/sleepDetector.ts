@@ -32,7 +32,8 @@ export class SleepDetector {
       clearTimeout(this.timer);
       this.timer = undefined;
     }
-    this.listeners.clear();
+    // Do not clear listeners: a subsequent start() should still fire them.
+    // Clearing the listener set here would make start() run with zero listeners.
   }
 
   onSleep(listener: SleepListener): void {

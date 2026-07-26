@@ -196,6 +196,7 @@ export class ContainerBootstrap {
     installPath: string,
     authToken?: string,
     authTokenPath?: string,
+    serverBuffer?: Buffer,
   ): Promise<BootstrapResult> {
     const args = ["exec", "-i", "-e", `ARTIZO_SERVER_ROOT=${installPath}`];
     const sendToken = Boolean(authToken && authTokenPath);
@@ -222,11 +223,11 @@ export class ContainerBootstrap {
       child.on("close", resolve);
     });
 
-    // Download server tarball into memory
-    getLogger().info(`[Artizo] downloading server...`);
-    const serverBuf = await this.downloadServer(serverUrl);
+    // Use pre-downloaded buffer if provided, otherwise download here.
+    getLogger().debug(`[install] ${serverBuffer ? "using pre-downloaded" : "downloading"} server...`);
+    const serverBuf = serverBuffer ?? await this.downloadServer(serverUrl);
 
-    getLogger().info(`[Artizo] running setup...`);
+    getLogger().debug(`[install] streaming tarball to setup.sh...`);
     // Auth token goes first as a single base64 line; setup.sh consumes it with
     // one `read` before piping the remaining stdin (the tarball) into gzip.
     if (sendToken) {

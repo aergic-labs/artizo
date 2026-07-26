@@ -10,7 +10,7 @@
  * 1. Creates a local net.Server listening on localPort
  * 2. On each incoming connection, spawns a Node.js relay inside the container
  *    via docker exec that connects to the target port and pipes stdin/stdout
- * 3. Pipes the local socket ↔ docker exec stdio bidirectionally
+ * 3. Pipes the local socket and docker exec stdio bidirectionally
  */
 
 import type { ChildProcess } from 'node:child_process';

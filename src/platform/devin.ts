@@ -105,4 +105,20 @@ export class DevinAdapter implements IPlatformAdapter {
       return true;
     }
   }
+
+  // Devin uses a JSON manifest with a sha256hash field.
+  getChecksumConfig(): {
+    checksumMethod: "manifest";
+    manifestTemplate: string;
+    manifestField: string;
+    checksumAlgo: "sha256";
+  } {
+    return {
+      checksumMethod: "manifest",
+      manifestTemplate:
+        "https://windsurf-stable.codeiumdata.com/${os}-reh-${arch}/${quality}/manifest-${commit}.json",
+      manifestField: "sha256hash",
+      checksumAlgo: "sha256",
+    };
+  }
 }

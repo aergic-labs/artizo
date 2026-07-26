@@ -267,20 +267,28 @@ export async function dockerCp(
 export function execFilePromise(
   command: string,
   args: string[],
+  options?: { cwd?: string },
 ): Promise<ExecResult> {
   return new Promise((resolve) => {
     execFile(
       command,
       args,
+      options ?? {},
       (error: ExecFileException | null, stdout: string, stderr: string) => {
         if (error) {
           // `error.code` is the numeric exit code (or a string like "ENOENT"
-          // for spawn failures). Use 1 as the failure sentinel for non-numeric.
-          const exitCode = typeof error.code === "number" ? error.code : 1;
+          // for spawn failures). Use 1 as the failure sentinel for non-numeric,
+          // and surface the real message in stderr so callers don't see an
+          // empty cause (e.g. "Failed to start container <id>" with no hint).
+          const numericCode = typeof error.code === "number" ? error.code : 1;
+          const errorStderr =
+            typeof error.code === "number"
+              ? error.stderr ?? stderr ?? ""
+              : `${error.message}${error.stderr ? "\n" + error.stderr : ""}`;
           resolve({
-            exitCode,
+            exitCode: numericCode,
             stdout: error.stdout ?? stdout ?? "",
-            stderr: error.stderr ?? stderr ?? "",
+            stderr: errorStderr,
           });
         } else {
           resolve({ exitCode: 0, stdout: stdout ?? "", stderr: stderr ?? "" });

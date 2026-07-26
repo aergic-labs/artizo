@@ -106,7 +106,7 @@ export class ConfigWatcher implements vscode.Disposable {
       "artizo.hasDevcontainerConfig",
       true,
     );
-    this.offerRebuild(uri);
+
 
     // If the document is open, validate it
     const doc = vscode.workspace.textDocuments.find(
@@ -246,29 +246,6 @@ export class ConfigWatcher implements vscode.Disposable {
       }
     }
     return null;
-  }
-
-  private async offerRebuild(_uri: vscode.Uri): Promise<void> {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders || workspaceFolders.length === 0) {
-      return;
-    }
-
-    // Check if the workspace is a remote workspace (connected to a container)
-    const workspaceUri = workspaceFolders[0].uri;
-    if (workspaceUri.scheme !== "vscode-remote") {
-      return;
-    }
-
-    const selection = await vscode.window.showInformationMessage(
-      "Dev container configuration has changed. Rebuild the container to apply changes?",
-      "Rebuild",
-      "Later",
-    );
-
-    if (selection === "Rebuild") {
-      await vscode.commands.executeCommand("artizo.rebuildContainer");
-    }
   }
 
   dispose(): void {

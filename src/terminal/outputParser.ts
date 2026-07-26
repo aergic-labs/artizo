@@ -36,10 +36,10 @@ const KNOWN_TYPES = new Set(["text", "raw", "start", "stop", "progress"]);
 /**
  * Parse a single line of CLI output into a structured event.
  *
- * - Valid JSON with a recognized type field → typed CliOutputEvent
- * - Valid JSON without a recognized type → 'raw' event (preserves JSON text for metadata extraction)
- * - Non-JSON text → 'raw' event with the original text
- * - Empty/whitespace-only lines → null
+ * - Valid JSON with a recognized type field -> typed CliOutputEvent
+ * - Valid JSON without a recognized type -> 'raw' event (preserves JSON text for metadata extraction)
+ * - Non-JSON text -> 'raw' event with the original text
+ * - Empty/whitespace-only lines -> null
  *
  * This ensures JSON lines are never passed raw to a shell or terminal.sendText().
  */

@@ -7,10 +7,10 @@
  * Extension classification based on extensionKind declarations.
  *
  * Every VS Code extension declares extensionKind in its package.json:
- * - ["ui"] → runs locally only (themes, keybindings)
- * - ["workspace"] → runs in the container (language servers, linters)
- * - ["ui", "workspace"] → can run in either; prefer local
- * - No declaration → defaults to ["workspace"] (runs in container)
+ * - ["ui"] -> runs locally only (themes, keybindings)
+ * - ["workspace"] -> runs in the container (language servers, linters)
+ * - ["ui", "workspace"] -> can run in either; prefer local
+ * - No declaration -> defaults to ["workspace"] (runs in container)
  */
 
 /**

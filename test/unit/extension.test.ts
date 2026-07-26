@@ -178,7 +178,7 @@ describe("extension activation", () => {
     const context = createMockContext();
     await activate(context);
 
-    // Core wiring: logger → platform check → settings → resolvers → services → commands
+    // Core wiring: logger -> platform check -> settings -> resolvers -> services -> commands
     expect(mockCreateBuildLogTerminal).toHaveBeenCalledWith(context);
     expect(mockValidatePlatformRuntime).toHaveBeenCalledWith(context);
     expect(mockReadSettings).toHaveBeenCalled();

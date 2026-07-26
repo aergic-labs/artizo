@@ -79,7 +79,7 @@ const oL = totLf ? ((totLh / totLf) * 100).toFixed(1) : "0.0";
 const oB = totBrf ? ((totBrh / totBrf) * 100).toFixed(1) : "0.0";
 const oF = totFnf ? ((totFnh / totFnf) * 100).toFixed(1) : "0.0";
 
-console.log(`${"─".repeat(70)}`);
+console.log(`${"-".repeat(70)}`);
 console.log(
   `${pad(oL, 6)}% L |${pad(oB, 5)}% B |${pad(oF, 5)}% F | ${pad(String(totLf), 4)} lines | OVERALL (${files.length} files)`,
 );

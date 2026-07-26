@@ -126,8 +126,8 @@ export class ExtensionInstaller {
   /**
    * Resolve the container-side extensions directory.
    *
-   * Explicit override (tests) → provider (ServerManager in production)
-   * → throw. The provider is wired so the installer and server share
+   * Explicit override (tests) -> provider (ServerManager in production)
+   * -> throw. The provider is wired so the installer and server share
    * one source of truth and can never diverge.
    */
   private async resolveExtensionsDir(containerId: string): Promise<string> {

@@ -60,6 +60,7 @@ export class SshAgentForwarder implements ISshAgentForwarder {
   private readonly host: Host;
   private readonly hostSshAuthSock: string | undefined;
   private relayProcess: ChildProcess | null = null;
+  private hostConn: import("node:net").Socket | null = null;
 
   constructor(options: SshAgentForwarderOptions) {
     this.dockerPath = options?.dockerPath ?? "docker";
@@ -127,8 +128,14 @@ export class SshAgentForwarder implements ISshAgentForwarder {
           settled = true;
 
           const hostConn = createConnection(this.hostSshAuthSock!);
+          this.hostConn = hostConn;
           hostConn.on("error", () => {
             child.kill();
+          });
+          hostConn.on("close", () => {
+            // Socket closed (host agent gone). Tear down so we don't leak a
+            // half-open connection to the host SSH agent.
+            try { child.kill(); } catch { /* already dead */ }
           });
 
           pipes.stdout.pipe(hostConn);
@@ -144,6 +151,11 @@ export class SshAgentForwarder implements ISshAgentForwarder {
           settled = true;
           reject(new Error("Relay process exited before ready"));
         }
+        // Destroy the host-side socket so it doesn't outlive the relay child.
+        if (this.hostConn) {
+          try { this.hostConn.destroy(); } catch { /* already closed */ }
+          this.hostConn = null;
+        }
       });
     });
   }
@@ -152,6 +164,10 @@ export class SshAgentForwarder implements ISshAgentForwarder {
     if (this.relayProcess) {
       this.relayProcess.kill();
       this.relayProcess = null;
+    }
+    if (this.hostConn) {
+      try { this.hostConn.destroy(); } catch { /* already closed */ }
+      this.hostConn = null;
     }
   }
 }

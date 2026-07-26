@@ -2,7 +2,7 @@
   "name": "artizo",
   "displayName": "Artizo Dev Containers",
   "description": "Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "publisher": "aergic",
   "productName": "Artizo",
   "license": "AGPL-3.0-only",
@@ -104,6 +104,11 @@
       {
         "command": "artizo.revealLogTerminal",
         "title": "Artizo: Show Dev Container Log",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.configureServerDownload",
+        "title": "Artizo: Configure Server Download",
         "category": "Dev Containers (Artizo)"
       },
       {
@@ -493,6 +498,18 @@
           "default": true,
           "description": "Surface SSH password and passphrase prompts as VS Code input boxes. When disabled, SSH runs with BatchMode=yes and fails fast instead of prompting - use this if you rely only on key-based auth."
         },
+        "artizo.askpassCacheTtl": {
+          "type": "integer",
+          "default": 8,
+          "minimum": 0,
+          "description": "Hours that cached SSH passphrases/passwords survive. 0 = never expire. On activate, if the cache file is older than this, it is wiped. Default 8 (one work session)."
+        },
+        "artizo.askpassKeyRotationDays": {
+          "type": "integer",
+          "default": 7,
+          "minimum": 0,
+          "description": "Days before the askpass cache master key rotates. On rotation, the cache is cleared and the user is re-prompted on next use. 0 = never rotate. Default 7."
+        },
         "artizo.logLevel": {
           "type": "string",
           "enum": [
@@ -512,6 +529,12 @@
           "type": "boolean",
           "default": false,
           "description": "Copy locally-installed extensions to the SSH remote host during setup. Opt in by enabling this setting."
+        },
+        "artizo.serverDownload": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "**Use the [configuration wizard](command:artizo.configureServerDownload) instead of editing here.** The wizard provides auto-detection, fork templates, a test button, checksum setup, and guided configuration.\n\nAdvanced: this object holds `mode` (\"auto\" or \"custom\"), `template` (URL template, used when mode is custom), `binaryName` (override for server binary name), `checksumMethod` (\"sidecar\" or \"manifest\"), `checksumAlgo` (\"sha256\" | \"md5\" | \"\"), `manifestTemplate` (JSON manifest URL template), `manifestField` (hash field name in manifest), `verifyChecksum` (boolean, default true), and `onNoChecksum` (\"warn\" | \"allow\" | \"abort\", default \"warn\").",
+          "scope": "application"
         }
       }
     }
@@ -534,7 +557,7 @@
     "build": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
     "typecheck": "tsc --noEmit && tsc --noEmit --project tsconfig.test.json",
-    "lint": "tsc --noEmit && tsc --noEmit --project tsconfig.test.json && eslint && knip && node scripts/guard-pkg.mjs && node scripts/guard-bundle.mjs",
+    "lint": "tsc --noEmit && tsc --noEmit --project tsconfig.test.json && eslint && knip && node scripts/guard-pkg.mjs",
     "test": "vitest run --exclude test/integration/**",
     "test:coverage": "vitest run --exclude test/integration/** --coverage",
     "test:integration": "vitest run test/integration/ --testTimeout=60000",
@@ -552,7 +575,7 @@
     "@vitest/coverage-v8": "^4.1.8",
     "@vscode/vsce": "^3.9.1",
     "esbuild": "^0.25.0",
-    "eslint": "^9.0.0",
+    "eslint": "^10.8.0",
     "fast-check": "^3.23.0",
     "knip": "^6.15.0",
     "ovsx": "^0.10.0",

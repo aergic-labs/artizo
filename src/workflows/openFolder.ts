@@ -171,11 +171,15 @@ export async function openFolderInContainer(
       throw error;
     }
 
-    await ui.showError(
+    const action = await ui.showError(
       `${BRAND_PREFIX} Failed to open folder in container: ${error.message}`,
       "Retry",
       "Cancel",
     );
+
+    if (action === "Retry") {
+      return openFolderInContainer(deps, ui, params);
+    }
 
     throw error;
   }

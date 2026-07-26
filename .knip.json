@@ -13,5 +13,5 @@
     "type": true,
     "function": true
   },
-  "ignoreFiles": ["src/webview/app.js", "src/remote/argvPatchRemoteMain.ts"]
+  "ignoreFiles": ["resources/sidebar/app.js", "resources/serverDownload/app.js", "src/remote/argvPatchRemoteMain.ts"]
 }

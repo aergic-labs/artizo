@@ -120,8 +120,14 @@ describe("PortDetector", () => {
       await detector.triggerPoll();
 
       expect(mockHost.dockerExec).toHaveBeenCalledWith("test-container", [
-        "cat",
-        "/proc/net/tcp",
+        "sh",
+        "-c",
+        "[ -f /proc/net/tcp ] && cat /proc/net/tcp",
+      ]);
+      expect(mockHost.dockerExec).toHaveBeenCalledWith("test-container", [
+        "sh",
+        "-c",
+        "[ -f /proc/net/tcp6 ] && cat /proc/net/tcp6",
       ]);
     });
 
@@ -201,7 +207,7 @@ describe("PortDetector", () => {
       detector.start();
 
       // dockerExec should have been called (initial poll)
-      expect(mockHost.dockerExec).toHaveBeenCalledTimes(1);
+      expect(mockHost.dockerExec).toHaveBeenCalledTimes(2);
     });
 
     it("start does nothing if already started", () => {
@@ -215,7 +221,7 @@ describe("PortDetector", () => {
       detector.start(); // Should not create a second interval
 
       // Only one initial poll
-      expect(mockHost.dockerExec).toHaveBeenCalledTimes(1);
+      expect(mockHost.dockerExec).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -229,17 +235,18 @@ describe("PortDetector", () => {
 
       // Start and let the initial poll complete
       detector.start();
-      // Wait a tick for the async poll to finish
-      await Promise.resolve();
-      await Promise.resolve();
+      // Wait for the async poll to finish (Promise.all + finally)
+      await new Promise((r) => setTimeout(r, 0));
 
       detector.stop();
 
       // After stop, start can be called again (proves interval was cleared)
       mockHost.dockerExec.mockClear();
       detector.start();
-      // start() calls poll() which calls dockerExec
-      expect(mockHost.dockerExec).toHaveBeenCalledTimes(1);
+      // start() calls poll() which calls dockerExec (twice: tcp + tcp6)
+      await vi.waitFor(() => {
+        expect(mockHost.dockerExec).toHaveBeenCalledTimes(2);
+      });
     });
   });
 
@@ -403,8 +410,14 @@ describe("PortDetector", () => {
       await customDetector.triggerPoll();
 
       expect(customHost.dockerExec).toHaveBeenCalledWith("test-container", [
-        "cat",
-        "/proc/net/tcp",
+        "sh",
+        "-c",
+        "[ -f /proc/net/tcp ] && cat /proc/net/tcp",
+      ]);
+      expect(customHost.dockerExec).toHaveBeenCalledWith("test-container", [
+        "sh",
+        "-c",
+        "[ -f /proc/net/tcp6 ] && cat /proc/net/tcp6",
       ]);
 
       customDetector.dispose();

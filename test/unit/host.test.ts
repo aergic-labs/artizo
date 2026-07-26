@@ -198,7 +198,7 @@ describe("Host", () => {
       const host = Host.create({ dockerPath: "docker" });
 
       const result = await host.exec({ cmd: "echo", args: ["hi"] });
-      expect(mockedExec).toHaveBeenCalledWith("echo", ["hi"]);
+      expect(mockedExec).toHaveBeenCalledWith("echo", ["hi"], { cwd: undefined });
       expect(result).toEqual({ exitCode: 0, stdout: "ok", stderr: "" });
     });
 
@@ -207,7 +207,7 @@ describe("Host", () => {
       const host = Host.create({ dockerPath: "docker" });
 
       await host.exec({ cmd: "docker" });
-      expect(mockedExec).toHaveBeenCalledWith("docker", []);
+      expect(mockedExec).toHaveBeenCalledWith("docker", [], { cwd: undefined });
     });
 
     it("throws when running on a managed host", async () => {
@@ -228,12 +228,11 @@ describe("Host", () => {
       const host = Host.create({ dockerPath: "docker" });
 
       await host.dockerExec("abc123", ["ls", "/"]);
-      expect(mockedExec).toHaveBeenCalledWith("docker", [
-        "exec",
-        "abc123",
-        "ls",
-        "/",
-      ]);
+      expect(mockedExec).toHaveBeenCalledWith(
+        "docker",
+        ["exec", "abc123", "ls", "/"],
+        { cwd: undefined },
+      );
     });
 
     it("adds -u and -w options when provided", async () => {
@@ -244,15 +243,11 @@ describe("Host", () => {
         user: "root",
         workdir: "/srv",
       });
-      expect(mockedExec).toHaveBeenCalledWith("docker", [
-        "exec",
-        "-u",
-        "root",
-        "-w",
-        "/srv",
-        "cid",
-        "sh",
-      ]);
+      expect(mockedExec).toHaveBeenCalledWith(
+        "docker",
+        ["exec", "-u", "root", "-w", "/srv", "cid", "sh"],
+        { cwd: undefined },
+      );
     });
   });
 

@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const DEST_DIR = `${ROOT}/tools/busybox`;
 
-// Alpine CDN arch → our runtime arch (matches validateArch in serverManager.ts)
+// Alpine CDN arch -> our runtime arch (matches validateArch in serverManager.ts)
 const ALPINE_TO_RUNTIME = {
   x86_64: "x64",
   aarch64: "arm64",
@@ -164,7 +164,7 @@ async function resolveLocal(runtimeArch) {
   try {
     const buf = await readFile("/bin/busybox.static");
     await writeFile(`${DEST_DIR}/bb-${runtimeArch}`, buf, { mode: 0o755 });
-    console.log(`  busybox-static → tools/busybox/bb-${runtimeArch} (local)`);
+    console.log(`  busybox-static -> tools/busybox/bb-${runtimeArch} (local)`);
     console.log(`  done (${(buf.length / 1024 / 1024).toFixed(1)} MB)`);
   } catch {
     await resolveRemote(

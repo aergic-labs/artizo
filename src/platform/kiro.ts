@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { IPlatformAdapter, PlatformConfig } from "./types";
 
-const DEFAULT_DOWNLOAD_BASE_URL = "https://update.code.visualstudio.com";
+const DEFAULT_DOWNLOAD_BASE_URL = "https://prod.download.desktop.kiro.dev";
 
 export class KiroAdapter implements IPlatformAdapter {
   readonly name: string;
@@ -28,12 +28,16 @@ export class KiroAdapter implements IPlatformAdapter {
 
   getServerDownloadUrl(
     commit: string,
-    quality: string,
+    _quality: string,
     _targetPlatform: string,
     targetArch: string,
     _buildId?: string,
   ): string {
-    return `${DEFAULT_DOWNLOAD_BASE_URL}/commit:${commit}/server-linux-${targetArch}/${quality}`;
+    // Point at the Kiro CDN (matches src/platform/forkTemplates.ts). The
+    // prior fallback pointed at Microsoft's update.code.visualstudio.com,
+    // which 404s for Kiro commits. This path is reached only when neither
+    // the user setting nor product.json provides a template.
+    return `${DEFAULT_DOWNLOAD_BASE_URL}/releases/remotes/${commit}/kiro-reh-linux-${targetArch}.tar.gz`;
   }
 
   getArgvPath(): string {

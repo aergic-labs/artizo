@@ -8,8 +8,8 @@
  *
  * Each supported IDE provides an implementation in its own module
  * (ai/<vendor>.ts), selected at build time by ai/index.ts via dynamic import
- * gated by HAS_*_ADAPTER. esbuild dead-code-eliminates the unused branches, so
- * a vendor's command strings never ship in another vendor's VSIX.
+ * gated by HAS_*_ADAPTER. esbuild keeps only the selected branch so each
+ * fork's VSIX ships its own chat module.
  *
  * The interface is intentionally generic ("submit a prompt") and carries no
  * devcontainer-specific concepts, so any feature can reuse it. Prompt-building

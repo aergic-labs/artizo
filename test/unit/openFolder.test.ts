@@ -256,7 +256,7 @@ describe("openFolderInContainer", () => {
     await openFolderInContainer(deps, ui, { folder: "/project" });
 
     expect(ui.showBuildLog).toHaveBeenCalledWith(
-      expect.stringContaining("Installing"),
+      expect.stringContaining("Ensuring server"),
     );
     expect(ui.showBuildLog).toHaveBeenCalledWith(
       expect.stringContaining("Copying Git config"),

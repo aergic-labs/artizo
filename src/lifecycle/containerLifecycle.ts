@@ -172,9 +172,13 @@ export class ContainerLifecycle implements IContainerLifecycle {
       const pruneResult = await this.execDocker(["image", "prune", "--force"]);
 
       if (pruneResult.exitCode === 0) {
-        // Count removed images from output
-        const lines = pruneResult.stdout.trim().split("\n").filter(Boolean);
-        result.imagesRemoved = lines.length > 1 ? lines.length - 1 : 0;
+        // `docker image prune` output: N `Deleted:`/`deleted:` lines + a
+        // `Total reclaimed space` summary line. Count `deleted:` lines
+        // (case-insensitive) rather than `lines.length - 1`, which over-counts.
+        result.imagesRemoved = pruneResult.stdout
+          .split("\n")
+          .filter((l) => l.trimStart().toLowerCase().startsWith("deleted:"))
+          .length;
       } else {
         result.errors.push(pruneResult.stderr || "Failed to prune images");
       }

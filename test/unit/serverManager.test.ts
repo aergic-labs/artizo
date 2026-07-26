@@ -4,6 +4,19 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import vscodeMock from "../__mocks__/vscode";
+
+vi.mock("vscode", () => ({ default: vscodeMock, ...vscodeMock }));
+
+// Mock download + checksum so installServer doesn't make real HTTP requests.
+vi.mock("../../src/remote/download", () => ({
+  downloadToBuffer: vi.fn().mockResolvedValue(Buffer.alloc(0)),
+}));
+vi.mock("../../src/remote/checksum", () => ({
+  fetchExpectedChecksum: vi.fn().mockResolvedValue({ reason: "no-source" }),
+  verifyHash: vi.fn().mockReturnValue(true),
+  computeHash: vi.fn().mockReturnValue(""),
+}));
 
 vi.mock("../../src/utils/logger", () => ({
   getLogger: () => ({ info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), show: vi.fn(), append: vi.fn() }),
@@ -124,6 +137,10 @@ function setupExecFileResponses(
 const TEST_PRODUCT_INFO: ProductInfo = {
   commit: "abc123def456789",
   quality: "stable",
+  version: "1.0.0",
+  release: "1.0.0",
+  verifyChecksum: false,
+  onNoChecksum: "warn",
   serverApplicationName: "kiro-reh",
   serverDataFolderName: ".kiro-server",
 };
@@ -303,12 +320,8 @@ describe("serverManager", () => {
     describe("ensureInstalled", () => {
       it("skips installation when binary is already present", async () => {
         setupExecFileResponses([
-          // detectArch: uname -m
-          { stdout: "x86_64\n" },
-          // resolveServerCommit: glob finds product.json with commit
-          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
-          // isServerBinaryPresent: test -f bin/kiro-reh
-          { stdout: "" },
+          // probeContainer: arch:::commit:::present
+          { stdout: `x86_64:::${TEST_PRODUCT_INFO.commit}:::yes` },
         ]);
 
         const info = await manager.ensureInstalled("container1");
@@ -318,22 +331,15 @@ describe("serverManager", () => {
         expect(info.installPath).toBe(
           `/tmp/${TEST_PRODUCT_INFO.serverDataFolderName}/bin/${TEST_PRODUCT_INFO.commit}`,
         );
-        // Only 3 calls: uname, glob, test-f (no download)
-        expect(mockHost.dockerExec).toHaveBeenCalledTimes(3);
+        // Only 1 call: the combined probe.
+        expect(mockHost.dockerExec).toHaveBeenCalledTimes(1);
       });
 
       it("installs when binary is not present", async () => {
         setupExecFileResponses([
-          { stdout: "x86_64\n" },
-          // resolveServerCommit: glob finds nothing
-          { stdout: "", exitCode: 1 },
-          // isServerBinaryPresent: test -f (using IDE commit fallback)
-          { stdout: "", stderr: "test failed", exitCode: 1 },
-          // installServer: rm -rf staging
-          { stdout: "" },
-          // installServer: cat product.json from staging
-          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
-          // installServer: mv staging to final
+          // probeContainer: arch:::commit:::not-present
+          { stdout: `x86_64:::${TEST_PRODUCT_INFO.commit}:::no` },
+          // installServer: finalize (patch+move)
           { stdout: "" },
         ]);
 
@@ -341,9 +347,8 @@ describe("serverManager", () => {
 
         expect(info.commit).toBe(TEST_PRODUCT_INFO.commit);
         expect(info.arch).toBe("x64");
-        // 6 dockerExec: uname, glob, test-f, rm, cat, mv
-        expect(mockHost.dockerExec).toHaveBeenCalledTimes(6);
-        // bootstrap called for busybox + deploy + setup
+        // 2 dockerExec: probe + finalize (bootstrap/deploy/setup are mocks)
+        expect(mockHost.dockerExec).toHaveBeenCalledTimes(2);
         expect(mockBootstrapBusybox).toHaveBeenCalledWith("container1", "x64");
         expect(mockDeployTools).toHaveBeenCalledWith("container1");
         expect(mockRunSetup).toHaveBeenCalledWith(
@@ -352,6 +357,7 @@ describe("serverManager", () => {
           expect.any(String),
           undefined,
           expect.any(String),
+          expect.any(Buffer),
         );
       });
 
@@ -359,16 +365,8 @@ describe("serverManager", () => {
         mockReadKiroToken.mockReturnValue('{"token":"mock"}');
 
         setupExecFileResponses([
-          { stdout: "x86_64\n" },
-          // resolveServerCommit: glob finds nothing
-          { stdout: "", exitCode: 1 },
-          // isServerBinaryPresent: test -f
-          { stdout: "", stderr: "test failed", exitCode: 1 },
-          // installServer: rm -rf staging
-          { stdout: "" },
-          // installServer: cat product.json from staging
-          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
-          // installServer: mv staging to final
+          { stdout: `x86_64:::${TEST_PRODUCT_INFO.commit}:::no` },
+          // installServer: finalize
           { stdout: "" },
         ]);
 
@@ -380,21 +378,14 @@ describe("serverManager", () => {
           expect.any(String),
           '{"token":"mock"}',
           expect.any(String),
+          expect.any(Buffer),
         );
       });
 
       it("installs on arm64 when binary is not present", async () => {
         setupExecFileResponses([
-          { stdout: "aarch64\n" },
-          // resolveServerCommit: glob finds nothing
-          { stdout: "", exitCode: 1 },
-          // isServerBinaryPresent: test -f
-          { stdout: "", exitCode: 1 },
-          // installServer: rm -rf staging
-          { stdout: "" },
-          // installServer: cat product.json from staging
-          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
-          // installServer: mv staging to final
+          { stdout: `aarch64:::${TEST_PRODUCT_INFO.commit}:::no` },
+          // installServer: finalize
           { stdout: "" },
         ]);
 
@@ -402,7 +393,7 @@ describe("serverManager", () => {
 
         expect(info.commit).toBe(TEST_PRODUCT_INFO.commit);
         expect(info.arch).toBe("arm64");
-        expect(mockHost.dockerExec).toHaveBeenCalledTimes(6);
+        expect(mockHost.dockerExec).toHaveBeenCalledTimes(2);
         expect(mockBootstrapBusybox).toHaveBeenCalledWith(
           "container1",
           "arm64",
@@ -411,13 +402,7 @@ describe("serverManager", () => {
 
       it("throws when bootstrap busybox fails", async () => {
         setupExecFileResponses([
-          { stdout: "x86_64\n" },
-          // resolveServerCommit: glob finds nothing
-          { stdout: "", exitCode: 1 },
-          // isServerBinaryPresent: test -f
-          { stdout: "", exitCode: 1 },
-          // installServer: rm -rf staging
-          { stdout: "" },
+          { stdout: `x86_64:::${TEST_PRODUCT_INFO.commit}:::no` },
         ]);
 
         mockBootstrapBusybox.mockRejectedValue(new Error("readFile ENOENT"));
@@ -431,13 +416,7 @@ describe("serverManager", () => {
 
       it("throws when setup script fails", async () => {
         setupExecFileResponses([
-          { stdout: "x86_64\n" },
-          // resolveServerCommit: glob finds nothing
-          { stdout: "", exitCode: 1 },
-          // isServerBinaryPresent: test -f
-          { stdout: "", exitCode: 1 },
-          // installServer: rm -rf staging
-          { stdout: "" },
+          { stdout: `x86_64:::${TEST_PRODUCT_INFO.commit}:::no` },
         ]);
 
         mockRunSetup.mockRejectedValue(
@@ -870,17 +849,9 @@ describe("serverManager", () => {
     describe("download URL construction", () => {
       it("passes server download URL to bootstrap runSetup", async () => {
         setupExecFileResponses([
-          // detectArch
-          { stdout: "x86_64\n" },
-          // resolveServerCommit: glob finds nothing (falls back to IDE commit)
-          { stdout: "", exitCode: 1 },
-          // isServerBinaryPresent: test -f (not present)
-          { stdout: "", stderr: "test failed", exitCode: 1 },
-          // installServer: rm -rf staging
-          { stdout: "" },
-          // installServer: cat staging product.json
-          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
-          // installServer: mv staging to final
+          // probeContainer: arch:::commit:::not-present
+          { stdout: `x86_64:::${TEST_PRODUCT_INFO.commit}:::no` },
+          // installServer: finalize (patch+move)
           { stdout: "" },
         ]);
 

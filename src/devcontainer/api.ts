@@ -15,14 +15,27 @@
 import { ProvisionFailedError } from "./provisionError";
 
 let _vendor: any;
+let _vendorError: Error | undefined;
 
-function vendor() {
+function vendor(): any {
   if (!_vendor) {
     // Intentional dynamic require: the vendored CLI is a large in-process
     // module loaded lazily on first use (not at import time), and is not an
     // ES module. A static import would eagerly pull it into activation.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    _vendor = require("../../vendor/devcontainers-cli/src/spec-node/devContainers");
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      _vendor = require("../../vendor/devcontainers-cli/src/spec-node/devContainers");
+      _vendorError = undefined;
+    } catch (err: unknown) {
+      // Reset so a later call can retry (e.g. after the user installs a
+      // missing native dep). Without this, the first failure poisons the
+      // lazy-load cache forever and surfaces raw loader errors on every call.
+      _vendor = undefined;
+      _vendorError = err instanceof Error ? err : new Error(String(err));
+      throw new Error(
+        `Vendored devcontainers CLI failed to load: ${_vendorError.message}`,
+      );
+    }
   }
   return _vendor;
 }

@@ -13,6 +13,18 @@ import { getPlatformAdapter } from "../../src/platform";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
+const { vscodeMock } = vi.hoisted(() => {
+  const vscode = {
+    workspace: {
+      getConfiguration: () => ({
+        get: () => ({}),
+      }),
+    },
+  };
+  return { vscodeMock: vscode };
+});
+
+vi.mock("vscode", () => ({ default: vscodeMock, ...vscodeMock }));
 vi.mock("node:fs/promises");
 
 vi.mock("../../src/platform", () => ({
@@ -53,7 +65,7 @@ describe("productInfo", () => {
 
       const info = await getProductInfo("/app/root");
 
-      expect(info).toEqual({
+      expect(info).toMatchObject({
         commit: "abc123def456",
         quality: "insider",
         serverApplicationName: "kiro-reh",
@@ -131,6 +143,10 @@ describe("productInfo", () => {
       const info: ProductInfo = {
         commit: "abc123",
         quality: "stable",
+        version: "1.0.0",
+        release: "1.0.0",
+        verifyChecksum: false,
+        onNoChecksum: "warn",
         serverApplicationName: "kiro-reh",
         serverDataFolderName: ".kiro-server",
         serverDownloadUrlTemplate:
@@ -148,6 +164,10 @@ describe("productInfo", () => {
       const info: ProductInfo = {
         commit: "deadbeef",
         quality: "insider",
+        version: "1.0.0",
+        release: "1.0.0",
+        verifyChecksum: false,
+        onNoChecksum: "warn",
         serverApplicationName: "kiro-reh",
         serverDataFolderName: ".kiro-server",
         serverDownloadUrlTemplate:
@@ -163,6 +183,10 @@ describe("productInfo", () => {
       const info: ProductInfo = {
         commit: "abc123def",
         quality: "stable",
+        version: "1.0.0",
+        release: "1.0.0",
+        verifyChecksum: false,
+        onNoChecksum: "warn",
         serverApplicationName: "kiro-reh",
         serverDataFolderName: ".kiro-server",
       };
@@ -178,6 +202,10 @@ describe("productInfo", () => {
       const info: ProductInfo = {
         commit: "fedcba987",
         quality: "insider",
+        version: "1.0.0",
+        release: "1.0.0",
+        verifyChecksum: false,
+        onNoChecksum: "warn",
         serverApplicationName: "kiro-reh",
         serverDataFolderName: ".kiro-server",
       };

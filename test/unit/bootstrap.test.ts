@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 vi.mock("../../src/utils/logger", () => ({
-  getLogger: () => ({ info: vi.fn(), error: vi.fn() }),
+  getLogger: () => ({ info: vi.fn(), error: vi.fn(), debug: vi.fn(), trace: vi.fn(), warn: vi.fn() }),
 }));
 
 import { parseHome, ContainerBootstrap } from "../../src/remote/bootstrap";

@@ -8,28 +8,36 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getPlatformAdapter } from "../platform";
+import { mergeServerDownloadConfig, type RawProductFields } from "../platform/mergeConfig";
+import { buildServerDownloadUrl as resolveDownloadUrl } from "./url";
+import type { DownloadTemplateInfo, DownloadAdapter } from "../platform/downloadTypes";
 
 /**
  * Product information extracted from product.json, used for server
  * download URL construction and binary identification.
+ *
+ * Extends DownloadTemplateInfo (the shared interface used by url.ts,
+ * checksum.ts, and the config panel) with artizo-specific fields.
  */
-export interface ProductInfo {
-  commit: string;
-  quality: string;
+export interface ProductInfo extends DownloadTemplateInfo {
   serverApplicationName: string;
   serverDataFolderName: string;
-  serverDownloadUrlTemplate?: string;
   buildId?: string;
 }
 
-export async function getProductInfo(appRoot: string): Promise<ProductInfo> {
+/**
+ * Read product.json from the running IDE's appRoot.
+ */
+export async function readProductJson(appRoot: string): Promise<Record<string, unknown>> {
   const productJsonPath = join(appRoot, "product.json");
-
   const rawContent = await readFile(productJsonPath, "utf-8");
+  return JSON.parse(rawContent);
+}
 
+export async function getProductInfo(appRoot: string): Promise<ProductInfo> {
   let productJson: Record<string, unknown>;
   try {
-    productJson = JSON.parse(rawContent);
+    productJson = await readProductJson(appRoot);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`Failed to parse product.json: ${message}`, { cause: err });
@@ -42,9 +50,6 @@ export async function getProductInfo(appRoot: string): Promise<ProductInfo> {
     throw new Error('product.json is missing "commit" field');
   }
 
-  const quality =
-    typeof productJson.quality === "string" ? productJson.quality : "stable";
-
   const adapter = await getPlatformAdapter();
   const serverApplicationName =
     typeof productJson.serverApplicationName === "string"
@@ -56,16 +61,38 @@ export async function getProductInfo(appRoot: string): Promise<ProductInfo> {
       ? productJson.serverDataFolderName
       : adapter.dataFolderName;
 
-  // Extract download URL template from top-level or nested remote.SSH location
-  let serverDownloadUrlTemplate: string | undefined;
-  if (typeof productJson.serverDownloadUrlTemplate === "string") {
-    serverDownloadUrlTemplate = productJson.serverDownloadUrlTemplate;
-  } else if (productJson.remote && typeof productJson.remote === "object") {
-    const remote = productJson.remote as Record<string, unknown>;
-    if (remote.SSH && typeof remote.SSH === "object") {
-      const ssh = remote.SSH as Record<string, unknown>;
-      if (typeof ssh.serverDownloadUrlTemplate === "string") {
-        serverDownloadUrlTemplate = ssh.serverDownloadUrlTemplate;
+  const raw: RawProductFields = {
+    commit,
+    quality: typeof productJson.quality === "string" ? productJson.quality : "stable",
+    version: typeof productJson.version === "string" ? productJson.version : "",
+    productVersion:
+      typeof productJson.productVersion === "string" ? productJson.productVersion : "",
+    windsurfVersion:
+      typeof productJson.windsurfVersion === "string" ? productJson.windsurfVersion : "",
+    ideVersion:
+      typeof productJson.ideVersion === "string" ? productJson.ideVersion : "",
+    serverApplicationName,
+    serverDataFolderName,
+  };
+
+  const merged = mergeServerDownloadConfig(
+    raw,
+    adapter.getChecksumConfig?.(),
+    "artizo",
+  );
+
+  // Extract download URL template from nested remote.SSH location if present
+  // (product.json-level template is handled by mergeConfig via user settings).
+  if (!merged.serverDownloadUrlTemplate) {
+    if (typeof productJson.serverDownloadUrlTemplate === "string") {
+      merged.serverDownloadUrlTemplate = productJson.serverDownloadUrlTemplate;
+    } else if (productJson.remote && typeof productJson.remote === "object") {
+      const remote = productJson.remote as Record<string, unknown>;
+      if (remote.SSH && typeof remote.SSH === "object") {
+        const ssh = remote.SSH as Record<string, unknown>;
+        if (typeof ssh.serverDownloadUrlTemplate === "string") {
+          merged.serverDownloadUrlTemplate = ssh.serverDownloadUrlTemplate;
+        }
       }
     }
   }
@@ -74,34 +101,22 @@ export async function getProductInfo(appRoot: string): Promise<ProductInfo> {
     typeof productJson.buildId === "string" ? productJson.buildId : undefined;
 
   return {
-    commit,
-    quality,
-    serverApplicationName,
-    serverDataFolderName,
-    serverDownloadUrlTemplate,
+    ...merged,
     buildId,
   };
 }
 
+/**
+ * Resolve the server download URL using the shared template engine.
+ * Delegates to url.ts's buildServerDownloadUrl, which handles
+ * serverDownloadUrlTemplate (custom mode) and adapter fallback.
+ */
 export async function buildServerDownloadUrl(
   info: ProductInfo,
   targetArch: string,
 ): Promise<string> {
-  if (info.serverDownloadUrlTemplate) {
-    return info.serverDownloadUrlTemplate
-      .replace(/\$\{commit\}/g, info.commit)
-      .replace(/\$\{quality\}/g, info.quality)
-      .replace(/\$\{os\}/g, "linux")
-      .replace(/\$\{arch\}/g, targetArch)
-      .replace(/\$\{platform\}/g, targetArch);
-  }
-
   const adapter = await getPlatformAdapter();
-  return adapter.getServerDownloadUrl(
-    info.commit,
-    info.quality,
-    "linux",
-    targetArch,
-    info.buildId,
-  );
+  return resolveDownloadUrl(info, adapter as DownloadAdapter, "linux", targetArch);
 }
+
+// Re-exports removed; config panel imports from ./url directly.

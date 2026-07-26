@@ -70,3 +70,10 @@ Property-based tests live in `test/property/` and use `fast-check`. They test in
 
 ### Docker integration tests are gated
 Integration tests in `test/integration/` require Docker. They're excluded from `npm test` and `npm run test:coverage`. Run them explicitly with `npm run test:integration` or as part of `make check`.
+
+### Shared-from-zygos files
+Some files in this tree are synced 1:1 from the sibling `../zygos` project via `make sync-shared`. The list of synced files lives in the Makefile's `SHARED_FROM_ZYGOS` variable.
+
+**Do not edit those files directly in artizo.** Edit them in `../zygos`, then run `make sync-shared` to propagate. Direct edits here will be silently overwritten on the next sync.
+
+To check whether a file you're about to edit is synced, run `make -n sync-shared` (dry run) or inspect `SHARED_FROM_ZYGOS` in the Makefile. If in doubt, ask before editing.

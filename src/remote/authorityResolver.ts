@@ -99,6 +99,8 @@ export class RemoteAuthorityResolver {
   private readonly dockerPath: string;
   private serverManager: IServerManager | undefined;
   private forwardServer: net.Server | undefined;
+  /** Active sockets + docker exec children from forwardContainerPort. */
+  private readonly forwardConnections: Set<{ socket: net.Socket; child: import("node:child_process").ChildProcess }> = new Set();
   /** Extension install path (for locating bundled askpass scripts). */
   private readonly extensionPath: string | undefined;
   /**
@@ -138,6 +140,13 @@ export class RemoteAuthorityResolver {
       }
       this.forwardServer = undefined;
     }
+    // Destroy active sockets and kill docker exec children so spawned relay
+    // processes don't keep running until the container side exits.
+    for (const conn of this.forwardConnections) {
+      try { conn.child.kill("SIGTERM"); } catch { /* already dead */ }
+      try { conn.socket.destroy(); } catch { /* already closed */ }
+    }
+    this.forwardConnections.clear();
   }
 
   /**
@@ -331,6 +340,7 @@ export class RemoteAuthorityResolver {
         const controller = await startManagedSshTunnel({
           sshHost: proxy.sshHost,
           sshUser: proxy.sshUser,
+          sshPort: proxy.sshPort,
           remotePort: proxy.relayPort,
           askpass,
         });
@@ -367,7 +377,7 @@ export class RemoteAuthorityResolver {
         // a bad password.
         if (askpass?.server.usedHostPassword) {
           logToFile("[Resolver] evicting host password cache entries");
-          askpass.server.evictHostPasswords();
+          await askpass.server.evictHostPasswords();
         }
         const action = await vscode.window.showErrorMessage(
           `Artizo SSH tunnel failed: ${message}`,
@@ -426,7 +436,7 @@ export class RemoteAuthorityResolver {
 
     if (this.serverManager) {
       try {
-        logToFile(`[Resolver] Installing server...`);
+        logToFile(`[Resolver] Ensuring server is installed...`);
         await this.serverManager.ensureInstalled(containerId);
         logToFile(`[Resolver] Starting server...`);
         const serverInfo = await this.serverManager.start(containerId);
@@ -497,6 +507,12 @@ export class RemoteAuthorityResolver {
             ],
             { stdio: ["pipe", "pipe", "pipe"] },
           );
+
+          const conn = { socket: localSocket, child };
+          this.forwardConnections.add(conn);
+          const removeConn = () => this.forwardConnections.delete(conn);
+          localSocket.on("close", removeConn);
+          child.on("exit", removeConn);
 
           pipeDockerRelay(child, localSocket);
           localSocket.resume();
@@ -597,6 +613,11 @@ function tryParseProxyPayload(id: string): ProxyAuthorityInfo | undefined {
   if (typeof parsed.relayPort !== "number") return undefined;
   if (typeof parsed.connectionToken !== "string") return undefined;
   if (typeof parsed.workspacePath !== "string") return undefined;
+  // sshPort defaults to 22 for payloads encoded before this field existed.
+  const sshPort =
+    typeof parsed.sshPort === "number" && parsed.sshPort > 0
+      ? parsed.sshPort
+      : 22;
   // hostWorkspacePath + sshAuthority are optional (added later).
   const hostWorkspacePath =
     typeof parsed.hostWorkspacePath === "string"
@@ -608,6 +629,7 @@ function tryParseProxyPayload(id: string): ProxyAuthorityInfo | undefined {
     proxy: true,
     sshHost: parsed.sshHost,
     sshUser: parsed.sshUser,
+    sshPort,
     relayPort: parsed.relayPort,
     connectionToken: parsed.connectionToken,
     workspacePath: parsed.workspacePath,

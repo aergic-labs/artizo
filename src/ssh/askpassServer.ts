@@ -3,27 +3,43 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-/** SSH askpass server. Listens on a Unix socket (Unix) or named pipe (Windows). */
+/**
+ * SSH askpass server.
+ *
+ * Listens on a Unix socket (Unix) or named pipe (Windows). When ssh needs
+ * a password/passphrase, the askpass script connects and sends the prompt;
+ * a VS Code input box is shown and the password (or cancellation) returned.
+ *
+ * Flow:
+ *   ssh -> askpass.sh/cmd -> askpass-main.js -> socket -> this server ->
+ *   vscode.window.showInputBox({password: true}) -> response back
+ *
+ * The server is per-resolve (one socket per SSH connection) and is
+ * disposed when the connection is torn down.
+ */
 
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import type { Logger } from "../utils/logger";
-import { getCached, setCached, evict, validatePassphrase, parseKeyPath } from "./askpassCache";
+import type { Logger } from "../common/logger";
+import { getCached, setCached, evict, parseKeyPath, validatePassphrase } from "./askpassCache";
 
 export interface AskpassServerDeps {
-  showPrompt(
-    prompt: string,
-    errorMessage?: string,
-  ): Thenable<string | undefined>;
+  /** Show the password prompt to the user. Returns the password or undefined.
+   * errorMessage is shown when retrying after a wrong passphrase. */
+  showPrompt(prompt: string, errorMessage?: string): Thenable<string | undefined>;
 }
 
 export class AskpassServer {
   private server: net.Server | undefined;
   private socketPath = "";
+  private stopping = false;
   private readonly pending = new Map<net.Socket, { buffer: string }>();
+  /** Prompts for host passwords (non-key) handled this session.
+   * Used to evict bad passwords on resolve failure. */
+  private readonly hostPrompts = new Set<string>();
   /**
    * Per-server shared secret. The askpass client must present this token or
    * the request is rejected. Passed to the client out-of-band via an env var
@@ -31,9 +47,6 @@ export class AskpassServer {
    * the socket cannot harvest cached secrets or trigger prompts.
    */
   private readonly authToken = crypto.randomBytes(32).toString("hex");
-  /** Host password prompts handled this session. Used to evict bad
-   * passwords on SSH failure so a retry re-prompts instead of reusing. */
-  private readonly hostPrompts = new Set<string>();
 
   constructor(
     private readonly logger: Logger,
@@ -45,21 +58,10 @@ export class AskpassServer {
     return this.authToken;
   }
 
-  /** True if any host password prompts were handled this session. */
-  get usedHostPassword(): boolean {
-    return this.hostPrompts.size > 0;
-  }
-
-  /** Evict all host password cache entries from this session.
-   * Called on resolve failure so a retry doesn't reuse a bad password. */
-  evictHostPasswords(): void {
-    for (const prompt of this.hostPrompts) {
-      evict(prompt);
-    }
-    this.hostPrompts.clear();
-  }
-
-  /** Start listening. Returns the socket path. */
+  /**
+   * Start the askpass server. Returns the socket path that the askpass
+   * scripts connect to.
+   */
   async start(): Promise<string> {
     this.socketPath = this.generateSocketPath();
     const server = net.createServer((socket) => this.handleConnection(socket));
@@ -87,6 +89,7 @@ export class AskpassServer {
   }
 
   async stop(): Promise<void> {
+    this.stopping = true;
     for (const [socket] of this.pending) {
       try {
         socket.destroy();
@@ -97,16 +100,20 @@ export class AskpassServer {
     this.pending.clear();
     const server = this.server;
     if (server) {
+      // Destroy any connection that arrives after we start closing.
+      server.removeAllListeners("connection");
+      server.on("connection", (s: net.Socket) => s.destroy());
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
       });
       this.server = undefined;
     }
+    // Clean up the socket file (Unix only - named pipes are auto-removed).
     if (this.socketPath && process.platform !== "win32") {
       try {
         fs.unlinkSync(this.socketPath);
       } catch {
-        // ignore
+        // ignore - may already be gone
       }
     }
     this.logger.info("[askpass] stopped");
@@ -116,7 +123,22 @@ export class AskpassServer {
     return this.socketPath;
   }
 
+  /** True if any host password prompts were handled this session. */
+  get usedHostPassword(): boolean {
+    return this.hostPrompts.size > 0;
+  }
+
+  /** Evict all host password cache entries from this session.
+   * Called on resolve failure so a retry doesn't reuse a bad password. */
+  async evictHostPasswords(): Promise<void> {
+    for (const prompt of this.hostPrompts) {
+      await evict(prompt);
+    }
+    this.hostPrompts.clear();
+  }
+
   private handleConnection(socket: net.Socket): void {
+    if (this.stopping) { socket.destroy(); return; }
     this.pending.set(socket, { buffer: "" });
 
     socket.on("data", (data: Buffer) => {
@@ -159,14 +181,14 @@ export class AskpassServer {
         return;
       }
       const prompt = parsed.request;
-      const cached = getCached(prompt);
+
+      const cached = await getCached(prompt);
       if (cached !== undefined) {
-        this.logger.info(
-          `[askpass] cache hit for: ${prompt}`,
-        );
+        this.logger.info(`[askpass] CACHE HIT for: ${prompt}`);
         this.respond(socket, { password: cached });
         return;
       }
+      this.logger.info(`[askpass] CACHE MISS for: ${prompt}`);
 
       // For key passphrases, validate before returning to ssh. ssh-keygen
       // does not retry askpass, so a wrong passphrase returned to ssh is a
@@ -187,29 +209,23 @@ export class AskpassServer {
         }
 
         if (!keyPath) {
-          // Non-key prompt (host password). Can't pre-validate. Track it
-          // so the caller can evict on SSH failure, cache best-effort, and
-          // return to ssh.
+          // Non-key prompt (host password). Can't pre-validate. Cache
+          // best-effort and return to ssh.
           this.hostPrompts.add(prompt);
-          this.logger.info(
-            `[askpass] host password (${
-              password.length === 0 ? "empty" : "value"
-            }) for: ${prompt}`,
-          );
-          const result = setCached(prompt, password);
+          const result = await setCached(prompt, password);
           if (!result.stored) {
             this.logger.info(`[askpass] cache store failed: ${result.error}`);
+          } else {
+            this.logger.info(`[askpass] CACHED host password for: ${prompt}`);
           }
           this.respond(socket, { password });
           return;
         }
 
         const result = validatePassphrase(keyPath, password);
-        this.logger.info(
-          `[askpass] validatePassphrase(key=${keyPath}, pass=${password.length === 0 ? "empty" : "value"}) => valid=${result.valid}${result.error ? ` err=${result.error}` : ""}`,
-        );
         if (result.valid) {
-          setCached(prompt, password);
+          await setCached(prompt, password, true);
+          this.logger.info(`[askpass] CACHED passphrase for: ${prompt}`);
           this.respond(socket, { password });
           return;
         }
@@ -236,8 +252,12 @@ export class AskpassServer {
   private generateSocketPath(): string {
     const id = crypto.randomBytes(16).toString("hex");
     if (process.platform === "win32") {
-      return `\\\\.\\pipe\\artizo-askpass-${id}`;
+      // Named pipes on Windows live in \\.\pipe\
+      return `\\\\.\\pipe\\aergic-askpass-${id}`;
     }
-    return path.join(os.tmpdir(), `artizo-askpass-${id}.sock`);
+    // Unix socket - use the OS temp dir, keep the path short
+    // (108-char limit on Linux).
+    const tmp = os.tmpdir();
+    return path.join(tmp, `aergic-askpass-${id}.sock`);
   }
 }

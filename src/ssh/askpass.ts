@@ -80,10 +80,10 @@ export function sshEnvForAskpass(
     SSH_ASKPASS: handle.askpassScript,
     SSH_ASKPASS_REQUIRE: "force",
     DISPLAY: "artizo",
-    ARTIZO_SSH_ASKPASS_HANDLE: handle.server.handle,
-    ARTIZO_SSH_ASKPASS_TOKEN: handle.server.token,
-    ARTIZO_SSH_ASKPASS_NODE: handle.nodePath,
-    ARTIZO_SSH_ASKPASS_MAIN: handle.askpassMain,
+    AERGIC_SSH_ASKPASS_HANDLE: handle.server.handle,
+    AERGIC_SSH_ASKPASS_TOKEN: handle.server.token,
+    AERGIC_SSH_ASKPASS_NODE: handle.nodePath,
+    AERGIC_SSH_ASKPASS_MAIN: handle.askpassMain,
   };
 }
 

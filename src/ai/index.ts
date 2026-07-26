@@ -7,10 +7,9 @@
  * AI assist factory.
  *
  * Selects the correct AiAssist implementation at build time via dynamic imports
- * gated by HAS_*_ADAPTER flags. esbuild eliminates the unused branches, so only
- * one vendor's chat module (and its command strings) ships per VSIX. This
- * mirrors platform/index.ts; keep the same dynamic-import pattern so the
- * vendor-isolation guarantee holds.
+ * gated by HAS_*_ADAPTER flags. Each fork's chat module ships only with that
+ * fork's VSIX; esbuild keeps only the selected branch. This mirrors
+ * platform/index.ts; keep the same dynamic-import pattern.
  */
 
 import type { AiAssist } from "./types";

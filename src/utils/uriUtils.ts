@@ -141,7 +141,7 @@ export function normalizeFsPath(uri: { fsPath: string }): string {
  * When inside a managed container, the authority encodes the original host
  * path - decode it. Otherwise returns the raw fsPath.
  *
- * IMPORTANT: do NOT normalize path separators here. The
+ * Do NOT normalize path separators here. The
  * `artizo.local_folder` / `devcontainer.local_folder` Docker labels are set
  * by us from the raw fsPath (backslashes on Windows). The resolver and
  * label filters must match that exact string. Normalizing to forward slashes

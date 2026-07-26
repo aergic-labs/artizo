@@ -401,6 +401,7 @@ describe("RemoteAuthorityResolver - State 4 proxy path", () => {
     expect(mockStartManagedSshTunnel).toHaveBeenCalledWith({
       sshHost: "34.136.190.14",
       sshUser: "dev",
+      sshPort: 22,
       remotePort: 9888,
       askpass: undefined,
     });
@@ -489,7 +490,7 @@ describe("RemoteAuthorityResolver - State 4 proxy path", () => {
       workspacePath: "/w",
     });
 
-    // No docker mock → findContainerByLabel returns undefined → error.
+    // No docker mock -> findContainerByLabel returns undefined -> error.
     mockExecFile.mockImplementation((_cmd: any, _args: any, ...rest: any[]) => {
       const cb = typeof rest[0] === "function" ? rest[0] : rest[1];
       cb(null, "", "");

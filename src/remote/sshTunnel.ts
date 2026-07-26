@@ -90,7 +90,7 @@ const MIN_RESPAWN_GAP_MS = 15_000;
  *   3. `ssh` from PATH (last resort - works on macOS/Linux, and on Windows
  *      if OpenSSH isn't in the standard location)
  *
- * Note: `C:\Windows\System32\OpenSSH\ssh.exe` has NO spaces in the path.
+ * `C:\Windows\System32\OpenSSH\ssh.exe` has NO spaces in the path.
  * The earlier concern about spaces was a confusion with Git's path
  * (`C:\Program Files\Git\usr\bin\ssh.exe`).
  */
@@ -142,12 +142,15 @@ export function resolveSshBinary(): string {
 export async function startSshTunnel(params: {
   sshHost: string;
   sshUser: string;
+  /** SSH port (default 22). */
+  sshPort?: number;
   remotePort: number;
   localPort: number;
   /** Askpass handle. When undefined, ssh runs with BatchMode=yes. */
   askpass?: AskpassHandle;
 }): Promise<TunnelInfo> {
   const { sshHost, sshUser, remotePort, localPort, askpass } = params;
+  const sshPort = params.sshPort ?? 22;
   const log = getLogger();
 
   const sshBinary = resolveSshBinary();
@@ -165,23 +168,9 @@ export async function startSshTunnel(params: {
     "-L",
     `${localPort}:127.0.0.1:${remotePort}`,
     ...batchModeArgs(!!askpass),
-    `${sshUser}@${sshHost}`,
-    "-N",
-    "-E",
-    logPath,
-    "-o",
-    "ServerAliveInterval=15",
-    "-o",
-    "ServerAliveCountMax=4",
-    "-o",
-    "ExitOnForwardFailure=yes",
-    "-o",
-    "TCPKeepAlive=yes",
-    "-o",
-    "ConnectTimeout=15",
-    "-o",
-    "StrictHostKeyChecking=accept-new",
   ];
+  if (sshPort !== 22) args.push("-p", String(sshPort));
+  args.push(`${sshUser}@${sshHost}`, "-N", "-E", logPath, "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4", "-o", "ExitOnForwardFailure=yes", "-o", "TCPKeepAlive=yes", "-o", "ConnectTimeout=15", "-o", "StrictHostKeyChecking=accept-new");
 
   log.info(`[tunnel] spawning: ${sshBinary} ${args.join(" ")}`);
 
@@ -298,7 +287,7 @@ function probePort(port: number): Promise<boolean> {
  *      `maxBindRetries` times. This handles the rare race where another
  *      process grabs our port between `pickFreePort()` and ssh binding it.
  *   3. Monitors the ssh process. If it dies unexpectedly (not via `stop()`),
- *      respawns it with exponential backoff (1s → 2s → 4s → ... capped at 30s).
+ *      respawns it with exponential backoff (1s -> 2s -> 4s -> ... capped at 30s).
  *      The local port is reused across respawns so VS Code's connection stays
  *      valid.
  *
@@ -308,13 +297,15 @@ function probePort(port: number): Promise<boolean> {
 export async function startManagedSshTunnel(params: {
   sshHost: string;
   sshUser: string;
+  /** SSH port (default 22). */
+  sshPort?: number;
   remotePort: number;
   /** Max attempts to find a free local port if ssh -L fails to bind. */
   maxBindRetries?: number;
   /** Askpass handle for password/passphrase prompts. */
   askpass?: AskpassHandle;
 }): Promise<TunnelController> {
-  const { sshHost, sshUser, remotePort, askpass } = params;
+  const { sshHost, sshUser, sshPort, remotePort, askpass } = params;
   const maxBindRetries = params.maxBindRetries ?? 3;
   const log = getLogger();
 
@@ -330,6 +321,7 @@ export async function startManagedSshTunnel(params: {
       tunnel = await startSshTunnel({
         sshHost,
         sshUser,
+        sshPort,
         remotePort,
         localPort: candidatePort,
         askpass,
@@ -357,6 +349,8 @@ export async function startManagedSshTunnel(params: {
   let stopped = false;
   let backoffMs = INITIAL_BACKOFF_MS;
   let respawnTimer: ReturnType<typeof setTimeout> | undefined;
+  let consecutiveRespawnFailures = 0;
+  const MAX_RESPAWN_FAILURES = 10;
 
   const scheduleRespawn = (): void => {
     if (stopped) return;
@@ -370,17 +364,44 @@ export async function startManagedSshTunnel(params: {
         const respawned = await startSshTunnel({
           sshHost,
           sshUser,
+          sshPort,
           remotePort,
           localPort: port,
           askpass,
         });
+        // stop() may have run during the await above. Kill the respawned
+        // tunnel so we don't leak a live ssh process that nothing will stop.
+        if (stopped) {
+          stopSshTunnel(respawned);
+          return;
+        }
         current = respawned;
         backoffMs = INITIAL_BACKOFF_MS; // reset on success
+        consecutiveRespawnFailures = 0;
         attachSentinel(respawned);
         log.info(`[tunnel] respawned on port ${port}`);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         log.info(`[tunnel] respawn failed: ${msg}`);
+        consecutiveRespawnFailures++;
+        if (consecutiveRespawnFailures >= MAX_RESPAWN_FAILURES) {
+          log.info(
+            `[tunnel] giving up after ${consecutiveRespawnFailures} consecutive respawn failures`,
+          );
+          void vscode.window
+            .showErrorMessage(
+              `Artizo SSH tunnel could not be re-established after ${consecutiveRespawnFailures} attempts. Reload the window to retry.`,
+              "Reload",
+            )
+            .then((action) => {
+              if (action === "Reload") {
+                void vscode.commands.executeCommand(
+                  "workbench.action.reloadWindow",
+                );
+              }
+            });
+          return;
+        }
         backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
         scheduleRespawn();
       } finally {

@@ -330,7 +330,7 @@ describe("reopenInContainer", () => {
     await reopenInContainer(deps, ui, { workspaceFolder: "/workspace", workspaceUri: vscode.Uri.file("/workspace") });
 
     expect(ui.showBuildLog).toHaveBeenCalledWith(
-      expect.stringContaining("Installing"),
+      expect.stringContaining("Ensuring server"),
     );
     expect(ui.showBuildLog).toHaveBeenCalledWith(
       expect.stringContaining("Starting"),

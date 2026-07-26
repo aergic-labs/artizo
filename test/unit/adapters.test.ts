@@ -129,24 +129,6 @@ describe("adapters", () => {
         expect(result).toBe("https://github.com/foo/bar");
       });
     });
-
-    describe("pickTemplate", () => {
-      it("delegates to showQuickPick with templates", async () => {
-        const ui = stubUi();
-        const adapter = buildCloneInVolumeUI(ui, "https://example.com/repo");
-        vi.mocked(vscode.window.showQuickPick).mockResolvedValue(
-          "ubuntu" as any,
-        );
-
-        const result = await adapter.pickTemplate(["alpine", "ubuntu"]);
-
-        expect(result).toBe("ubuntu");
-        expect(vscode.window.showQuickPick).toHaveBeenCalledWith(
-          ["alpine", "ubuntu"],
-          { placeHolder: "Select a devcontainer template" },
-        );
-      });
-    });
   });
 
   describe("buildAttachUI", () => {

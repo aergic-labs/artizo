@@ -36,9 +36,6 @@ vi.mock("vscode", () => {
       onDidChangeTextDocument: vi.fn().mockReturnValue({ dispose: vi.fn() }),
       workspaceFolders: undefined,
     },
-    window: {
-      showInformationMessage: vi.fn().mockResolvedValue(undefined),
-    },
     commands: {
       executeCommand: vi.fn().mockResolvedValue(undefined),
     },
@@ -377,133 +374,7 @@ describe("ConfigWatcher", () => {
     });
   });
 
-  describe("offerRebuild", () => {
-    it("does not offer rebuild when no workspace folders", () => {
-      (vscode.workspace as any).workspaceFolders = undefined;
-      watcher = new ConfigWatcher(options);
 
-      const fileWatcher = vi.mocked(vscode.workspace.createFileSystemWatcher)
-        .mock.results[0].value;
-      const onDidChangeHandler = fileWatcher.onDidChange.mock.calls[0][0];
-
-      const uri = {
-        toString: () => "file:///workspace/devcontainer.json",
-        fsPath: "/workspace/devcontainer.json",
-        scheme: "file",
-      };
-      onDidChangeHandler(uri);
-
-      expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
-      watcher.dispose();
-    });
-
-    it("does not offer rebuild when workspace is local (not remote)", () => {
-      (vscode.workspace as any).workspaceFolders = [
-        { uri: { scheme: "file", fsPath: "/workspace" } },
-      ];
-      watcher = new ConfigWatcher(options);
-
-      const fileWatcher = vi.mocked(vscode.workspace.createFileSystemWatcher)
-        .mock.results[0].value;
-      const onDidChangeHandler = fileWatcher.onDidChange.mock.calls[0][0];
-
-      const uri = {
-        toString: () => "file:///workspace/devcontainer.json",
-        fsPath: "/workspace/devcontainer.json",
-        scheme: "file",
-      };
-      onDidChangeHandler(uri);
-
-      expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
-      watcher.dispose();
-    });
-
-    it("offers rebuild when workspace is remote and config changes", async () => {
-      (vscode.workspace as any).workspaceFolders = [
-        { uri: { scheme: "vscode-remote", fsPath: "/workspace" } },
-      ];
-      watcher = new ConfigWatcher(options);
-
-      const fileWatcher = vi.mocked(vscode.workspace.createFileSystemWatcher)
-        .mock.results[0].value;
-      const onDidChangeHandler = fileWatcher.onDidChange.mock.calls[0][0];
-
-      const uri = {
-        toString: () => "file:///workspace/devcontainer.json",
-        fsPath: "/workspace/devcontainer.json",
-        scheme: "file",
-      };
-      onDidChangeHandler(uri);
-
-      // Wait for the async offerRebuild to complete
-      await vi.waitFor(() => {
-        expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-          "Dev container configuration has changed. Rebuild the container to apply changes?",
-          "Rebuild",
-          "Later",
-        );
-      });
-      watcher.dispose();
-    });
-
-    it("executes rebuild command when user selects Rebuild", async () => {
-      (vscode.workspace as any).workspaceFolders = [
-        { uri: { scheme: "vscode-remote", fsPath: "/workspace" } },
-      ];
-      vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(
-        "Rebuild" as any,
-      );
-
-      watcher = new ConfigWatcher(options);
-
-      const fileWatcher = vi.mocked(vscode.workspace.createFileSystemWatcher)
-        .mock.results[0].value;
-      const onDidChangeHandler = fileWatcher.onDidChange.mock.calls[0][0];
-
-      const uri = {
-        toString: () => "file:///workspace/devcontainer.json",
-        fsPath: "/workspace/devcontainer.json",
-        scheme: "file",
-      };
-      onDidChangeHandler(uri);
-
-      await vi.waitFor(() => {
-        expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
-          "artizo.rebuildContainer",
-        );
-      });
-      watcher.dispose();
-    });
-
-    it("does not rebuild when user selects Later", async () => {
-      (vscode.workspace as any).workspaceFolders = [
-        { uri: { scheme: "vscode-remote", fsPath: "/workspace" } },
-      ];
-      vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(
-        "Later" as any,
-      );
-
-      watcher = new ConfigWatcher(options);
-
-      const fileWatcher = vi.mocked(vscode.workspace.createFileSystemWatcher)
-        .mock.results[0].value;
-      const onDidChangeHandler = fileWatcher.onDidChange.mock.calls[0][0];
-
-      const uri = {
-        toString: () => "file:///workspace/devcontainer.json",
-        fsPath: "/workspace/devcontainer.json",
-        scheme: "file",
-      };
-      onDidChangeHandler(uri);
-
-      // Give async operations time to complete
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
-        "artizo.rebuildContainer",
-      );
-      watcher.dispose();
-    });
-  });
 
   describe("dispose", () => {
     it("disposes all resources", () => {

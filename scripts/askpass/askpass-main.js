@@ -1,14 +1,20 @@
 #!/usr/bin/env node
 /**
- * Artizo SSH askpass - Node.js client.
+ * Aergic SSH askpass - Node.js client.
  * Copyright (c) 2026 Aergic Labs, LLC
  * SPDX-License-Identifier: AGPL-3.0-only
+ *
+ * Connects to the extension host via a Unix socket (Unix) or named pipe
+ * (Windows), sends the prompt, and writes the password to stdout for ssh.
  */
 
 const net = require("net");
 const fs = require("fs");
 
-/** Decode octal escape sequences (\nnn) that ssh may add for non-ASCII characters. */
+/**
+ * Decode octal escape sequences (\nnn) that ssh may add for non-ASCII
+ * characters (e.g. Chinese prompts). The octal sequences are UTF-8 bytes.
+ */
 function decodeOctalEscapes(str) {
   if (!str) return str;
   const matches = str.match(/(?:\\[0-7]{3})+/g);
@@ -34,10 +40,9 @@ if (!rawPrompt || !socketPath) {
 
 const prompt = decodeOctalEscapes(rawPrompt);
 
-const pid = process.pid;
-console.error(`[askpass:${pid}] prompt="${prompt}" socket=${socketPath}`);
-
-// macOS socket files may not be visible via existsSync immediately.
+// On some systems (e.g. macOS), Unix domain socket files may not be
+// visible via fs.existsSync even when the socket is listening. Retry a
+// few times, then attempt connection anyway.
 let retries = 3;
 while (!fs.existsSync(socketPath) && retries > 0) {
   const now = Date.now();
@@ -53,7 +58,7 @@ let response = "";
 client.on("connect", () => {
   // The token authenticates this client to the extension host. It's passed
   // via env (not argv) so it never appears in the process listing.
-  const token = process.env.ARTIZO_SSH_ASKPASS_TOKEN || "";
+  const token = process.env.AERGIC_SSH_ASKPASS_TOKEN || "";
   const request = JSON.stringify({ request: prompt, token }) + "\n";
   client.write(request);
 });
@@ -65,15 +70,13 @@ client.on("data", (data) => {
       const parsed = JSON.parse(response.trim());
       if (parsed.password !== undefined) {
         process.stdout.write(parsed.password);
-        console.error(`[askpass:${pid}] got password`);
         client.end();
         process.exit(0);
       } else if (parsed.cancelled) {
-        console.error(`[askpass:${pid}] cancelled`);
         client.end();
         process.exit(1);
       } else {
-        console.error(`[askpass:${pid}] invalid response: ${JSON.stringify(parsed)}`);
+        console.error("Invalid response from extension");
         client.end();
         process.exit(1);
       }
@@ -97,7 +100,7 @@ client.on("end", () => {
   }
 });
 
-// 5-minute timeout.
+// 5-minute timeout - if the user walks away, don't hang forever.
 setTimeout(
   () => {
     console.error("Timeout waiting for password");

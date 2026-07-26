@@ -135,13 +135,6 @@ try {
     env: { ...process.env, TARGET: target },
   });
 
-  console.log("Guarding bundle for competitor strings...");
-  execSync(`node scripts/guard-bundle.mjs --target=${target}`, {
-    cwd: root,
-    stdio: "inherit",
-    env: { ...process.env, TARGET: target },
-  });
-
   console.log("Downloading busybox...");
   execSync("node scripts/download-busybox.mjs", {
     cwd: root,

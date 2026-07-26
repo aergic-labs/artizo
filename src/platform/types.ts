@@ -3,6 +3,11 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
+/*
+ * Copyright (c) 2026 Aergic Labs, LLC
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
 /**
  * Platform adapter interface.
  *
@@ -10,6 +15,8 @@
  * Vendor-specific configuration is sourced from vendor/<target>/package.json
  * so each adapter file contains only its own platform's logic.
  */
+
+import type { DownloadAdapter } from "./downloadTypes";
 
 /**
  * Platform configuration read from vendor package.json.
@@ -35,9 +42,7 @@ export interface PlatformConfig {
 /**
  * Adapter for IDE-specific behavior: server download URLs, argv paths, etc.
  */
-export interface IPlatformAdapter {
-  /** Human-readable IDE name */
-  readonly name: string;
+export interface IPlatformAdapter extends DownloadAdapter {
   /** Config data folder name */
   readonly dataFolderName: string;
   /** Remote server application name */
@@ -47,6 +52,10 @@ export interface IPlatformAdapter {
    * Construct the server download URL for the given commit and target platform/arch.
    * May be async (Trae fetches version from CDN endpoint).
    */
+  // Extends DownloadAdapter.getServerDownloadUrl with an optional
+  // buildId param for forks that need it (kiro, trae). Callers using the
+  // DownloadAdapter interface (url.ts) call with 4 args; buildId is
+  // simply not passed.
   getServerDownloadUrl(
     commit: string,
     quality: string,
@@ -84,10 +93,9 @@ export interface IPlatformAdapter {
    * remote home (POSIX, no leading slash). Probed in order by the
    * side-load bootstrap. The first that exists wins.
    *
-   * Returns just the current platform's own server dir - the
-   * side-load runs from inside the target IDE, so cross-platform
-   * fallbacks would only leak competitor names into the bundle (which
-   * guard-bundle.mjs rejects). One entry per adapter.
+   * Returns just the current platform's own server dir - the side-load
+   * runs from inside the target IDE, so cross-platform fallbacks would
+   * only probe irrelevant dirs. One entry per adapter.
    */
   getRemoteExtensionsDirCandidates(): string[];
 
@@ -105,6 +113,22 @@ export interface IPlatformAdapter {
 
   /** Path for auth token inside container, relative to HOME. */
   getAuthTokenPath?(): string;
+
+  /**
+   * Checksum configuration for the detected fork. Returns undefined if
+   * the fork provides no checksum source.
+   *
+   * - `checksumAlgo`: if set, sidecar URL is derived as
+   *   `resolvedDownloadUrl + "." + algo`.
+   * - `manifestTemplate`: full URL template for a JSON manifest.
+   * - `manifestField`: field name in the manifest JSON.
+   */
+  getChecksumConfig?(): {
+    checksumMethod?: "sidecar" | "manifest";
+    checksumAlgo?: "sha256" | "md5";
+    manifestTemplate?: string;
+    manifestField?: string;
+  };
 
   /**
    * Validate that this extension is running on the expected IDE platform.

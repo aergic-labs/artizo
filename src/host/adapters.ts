@@ -52,12 +52,6 @@ export function buildCloneInVolumeUI(
     async promptRepoUrl() {
       return repoUrl;
     },
-    async pickTemplate(templates: string[]) {
-      const picked = await vscode.window.showQuickPick(templates, {
-        placeHolder: "Select a devcontainer template",
-      });
-      return picked;
-    },
   };
 }
 

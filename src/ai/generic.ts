@@ -52,7 +52,7 @@ const TARGETS: ProbeTarget[] = [
 /**
  * Generic AI assist for VSCodium and other editors without a vendor-specific
  * chat integration. Probes for installed AI extensions at runtime in priority
- * order (Cline → Roo Code → Zoo Code). Only returns isAvailable() === true
+ * order (Cline -> Roo Code -> Zoo Code). Only returns isAvailable() === true
  * when an extension is actually installed and active.
  */
 export class GenericAiAssist implements AiAssist {

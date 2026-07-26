@@ -1,5 +1,5 @@
 #!/bin/sh
-# Artizo SSH askpass - Unix wrapper.
+# Aergic SSH askpass - Unix wrapper.
 # Copyright (c) 2026 Aergic Labs, LLC
 # SPDX-License-Identifier: AGPL-3.0-only
 #
@@ -11,19 +11,19 @@ if [ -z "$PROMPT" ]; then
 	read -r PROMPT
 fi
 
-if [ -z "$ARTIZO_SSH_ASKPASS_HANDLE" ]; then
-	echo "ARTIZO_SSH_ASKPASS_HANDLE not set" >&2
+if [ -z "$AERGIC_SSH_ASKPASS_HANDLE" ]; then
+	echo "AERGIC_SSH_ASKPASS_HANDLE not set" >&2
 	exit 1
 fi
 
-if [ -z "$ARTIZO_SSH_ASKPASS_NODE" ]; then
-	echo "ARTIZO_SSH_ASKPASS_NODE not set" >&2
+if [ -z "$AERGIC_SSH_ASKPASS_NODE" ]; then
+	echo "AERGIC_SSH_ASKPASS_NODE not set" >&2
 	exit 1
 fi
 
-if [ -z "$ARTIZO_SSH_ASKPASS_MAIN" ]; then
-	echo "ARTIZO_SSH_ASKPASS_MAIN not set" >&2
+if [ -z "$AERGIC_SSH_ASKPASS_MAIN" ]; then
+	echo "AERGIC_SSH_ASKPASS_MAIN not set" >&2
 	exit 1
 fi
 
-exec "$ARTIZO_SSH_ASKPASS_NODE" "$ARTIZO_SSH_ASKPASS_MAIN" "$PROMPT" "$ARTIZO_SSH_ASKPASS_HANDLE"
+exec "$AERGIC_SSH_ASKPASS_NODE" "$AERGIC_SSH_ASKPASS_MAIN" "$PROMPT" "$AERGIC_SSH_ASKPASS_HANDLE"

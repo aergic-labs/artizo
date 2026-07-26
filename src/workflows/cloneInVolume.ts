@@ -3,8 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { URI } from "vscode-uri";
-import { dockerVolumeCreate, dockerRun } from "../utils/dockerUtils";
+import { execFilePromise, dockerVolumeCreate, dockerRun } from "../utils/dockerUtils";
 import { BRAND, BRAND_PREFIX } from "../utils/constants";
 import type { BuildResult, WorkflowDependencies, WorkflowUI } from "./types";
 import { launchProvision, withDefaults } from "../devcontainer/api";
@@ -20,7 +19,6 @@ import {
 
 export interface CloneInVolumeUI extends WorkflowUI {
   promptRepoUrl(): Promise<string | undefined>;
-  pickTemplate(templates: string[]): Promise<string | undefined>;
 }
 
 export interface CloneInVolumeParams {
@@ -56,133 +54,145 @@ export async function cloneInVolume(
     }
 
     const volumeName = generateVolumeName(repoUrl);
+    let volumeCreated = false;
 
-    let configFile: string | undefined;
+    try {
+      await ui.showProgress(
+        `${BRAND}: Cloning Repository`,
+        async (progress, token) => {
+          progress.report({ message: `Cloning ${repoUrl}...` });
 
-    await ui.showProgress(
-      `${BRAND}: Cloning Repository`,
-      async (progress, token) => {
-        progress.report({ message: `Cloning ${repoUrl}...` });
+          const createResult = await dockerVolumeCreate(volumeName, {
+            labels: { "com.artizo.managed": "true" },
+          });
+          if (createResult.exitCode !== 0) {
+            throw new Error(`Failed to create volume: ${createResult.stderr}`);
+          }
+          volumeCreated = true;
 
-        const createResult = await dockerVolumeCreate(volumeName, {
-          labels: { "com.artizo.managed": "true" },
-        });
-        if (createResult.exitCode !== 0) {
-          throw new Error(`Failed to create volume: ${createResult.stderr}`);
-        }
+          progress.report({ message: "Cloning repository into volume..." });
+          const cloneResult = await dockerRun({
+            image: "alpine/git",
+            command: ["clone", repoUrl, "/workspace"],
+            volumes: [{ source: volumeName, target: "/workspace" }],
+          });
+          if (cloneResult.exitCode !== 0) {
+            throw new Error(`Failed to clone repository: ${cloneResult.stderr}`);
+          }
+          throwIfCancelled(token);
+        },
+      );
 
-        progress.report({ message: "Cloning repository into volume..." });
-        const cloneResult = await dockerRun({
-          image: "alpine/git",
-          command: ["clone", repoUrl, "/workspace"],
-          volumes: [{ source: volumeName, target: "/workspace" }],
-        });
-        if (cloneResult.exitCode !== 0) {
-          throw new Error(`Failed to clone repository: ${cloneResult.stderr}`);
-        }
-        throwIfCancelled(token);
-      },
-    );
-
-    // Detect config
-    const checkResult = await dockerRun({
-      image: "alpine",
-      command: ["test", "-f", "/workspace/.devcontainer/devcontainer.json"],
-      volumes: [{ source: volumeName, target: "/workspace" }],
-    });
-
-    const hasConfig = checkResult.exitCode === 0;
-
-    if (!hasConfig) {
-      const checkAltResult = await dockerRun({
+      // Detect config. If none is present, fail fast with a clear error -
+      // the prior template flow always aborted (empty picker) and leaked the
+      // volume. The CLI default (no devcontainer.json) is not a useful
+      // outcome for a clone-in-volume workflow.
+      const checkResult = await dockerRun({
         image: "alpine",
-        command: ["test", "-f", "/workspace/.devcontainer.json"],
+        command: ["test", "-f", "/workspace/.devcontainer/devcontainer.json"],
         volumes: [{ source: volumeName, target: "/workspace" }],
       });
 
-      if (checkAltResult.exitCode !== 0) {
-        const template = await ui.pickTemplate([]);
-        if (!template) {
-          return undefined;
-        }
-        configFile = undefined;
-      }
-    }
+      let hasConfig = checkResult.exitCode === 0;
 
-    // Build phase
-    let result:
-      | {
-          containerId: string;
-          remoteUser: string;
-          remoteWorkspaceFolder: string;
-          finishBackgroundTasks?: () => Promise<void>;
-        }
-      | undefined;
-
-    await ui.showProgress(
-      `${BRAND}: Building Container`,
-      async (progress, token) => {
-        progress.report({ message: "Building container..." });
-
-        const platformTarget = (await getPlatformAdapter()).name.toLowerCase();
-        const idLabels = [
-          `artizo.target=${platformTarget}`,
-          `artizo.volume_name=${volumeName}`,
-          `devcontainer.volume_name=${volumeName}`,
-          `artizo.volume_folder=/workspace`,
-          `devcontainer.volume_folder=/workspace`,
-        ];
-        const options = withDefaults({
-          workspaceFolder: "/workspace",
-          configFile: configFile ? URI.file(configFile) : undefined,
-          additionalMounts: [
-            `source=${volumeName},target=/workspace,type=volume`,
-          ],
-          additionalLabels: idLabels,
-          log: (text: string) => ui.showBuildLog(text),
+      if (!hasConfig) {
+        const checkAltResult = await dockerRun({
+          image: "alpine",
+          command: ["test", "-f", "/workspace/.devcontainer.json"],
+          volumes: [{ source: volumeName, target: "/workspace" }],
         });
+        hasConfig = checkAltResult.exitCode === 0;
+      }
 
-        // Clone-in-volume always creates fresh, so no skip-filter.
-        result = await launchProvision(options, undefined, undefined, idLabels);
-        throwIfCancelled(token);
-      },
-    );
+      if (!hasConfig) {
+        throw new Error(
+          `No devcontainer.json found in ${repoUrl}. Clone in volume requires a .devcontainer/devcontainer.json or .devcontainer.json at the repo root.`,
+        );
+      }
 
-    await finishBackgroundTasks(result);
+      // Build phase
+      let result:
+        | {
+            containerId: string;
+            remoteUser: string;
+            remoteWorkspaceFolder: string;
+            finishBackgroundTasks?: () => Promise<void>;
+          }
+        | undefined;
 
-    if (!result?.containerId) {
-      throw new Error("CLI did not return a container ID");
+      await ui.showProgress(
+        `${BRAND}: Building Container`,
+        async (progress, token) => {
+          progress.report({ message: "Building container..." });
+
+          const platformTarget = (await getPlatformAdapter()).name.toLowerCase();
+          const idLabels = [
+            `artizo.target=${platformTarget}`,
+            `artizo.volume_name=${volumeName}`,
+            `devcontainer.volume_name=${volumeName}`,
+            `artizo.volume_folder=/workspace`,
+            `devcontainer.volume_folder=/workspace`,
+          ];
+          const options = withDefaults({
+            workspaceFolder: "/workspace",
+            additionalMounts: [
+              `source=${volumeName},target=/workspace,type=volume`,
+            ],
+            additionalLabels: idLabels,
+            log: (text: string) => ui.showBuildLog(text),
+          });
+
+          // Clone-in-volume always creates fresh, so no skip-filter.
+          result = await launchProvision(options, undefined, undefined, idLabels);
+          throwIfCancelled(token);
+        },
+      );
+
+      await finishBackgroundTasks(result);
+
+      if (!result?.containerId) {
+        throw new Error("CLI did not return a container ID");
+      }
+
+      const buildResult: BuildResult = {
+        containerId: result.containerId,
+        remoteUser: result.remoteUser,
+        remoteWorkspaceFolder: result.remoteWorkspaceFolder,
+      };
+
+      const connectInfo = await connectToContainer(
+        deps,
+        ui,
+        buildResult.containerId,
+      );
+
+      ui.showInfo(`${BRAND_PREFIX} Container ready, opening workspace.`);
+
+      await buildAuthorityAndOpen({
+        deps,
+        ui,
+        scheme: "artizo-container",
+        id: repoUrl,
+        containerId: buildResult.containerId,
+        containerPort: connectInfo.port,
+        installPath: connectInfo.installPath,
+        connectionToken: connectInfo.connectionToken,
+        workspaceFolder: repoUrl,
+        workspacePath: "/workspace",
+        uriPath: "/workspace",
+      });
+
+      return { volumeName, containerId: buildResult.containerId };
+    } catch (err: unknown) {
+      // Any failure/cancellation path: reclaim the volume so we don't leak a
+      // cloned repo that nothing will ever manage.
+      if (volumeCreated) {
+        await execFilePromise("docker", ["volume", "rm", volumeName]).catch(
+          () => {},
+        );
+      }
+      throw err;
     }
-
-    const buildResult: BuildResult = {
-      containerId: result.containerId,
-      remoteUser: result.remoteUser,
-      remoteWorkspaceFolder: result.remoteWorkspaceFolder,
-    };
-
-    const connectInfo = await connectToContainer(
-      deps,
-      ui,
-      buildResult.containerId,
-    );
-
-    ui.showInfo(`${BRAND_PREFIX} Container ready, opening workspace.`);
-
-    await buildAuthorityAndOpen({
-      deps,
-      ui,
-      scheme: "artizo-container",
-      id: repoUrl,
-      containerId: buildResult.containerId,
-      containerPort: connectInfo.port,
-      installPath: connectInfo.installPath,
-      connectionToken: connectInfo.connectionToken,
-      workspaceFolder: repoUrl,
-      workspacePath: "/workspace",
-      uriPath: "/workspace",
-    });
-
-    return { volumeName, containerId: buildResult.containerId };
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
 
@@ -194,11 +204,15 @@ export async function cloneInVolume(
       throw error;
     }
 
-    await ui.showError(
+    const action = await ui.showError(
       `${BRAND_PREFIX} Failed to clone repository in volume: ${error.message}`,
       "Retry",
       "Cancel",
     );
+
+    if (action === "Retry") {
+      return cloneInVolume(deps, ui, params);
+    }
 
     throw error;
   }

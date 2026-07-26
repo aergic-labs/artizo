@@ -21,9 +21,9 @@
  *
  * Under extensionKind ["workspace","ui"], the side that has Docker owns
  * container lifecycle:
- *   - LocalHost and RemoteSSH: workspace-side has Docker → workspace owns.
+ *   - LocalHost and RemoteSSH: workspace-side has Docker -> workspace owns.
  *   - LocalDevContainer and RemoteSSHDevContainer: workspace-side is trapped
- *     in the container → UI owns.
+ *     in the container -> UI owns.
  *
  * The prior UI-only design forced terminal-RPC to reach Docker across hosts.
  * Making the extension ["workspace","ui"] lets the side that has Docker

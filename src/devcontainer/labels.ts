@@ -77,20 +77,38 @@ export function isDevContainer(labels: Record<string, string>): boolean {
  * or a JSON object depending on docker version.
  */
 export function parseContainerList(stdout: string): ContainerSummary[] {
-  return stdout
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const c = JSON.parse(line);
-      return {
-        id: c.ID || "",
-        name: (c.Names || "").replace(/^\/+/, ""),
-        state: c.State || "",
-        image: c.Image || "",
-        labels: parseLabelString(c.Labels || ""),
+  const summaries: ContainerSummary[] = [];
+  for (const line of stdout.trim().split("\n")) {
+    if (!line) continue;
+    let c: {
+      ID?: string;
+      Names?: string;
+      State?: string;
+      Image?: string;
+      Labels?: string;
+    };
+    try {
+      c = JSON.parse(line) as {
+        ID?: string;
+        Names?: string;
+        State?: string;
+        Image?: string;
+        Labels?: string;
       };
+    } catch {
+      // Skip malformed lines (docker CLI warnings, proxy banners). Logging
+      // here would require injecting a logger; callers log the count.
+      continue;
+    }
+    summaries.push({
+      id: c.ID || "",
+      name: (c.Names || "").replace(/^\/+/, ""),
+      state: c.State || "",
+      image: c.Image || "",
+      labels: parseLabelString(c.Labels || ""),
     });
+  }
+  return summaries;
 }
 
 /** Parse docker's Labels field (string or JSON) into a map. */
@@ -107,7 +125,12 @@ export function parseLabelString(labels: string): Record<string, string> {
   } catch {
     // comma-separated key=value
   }
-  for (const part of labels.split(",")) {
+  // Split on commas that separate key=value pairs, but not commas inside
+  // values. A comma belongs to a value when it isn't immediately followed by
+  // a `key=` (i.e. no `,(?=[^,=]+=)` boundary). Artizo stamps labels like
+  // `artizo.local_folder=C:\\Users\\Doe, John\\project`; a naive split would
+  // corrupt the value.
+  for (const part of labels.split(/,(?=[^,=]+=)/)) {
     const eq = part.indexOf("=");
     if (eq > 0) {
       result[part.slice(0, eq).trim()] = part.slice(eq + 1);

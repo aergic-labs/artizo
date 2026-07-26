@@ -17,7 +17,9 @@ const mockExecFile = vi.mocked(execFile);
 
 function setupExecFileMock(stdout: string, stderr = '', exitCode = 0) {
   mockExecFile.mockReset();
-  mockExecFile.mockImplementation((_cmd, _args, callback: any) => {
+  mockExecFile.mockImplementation((...args: any[]) => {
+    // execFile is called as (cmd, args, callback) or (cmd, args, options, callback).
+    const callback = args[args.length - 1];
     if (exitCode !== 0) {
       const error: any = new Error('Command failed');
       error.stdout = stdout;

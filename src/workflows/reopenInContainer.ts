@@ -94,7 +94,34 @@ export async function reopenInContainer(
           ids.add(id);
         }
       }
-      const existingContainerId = ids.values().next().value;
+      let existingContainerId = ids.values().next().value;
+
+      // Fallback: if the config file moved (e.g. .devcontainer.json ->
+      // .devcontainer/devcontainer.json), the config_file filter would miss
+      // the old container. Drop the config_file filter and match on
+      // local_folder + target only, so we reconnect instead of building a
+      // second container and orphaning the first.
+      if (!existingContainerId) {
+        const fallbackIds = new Set<string>();
+        for (const label of [
+          "artizo.local_folder",
+          "devcontainer.local_folder",
+        ]) {
+          const psResult = await dockerExecPolicy([
+            "ps",
+            "-q",
+            "--no-trunc",
+            "--filter",
+            `label=${label}=${workspaceFolder}`,
+            "--filter",
+            `label=artizo.target=${platformTarget}`,
+          ]);
+          for (const id of psResult.stdout.trim().split("\n").filter(Boolean)) {
+            fallbackIds.add(id);
+          }
+        }
+        existingContainerId = fallbackIds.values().next().value;
+      }
 
       if (existingContainerId) {
         ui.showBuildLog(
@@ -135,51 +162,62 @@ export async function reopenInContainer(
               )
             : undefined;
 
-        if (overrideConfigPath) {
-          const fs = await import("node:fs/promises");
-          const contents = await fs.readFile(overrideConfigPath, "utf-8");
-          ui.showBuildLog(
-            `${BRAND_PREFIX} Override config at ${overrideConfigPath}:\n${contents}`,
+        try {
+          if (overrideConfigPath) {
+            const fs = await import("node:fs/promises");
+            const contents = await fs.readFile(overrideConfigPath, "utf-8");
+            ui.showBuildLog(
+              `${BRAND_PREFIX} Override config at ${overrideConfigPath}:\n${contents}`,
+            );
+          }
+
+          progress.report({ message: "Building container..." });
+          const idLabels = buildIdentityLabels({
+            platformTarget,
+            workspaceFolder,
+            configPath: configResult.configPath,
+          });
+          const options = withDefaults({
+            workspaceFolder,
+            removeExistingContainer: true,
+            additionalLabels: idLabels,
+            configFile: configResult.configPath
+              ? URI.file(configResult.configPath)
+              : undefined,
+            overrideConfigFile: overrideConfigPath
+              ? URI.file(overrideConfigPath)
+              : undefined,
+            log: (text: string) => ui.showBuildLog(text),
+          });
+
+          const result = await launchProvision(
+            options,
+            configResult.configPath,
+            undefined,
+            idLabels,
           );
+
+          await finishBackgroundTasks(result);
+
+          if (!result?.containerId) {
+            throw new Error("CLI did not return a container ID");
+          }
+
+          buildResult = {
+            containerId: result.containerId,
+            remoteUser: result.remoteUser,
+            remoteWorkspaceFolder: result.remoteWorkspaceFolder,
+          };
+        } finally {
+          if (overrideConfigPath) {
+            try {
+              const fs = await import("node:fs/promises");
+              await fs.unlink(overrideConfigPath);
+            } catch {
+              // best effort
+            }
+          }
         }
-
-        progress.report({ message: "Building container..." });
-        const idLabels = buildIdentityLabels({
-          platformTarget,
-          workspaceFolder,
-          configPath: configResult.configPath,
-        });
-        const options = withDefaults({
-          workspaceFolder,
-          removeExistingContainer: true,
-          additionalLabels: idLabels,
-          configFile: configResult.configPath
-            ? URI.file(configResult.configPath)
-            : undefined,
-          overrideConfigFile: overrideConfigPath
-            ? URI.file(overrideConfigPath)
-            : undefined,
-          log: (text: string) => ui.showBuildLog(text),
-        });
-
-        const result = await launchProvision(
-          options,
-          configResult.configPath,
-          undefined,
-          idLabels,
-        );
-
-        await finishBackgroundTasks(result);
-
-        if (!result?.containerId) {
-          throw new Error("CLI did not return a container ID");
-        }
-
-        buildResult = {
-          containerId: result.containerId,
-          remoteUser: result.remoteUser,
-          remoteWorkspaceFolder: result.remoteWorkspaceFolder,
-        };
       }
 
       if (!buildResult) return;

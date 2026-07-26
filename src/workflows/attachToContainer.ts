@@ -115,13 +115,28 @@ export async function attachToContainer(
     let selectedContainer: RunningContainer | undefined;
 
     if (params.containerId) {
-      // Pre-selected: create a minimal container info
-      selectedContainer = {
-        id: params.containerId,
-        name: params.containerId,
-        image: "",
-        status: "running",
-      };
+      // Pre-selected: inspect to get the real container name. Using the raw
+      // ID as the name would persist the attach config under a key that never
+      // matches an attach-by-name flow, so the two flows never share a config.
+      try {
+        const { dockerInspect } = await import("../utils/dockerUtils.js");
+        const info = await dockerInspect(params.containerId);
+        selectedContainer = {
+          id: params.containerId,
+          name: info.name || params.containerId,
+          image: info.config.image,
+          status: info.state.status,
+        };
+      } catch {
+        // Inspect failed (container gone, docker unavailable). Fall back to
+        // the ID so the user still gets a useful error from the start step.
+        selectedContainer = {
+          id: params.containerId,
+          name: params.containerId,
+          image: "",
+          status: "running",
+        };
+      }
     } else {
       const containers = await docker.listRunningContainers();
 
@@ -148,7 +163,7 @@ export async function attachToContainer(
     await ui.showProgress(
       `${BRAND}: Attaching to Container`,
       async (progress, token) => {
-        progress.report({ message: "Installing server..." });
+        progress.report({ message: "Ensuring server is installed..." });
 
         await serverManager.ensureInstalled(selectedContainer!.id);
 
@@ -217,11 +232,15 @@ export async function attachToContainer(
       return;
     }
 
-    await ui.showError(
+    const action = await ui.showError(
       `${BRAND_PREFIX} Failed to attach to container: ${error.message}`,
       "Retry",
       "Cancel",
     );
+
+    if (action === "Retry") {
+      return attachToContainer(deps, ui, docker, params);
+    }
 
     throw error;
   }

@@ -148,48 +148,59 @@ export async function rebuildContainer(
           }
         | undefined;
 
-      await ui.showProgress(
-        `${BRAND}: Starting Container`,
-        async (progress, token) => {
-          progress.report({ message: "Starting container..." });
+      try {
+        await ui.showProgress(
+          `${BRAND}: Starting Container`,
+          async (progress, token) => {
+            progress.report({ message: "Starting container..." });
 
-          const relaunchPlatformTarget = (
-            await getPlatformAdapter()
-          ).name.toLowerCase();
-          const relaunchIdLabels = buildIdentityLabels({
-            platformTarget: relaunchPlatformTarget,
-            workspaceFolder,
-            configPath: configResult!.configPath,
-          });
-          const upOptions = withDefaults({
-            workspaceFolder,
-            removeExistingContainer: true,
-            additionalLabels: relaunchIdLabels,
-            configFile: configResult!.configPath
-              ? URI.file(configResult!.configPath)
-              : undefined,
-            overrideConfigFile: URI.file(overrideConfigPath),
-            log: (text: string) => ui.showBuildLog(text),
-          });
+            const relaunchPlatformTarget = (
+              await getPlatformAdapter()
+            ).name.toLowerCase();
+            const relaunchIdLabels = buildIdentityLabels({
+              platformTarget: relaunchPlatformTarget,
+              workspaceFolder,
+              configPath: configResult!.configPath,
+            });
+            const upOptions = withDefaults({
+              workspaceFolder,
+              removeExistingContainer: true,
+              additionalLabels: relaunchIdLabels,
+              configFile: configResult!.configPath
+                ? URI.file(configResult!.configPath)
+                : undefined,
+              overrideConfigFile: URI.file(overrideConfigPath),
+              log: (text: string) => ui.showBuildLog(text),
+            });
 
-          relaunchResult = await launchProvision(
-            upOptions,
-            configResult!.configPath,
-            "Container start failed",
-            relaunchIdLabels,
-          );
-          throwIfCancelled(token);
-        },
-      );
+            relaunchResult = await launchProvision(
+              upOptions,
+              configResult!.configPath,
+              "Container start failed",
+              relaunchIdLabels,
+            );
+            throwIfCancelled(token);
+          },
+        );
 
-      await finishBackgroundTasks(relaunchResult);
+        await finishBackgroundTasks(relaunchResult);
 
-      if (!relaunchResult?.containerId) {
-        throw new Error("CLI did not return a container ID on restart");
+        if (!relaunchResult?.containerId) {
+          throw new Error("CLI did not return a container ID on restart");
+        }
+
+        containerId = relaunchResult.containerId;
+        remoteWorkspaceFolder = relaunchResult.remoteWorkspaceFolder;
+      } finally {
+        // The override config is a temp file; clean it up so they don't
+        // accumulate across reopens/rebuilds.
+        try {
+          const fs = await import("node:fs/promises");
+          await fs.unlink(overrideConfigPath);
+        } catch {
+          // best effort
+        }
       }
-
-      containerId = relaunchResult.containerId;
-      remoteWorkspaceFolder = relaunchResult.remoteWorkspaceFolder;
     }
 
     const connectInfo = await connectToContainer(
@@ -238,6 +249,10 @@ export async function rebuildContainer(
 
     if (action === "Open Locally") {
       return;
+    }
+
+    if (action === "Retry") {
+      return rebuildContainer(deps, ui, params);
     }
 
     throw error;

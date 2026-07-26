@@ -321,6 +321,10 @@ describe("services", () => {
       const productInfo: ProductInfo = {
         commit: "abc",
         quality: "stable",
+        version: "1.0.0",
+        release: "1.0.0",
+        verifyChecksum: false,
+        onNoChecksum: "warn",
         serverApplicationName: "kiro-server",
         serverDataFolderName: ".kiro-server",
       };
@@ -370,6 +374,10 @@ describe("services", () => {
       const productInfo: ProductInfo = {
         commit: "abc",
         quality: "stable",
+        version: "1.0.0",
+        release: "1.0.0",
+        verifyChecksum: false,
+        onNoChecksum: "warn",
         serverApplicationName: "kiro-server",
         serverDataFolderName: ".kiro-server",
       };

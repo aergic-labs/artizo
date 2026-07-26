@@ -30,6 +30,34 @@ import type { Host } from "../host/host";
 
 declare const HAS_KIRO_ADAPTER: boolean;
 
+/**
+ * Allowlist of commands the sidebar webview may invoke via action/runCommand
+ * messages. The webview is enableScripts:true and its HTML is built from a
+ * template; without an allowlist, any compromise of the webview content
+ * could invoke arbitrary registered commands.
+ */
+const ALLOWED_WEBVIEW_COMMANDS = new Set<string>([
+  "artizo.reopenInContainer",
+  "artizo.rebuildContainer",
+  "artizo.rebuildContainerNoCache",
+  "artizo.rebuildAndReopenInContainer",
+  "artizo.cloneInVolume",
+  "artizo.attachToRunningContainer",
+  "artizo.cleanUpContainers",
+  "artizo.openDevContainerFile",
+  "artizo.openFolderInContainer",
+  "artizo.openFolderInContainerNewWindow",
+  "artizo.addConfiguration",
+  "artizo.configureDevContainer",
+  "artizo.reopenInHost",
+  "artizo.closeRemoteConnection",
+  "artizo.configureServerDownload",
+]);
+
+function isAllowedWebviewCommand(command: string): boolean {
+  return ALLOWED_WEBVIEW_COMMANDS.has(command);
+}
+
 export class SidebarProvider
   implements vscode.WebviewViewProvider, vscode.Disposable
 {
@@ -77,7 +105,7 @@ export class SidebarProvider
     webviewView.webview.options = {
       enableScripts: true,
       localResourceRoots: [
-        vscode.Uri.joinPath(this.extensionUri, "src", "webview"),
+        vscode.Uri.joinPath(this.extensionUri, "resources", "sidebar"),
         vscode.Uri.joinPath(this.extensionUri, "resources"),
       ],
     };
@@ -94,10 +122,16 @@ export class SidebarProvider
     }
     this._pendingMessages = [];
 
+    // Per-view disposables: resolveWebviewView can fire multiple times (view
+    // closed/reopened/moved). Pushing into the shared `_disposables` would
+    // accumulate N handlers that re-fire loadConfig per save. Track per-view
+    // and dispose them when this view goes away.
+    const viewDisposables: vscode.Disposable[] = [];
+
     // Lazy load: data is fetched when the webview becomes visible.
     // The ready message fires when JS loads (even if hidden), gated on
     // visibility there. If hidden at ready, onDidChangeVisibility picks up.
-    this._disposables.push(
+    viewDisposables.push(
       webviewView.onDidChangeVisibility(() => {
         if (this._view?.visible) {
           this.loadData();
@@ -109,7 +143,7 @@ export class SidebarProvider
     // Reload config whenever devcontainer.json is saved to disk.
     // Catches manual user edits, AI writes, and git changes - not just
     // the explicit loadConfig() calls after our own edits.
-    this._disposables.push(
+    viewDisposables.push(
       vscode.workspace.onDidSaveTextDocument(async (doc) => {
         const wsPath = getHostWorkspaceFolder() ?? "";
         const configPath = await this.configManager.getConfigPath(
@@ -120,6 +154,10 @@ export class SidebarProvider
         }
       }),
     );
+
+    webviewView.onDidDispose(() => {
+      for (const d of viewDisposables) d.dispose();
+    });
   }
 
   /** Push a message to the webview. */
@@ -239,7 +277,11 @@ export class SidebarProvider
     removeRunArg: (m) => this.configEdit.removeRunArg(m.index),
     setRemoteUser: (m) => this.configEdit.setRemoteUser(m.user),
     action: (m) => {
-      vscode.commands.executeCommand(m.command);
+      if (isAllowedWebviewCommand(m.command)) {
+        vscode.commands.executeCommand(m.command);
+      } else {
+        getLogger().warn(`[sidebar] rejected webview command: ${m.command}`);
+      }
     },
     containerAction: (m) =>
       this.handleContainerAction(m.action, m.containerId, m.containerName),
@@ -252,7 +294,11 @@ export class SidebarProvider
       }
     },
     runCommand: (m) => {
-      vscode.commands.executeCommand(m.command);
+      if (isAllowedWebviewCommand(m.command)) {
+        vscode.commands.executeCommand(m.command);
+      } else {
+        getLogger().warn(`[sidebar] rejected webview command: ${m.command}`);
+      }
     },
     generateConfig: (m) => this.generateConfig(m.image),
     aiGenerateConfig: () => this.ai.aiGenerateConfig(),
@@ -342,16 +388,16 @@ export class SidebarProvider
   // HTML
   private getHtml(webview: vscode.Webview): string {
     const appUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this.extensionUri, "src", "webview", "app.js"),
+      vscode.Uri.joinPath(this.extensionUri, "resources", "sidebar", "app.js"),
     );
     const styleUri = webview.asWebviewUri(
-      vscode.Uri.joinPath(this.extensionUri, "src", "webview", "styles.css"),
+      vscode.Uri.joinPath(this.extensionUri, "resources", "sidebar", "styles.css"),
     );
 
     const htmlPath = vscode.Uri.joinPath(
       this.extensionUri,
-      "src",
-      "webview",
+      "resources",
+      "sidebar",
       "index.html",
     );
     let html = fs.readFileSync(htmlPath.fsPath, "utf-8");

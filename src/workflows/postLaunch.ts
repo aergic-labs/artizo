@@ -68,7 +68,7 @@ export async function connectToContainer(
     const serverName = (await getPlatformAdapter()).serverApplicationName;
 
     throwIfCancelled(token);
-    report(`Installing ${serverName} into container...`);
+    report(`Ensuring server is installed...`);
     await serverManager.ensureInstalled(containerId);
 
     if (config) {

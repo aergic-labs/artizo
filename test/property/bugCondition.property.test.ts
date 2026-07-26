@@ -96,6 +96,10 @@ describe("Server connection regression properties", () => {
         {
           commit: "0000000000000000000000000000000000000000",
           quality: "stable",
+          version: "1.0.0",
+          release: "1.0.0",
+          verifyChecksum: false,
+          onNoChecksum: "warn",
           serverApplicationName: "kiro-reh",
           serverDataFolderName: ".kiro-server",
           serverDownloadUrlTemplate:

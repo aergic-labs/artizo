@@ -63,19 +63,37 @@ export function parseProcNetTcp(content: string): number[] {
     const localAddress = parts[1];
     const state = parts[3];
 
+    // Skip header lines from a second /proc/net file concatenated in. A
+    // header's local_address is the literal string "local_address".
+    if (localAddress === "local_address") {
+      continue;
+    }
+
     // Only interested in LISTEN state (0A)
     if (state !== "0A") {
       continue;
     }
 
     // Parse local_address (format: HEXIP:HEXPORT)
-    const [hexIp, hexPort] = localAddress.split(":");
+    const colonIdx = localAddress.lastIndexOf(":");
+    if (colonIdx === -1) {
+      continue;
+    }
+    const hexIp = localAddress.slice(0, colonIdx);
+    const hexPort = localAddress.slice(colonIdx + 1);
     if (!hexIp || !hexPort) {
       continue;
     }
 
-    // Only include ports listening on all interfaces or localhost
-    if (hexIp !== "00000000" && hexIp !== "0100007F") {
+    // IPv4: all interfaces (00000000) or localhost (0100007F).
+    // IPv6: all interfaces (00000000000000000000000000000000) or localhost
+    // (00000000000000000000000000000001). Accept the v6 wildcard/loopback so
+    // dual-stack listeners are detected.
+    const isV4Wildcard = hexIp === "00000000";
+    const isV4Loopback = hexIp === "0100007F";
+    const isV6Wildcard = hexIp === "00000000000000000000000000000000";
+    const isV6Loopback = hexIp === "00000000000000000000000000000001";
+    if (!isV4Wildcard && !isV4Loopback && !isV6Wildcard && !isV6Loopback) {
       continue;
     }
 
@@ -157,12 +175,10 @@ export class PortDetector implements IPortDetector {
 
     this.polling = true;
     try {
-      const result = await this.readProcNetTcp();
-      if (result.exitCode !== 0) {
-        return;
-      }
+      const results = await this.readProcNetTcp();
+      const stdout = results.map((r) => r.stdout).join("\n");
 
-      const listeningPorts = parseProcNetTcp(result.stdout);
+      const listeningPorts = parseProcNetTcp(stdout);
 
       for (const port of listeningPorts) {
         if (!this.knownPorts.has(port)) {
@@ -177,7 +193,22 @@ export class PortDetector implements IPortDetector {
     }
   }
 
-  private readProcNetTcp(): Promise<ExecResult> {
-    return this.host.dockerExec(this.containerId, ["cat", "/proc/net/tcp"]);
+  // Read /proc/net/tcp (IPv4) and /proc/net/tcp6 (IPv6) separately.
+  // tcp6 may not exist on kernels with IPv6 disabled (ipv6.disable=1,
+  // blacklisted module, or compiled out). A combined `cat tcp tcp6` would
+  // exit non-zero when tcp6 is missing and discard the valid tcp output.
+  private async readProcNetTcp(): Promise<ExecResult[]> {
+    return Promise.all([
+      this.host.dockerExec(this.containerId, [
+        "sh",
+        "-c",
+        "[ -f /proc/net/tcp ] && cat /proc/net/tcp",
+      ]),
+      this.host.dockerExec(this.containerId, [
+        "sh",
+        "-c",
+        "[ -f /proc/net/tcp6 ] && cat /proc/net/tcp6",
+      ]),
+    ]);
   }
 }

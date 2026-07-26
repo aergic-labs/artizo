@@ -35,6 +35,9 @@ vi.mock("../../src/utils/dockerUtils", () => ({
   dockerExec: vi
     .fn()
     .mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
+  execFilePromise: vi
+    .fn()
+    .mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
 }));
 
 vi.mock("../../src/devcontainer/api", async () => {
@@ -138,7 +141,6 @@ function createMockUI(overrides?: Partial<CloneInVolumeUI>): CloneInVolumeUI {
     promptRepoUrl: vi
       .fn()
       .mockResolvedValue("https://github.com/user/repo.git"),
-    pickTemplate: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -261,7 +263,7 @@ describe("cloneInVolume", () => {
     });
 
     expect(ui.showBuildLog).toHaveBeenCalledWith(
-      expect.stringContaining("Installing"),
+      expect.stringContaining("Ensuring server"),
     );
     expect(ui.showBuildLog).toHaveBeenCalledWith(
       expect.stringContaining("Copying Git config"),

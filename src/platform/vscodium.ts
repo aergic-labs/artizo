@@ -8,6 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { readFileSync } from "node:fs";
 import type { IPlatformAdapter, PlatformConfig } from "./types";
+import { resolveNearestVsCodiumVersion } from "../remote/vscodiumFeed";
 
 const VSCodium_REH_BASE =
   "https://github.com/VSCodium/vscodium/releases/download";
@@ -31,12 +32,39 @@ export class VSCodiumAdapter implements IPlatformAdapter {
     _targetPlatform: string,
     targetArch: string,
     _buildId?: string,
-  ): string {
-    const version = this.readVSCodiumVersion() || "0.0.0";
-    return `${VSCodium_REH_BASE}/${version}/vscodium-reh-linux-${targetArch}-${version}.tar.gz`;
+  ): string | Promise<string> {
+    // code-oss ships no reh tarballs. Use VSCodium's reh at the highest
+    // release <= the local version. Commit patching after extraction
+    // aligns the tarball's product.json with the IDE's commit.
+    if (this.isCodeOss()) {
+      return this.vscodeOssDownloadUrl(targetArch);
+    }
+    return this.vscodiumDownloadUrl(targetArch);
   }
 
-  private readVSCodiumVersion(): string | undefined {
+  private vscodiumDownloadUrl(arch: string): string {
+    const version = this.readVersion() || "0.0.0";
+    return `${VSCodium_REH_BASE}/${version}/vscodium-reh-linux-${arch}-${version}.tar.gz`;
+  }
+
+  private async vscodeOssDownloadUrl(arch: string): Promise<string> {
+    const localVersion = this.readVersion() || "0.0.0";
+    const nearest = await resolveNearestVsCodiumVersion(localVersion);
+    const v = nearest || "0.0.0";
+    return `${VSCodium_REH_BASE}/${v}/vscodium-reh-linux-${arch}-${v}.tar.gz`;
+  }
+
+  private isCodeOss(): boolean {
+    try {
+      const productPath = path.join(vscode.env.appRoot, "product.json");
+      const product = JSON.parse(readFileSync(productPath, "utf-8"));
+      return String(product.applicationName ?? "").toLowerCase() === "code-oss";
+    } catch {
+      return false;
+    }
+  }
+
+  private readVersion(): string | undefined {
     try {
       const productPath = path.join(vscode.env.appRoot, "product.json");
       const product = JSON.parse(readFileSync(productPath, "utf-8"));
@@ -114,5 +142,13 @@ export class VSCodiumAdapter implements IPlatformAdapter {
     } catch {
       return true;
     }
+  }
+
+  // VSCodium and code-oss both use VSCodium's sha256 sidecar checksums.
+  getChecksumConfig(): {
+    checksumMethod: "sidecar";
+    checksumAlgo: "sha256";
+  } {
+    return { checksumMethod: "sidecar", checksumAlgo: "sha256" };
   }
 }

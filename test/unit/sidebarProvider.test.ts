@@ -421,6 +421,7 @@ describe("SidebarProvider", () => {
     const postMessage = vi.fn();
     const onDidReceiveMessage = vi.fn();
     const onDidChangeVisibility = vi.fn().mockReturnValue({ dispose: vi.fn() });
+    const onDidDispose = vi.fn().mockReturnValue({ dispose: vi.fn() });
     const asWebviewUri = vi.fn((u: any) => ({
       ...u,
       toString: () => `webview-uri:${u?.fsPath ?? u?.path ?? ""}`,
@@ -432,7 +433,7 @@ describe("SidebarProvider", () => {
       onDidReceiveMessage,
       asWebviewUri,
     };
-    const view: any = { webview, visible, onDidChangeVisibility };
+    const view: any = { webview, visible, onDidChangeVisibility, onDidDispose };
     return {
       webview,
       view,
@@ -713,6 +714,7 @@ describe("SidebarProvider.handleMessage", () => {
     const postMessage = vi.fn();
     const onDidReceiveMessage = vi.fn();
     const onDidChangeVisibility = vi.fn().mockReturnValue({ dispose: vi.fn() });
+    const onDidDispose = vi.fn().mockReturnValue({ dispose: vi.fn() });
     const asWebviewUri = vi.fn((u: any) => ({
       ...u,
       toString: () => `webview-uri:${u?.fsPath ?? u?.path ?? ""}`,
@@ -724,7 +726,7 @@ describe("SidebarProvider.handleMessage", () => {
       onDidReceiveMessage,
       asWebviewUri,
     };
-    const view: any = { webview, visible, onDidChangeVisibility };
+    const view: any = { webview, visible, onDidChangeVisibility, onDidDispose };
     return {
       webview,
       view,
@@ -918,23 +920,33 @@ describe("SidebarProvider.handleMessage", () => {
     );
   });
 
-  it("action message executes vscode command", async () => {
+  it("action message executes allowed vscode command", async () => {
+    await (provider as any).handleMessage({
+      type: "action",
+      command: "artizo.reopenInContainer",
+    });
+    expect(mocks.vscode.commands.executeCommand).toHaveBeenCalledWith(
+      "artizo.reopenInContainer",
+    );
+  });
+
+  it("action message rejects disallowed vscode command", async () => {
     await (provider as any).handleMessage({
       type: "action",
       command: "artizo.someCommand",
     });
-    expect(mocks.vscode.commands.executeCommand).toHaveBeenCalledWith(
+    expect(mocks.vscode.commands.executeCommand).not.toHaveBeenCalledWith(
       "artizo.someCommand",
     );
   });
 
-  it("runCommand message executes vscode command", async () => {
+  it("runCommand message executes allowed vscode command", async () => {
     await (provider as any).handleMessage({
       type: "runCommand",
-      command: "artizo.runIt",
+      command: "artizo.rebuildContainer",
     });
     expect(mocks.vscode.commands.executeCommand).toHaveBeenCalledWith(
-      "artizo.runIt",
+      "artizo.rebuildContainer",
     );
   });
 

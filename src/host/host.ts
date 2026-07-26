@@ -81,7 +81,9 @@ export class Host {
     if (this.kind === "managed") {
       throw new Error("Docker execution from managed container not supported.");
     }
-    return execFilePromise(params.cmd, params.args ?? []);
+    return execFilePromise(params.cmd, params.args ?? [], {
+      cwd: params.cwd,
+    });
   }
 
   /** Execute a Docker command inside a running container. */

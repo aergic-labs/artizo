@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.5.0]
+
+### Added
+
+- REH server download URL templating, checksum verification, and per-fork config from zygos. Shared files synced via `make sync-shared`; drift checked in `make build` / `make check`.
+- `artizo.configureServerDownload` command and `artizo.serverDownload` settings.
+- Server-download config webview.
+- Better `code-oss` support via bundled vscodium version feed. `make vscodium-versions` refreshes it.
+- IPv6 listener detection in `portDetector`.
+
+### Changed
+
+- Server install dir now uses the IDE commit id (`bin/<ide-commit>/`) instead of the REH commit, matching zygos. Existing installs need a one-time rebuild.
+- Askpass env vars renamed to `AERGIC_SSH_ASKPASS_*`, shared with zygos.
+- Server install log messages distinguish reuse vs. fresh install.
+- ESLint upgraded to 10.8.0.
+
+### Removed
+
+- `scripts/guard-bundle.mjs` brand guard.
+- Dead "Rebuild on config change" prompt in `configWatcher`.
+
+### Fixed
+
+- Throw inside a stream `'error'` listener could crash the extension host.
+- Repos without a devcontainer config could never be cloned in a volume, and leaked the volume.
+- Default `~/dotfiles` target never worked.
+- Respawned ssh tunnel orphaned when `stop()` raced the respawn.
+- Path traversal via VSIX filename.
+- `parseContainerList` crashed on non-JSON stdout.
+- `parseLabelString` corrupted label values with commas.
+- `Host.exec` silently ignored `cwd`.
+- Sidebar listeners leaked per webview resolution.
+- Half-activated state when activation bailed mid-way.
+- Dead "Retry" button in failure toasts.
+- Override-config temp files accumulated forever.
+- ExecServer `run()` timeout killed but never rejected.
+- Tunnel respawn retried forever.
+- Orphaned relay daemon when `waitForPortFile` timed out.
+- `forwardContainerPort` children leaked on dispose.
+- Vendor CLI require failure poisoned the lazy-load cache.
+- Spawn-level docker failures collapsed to useless errors.
+- Attach-by-ID persisted configs under the wrong key.
+- Existing-container lookup orphans containers when the config file moves.
+- Kiro adapter fallback URL pointed at Microsoft's CDN.
+- Image-prune count off by one.
+- `sleepDetector.stop()` cleared the listener set.
+- Download stream error leaked handle and partial VSIX.
+- Malformed dependency entries became `"undefined.undefined"`.
+- Host-side ssh-agent socket never closed in dispose.
+- `getConfigPath` swallowed all `stat` errors.
+- SSH port from `ssh-remote+user@host:port` authorities was dropped; sideload, tunnel, and relay now pass `-p <port>`.
+- Webview command execution allowlist added.
+
 ## 0.4.3
 
 - Fix `updateUID.Dockerfile` missing from VSIX causing container

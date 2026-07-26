@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta
+            http-equiv="Content-Security-Policy"
+            content="default-src 'none'; script-src 'nonce-${NONCE}'; style-src 'nonce-${NONCE}';"
+        />
+        <link rel="stylesheet" href="${STYLE_URI}" nonce="${NONCE}" />
+        <title>${PRODUCT_NAME} Server Download</title>
+    </head>
+    <body>
+        <h1>Server Download</h1>
+        <div class="subtitle">
+            Configure how ${PRODUCT_NAME} downloads the remote server tarball.
+        </div>
+
+        <!-- Mode header -->
+        <div class="mode-header">
+            <div class="mode-label">
+                Current mode: <span id="modeBadge" class="badge auto">AUTO</span>
+            </div>
+            <button
+                class="secondary"
+                data-action="switch-mode"
+                id="switchModeBtn"
+            >
+                Switch to Custom
+            </button>
+        </div>
+
+        <!-- Auto section (read-only info) -->
+        <div class="section" id="autoSection">
+            <div class="row">
+                <label>Detected editor</label>
+                <div id="forkName">Detecting...</div>
+            </div>
+            <div class="row">
+                <label>Resolved URL</label>
+                <div class="url-box empty" id="autoUrl">Resolving...</div>
+                <div class="status" id="autoStatus"></div>
+                <div class="button-row">
+                    <button
+                        class="secondary"
+                        data-action="test-auto"
+                        id="autoTestBtn"
+                    >
+                        Test URL
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Custom section (editor) -->
+        <div class="section" id="customSection">
+            <div class="row" id="forkSelectRow">
+                <label>Load defaults from</label>
+                <div class="defaults-row">
+                    <select id="forkDefaultsSelect">
+                        <option value="">(pick a fork)</option>
+                    </select>
+                    <button data-action="load-defaults" id="loadDefaultsBtn">Load</button>
+                </div>
+                <div class="desc">
+                    Pick a fork to pre-fill the template and checksum fields. Does not change saved settings until you click Apply.
+                </div>
+            </div>
+
+            <div class="row">
+                <label for="templateInput">URL template</label>
+                <input
+                    type="text"
+                    id="templateInput"
+                    placeholder="https://..."
+                />
+            </div>
+
+            <div class="row">
+                <label>Available variables</label>
+                <table class="vars" id="varsTable"></table>
+            </div>
+
+            <div class="row">
+                <label for="binaryNameInput">Server binary name override</label>
+                <input
+                    type="text"
+                    id="binaryNameInput"
+                    placeholder="(use default from product.json)"
+                />
+            </div>
+
+            <div class="row">
+                <label>Preview URL</label>
+                <div class="url-box empty" id="previewUrl">(empty)</div>
+                <div class="status" id="customStatus"></div>
+                <div class="button-row">
+                    <button
+                        class="secondary"
+                        data-action="test-custom"
+                        id="customTestBtn"
+                    >
+                        Test URL
+                    </button>
+                    <button data-action="apply" id="customApplyBtn">Apply</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Checksum section (always visible) -->
+        <div class="section visible" id="checksumSection">
+            <h2>Checksum</h2>
+
+            <div class="row">
+                <label for="verifyChecksumToggle">Verify checksum</label>
+                <select id="verifyChecksumToggle">
+                    <option value="true">Enabled (recommended)</option>
+                    <option value="false">Disabled</option>
+                </select>
+            </div>
+
+            <div class="row">
+                <label for="checksumMethodSelect">Checksum method</label>
+                <select id="checksumMethodSelect">
+                    <option value="sidecar">Sidecar URL</option>
+                    <option value="manifest">Manifest URL</option>
+                </select>
+                <div class="desc">
+                    Sidecar: fetch download URL + "." + algo. Manifest: fetch JSON and extract hash field.
+                </div>
+            </div>
+
+            <div class="row" id="sidecarRow">
+                <label for="checksumAlgoSelect">Sidecar algorithm</label>
+                <select id="checksumAlgoSelect">
+                    <option value="">(auto from fork)</option>
+                    <option value="sha256">SHA-256</option>
+                    <option value="md5">MD5</option>
+                </select>
+                <div class="url-box empty hidden" id="sidecarUrl"></div>
+                <div class="status" id="sidecarStatus"></div>
+                <div class="button-row hidden" id="sidecarBtnRow">
+                    <button
+                        class="secondary"
+                        data-action="test-sidecar"
+                        id="sidecarTestBtn"
+                    >
+                        Test Sidecar URL
+                    </button>
+                </div>
+            </div>
+
+            <div class="row hidden" id="manifestRow">
+                <label for="manifestTemplateInput">Manifest URL template</label>
+                <input
+                    type="text"
+                    id="manifestTemplateInput"
+                    placeholder="https://..."
+                />
+                <div class="url-box empty hidden" id="manifestUrl"></div>
+                <div class="status" id="manifestStatus"></div>
+                <div class="button-row hidden" id="manifestBtnRow">
+                    <button
+                        class="secondary"
+                        data-action="test-manifest"
+                        id="manifestTestBtn"
+                    >
+                        Test Manifest URL
+                    </button>
+                </div>
+            </div>
+
+            <div class="row hidden" id="manifestFieldRow">
+                <label for="manifestFieldInput">Manifest hash field</label>
+                <input
+                    type="text"
+                    id="manifestFieldInput"
+                    placeholder="e.g. sha256hash"
+                />
+            </div>
+
+            <div class="row">
+                <label for="onNoChecksumSelect">When no checksum available</label>
+                <select id="onNoChecksumSelect">
+                    <option value="warn">Warn and proceed (default)</option>
+                    <option value="allow">Allow silently</option>
+                    <option value="abort">Abort installation</option>
+                </select>
+            </div>
+
+            <div class="status" id="checksumStatus"></div>
+            <div class="button-row">
+                <button data-action="apply-checksum" id="checksumApplyBtn">Apply</button>
+            </div>
+        </div>
+
+        <script src="${SCRIPT_URI}" nonce="${NONCE}"></script>
+    </body>
+</html>

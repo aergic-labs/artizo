@@ -56,6 +56,7 @@ describe("containerProxy", () => {
       expect(result).toEqual({
         sshHost: "34.136.190.14",
         sshUser: "dev",
+        sshPort: 22,
       });
     });
 
@@ -91,6 +92,7 @@ describe("containerProxy", () => {
       expect(result).toEqual({
         sshHost: "1.2.3.4",
         sshUser: os.userInfo().username,
+        sshPort: 22,
       });
     });
 
@@ -107,6 +109,7 @@ describe("containerProxy", () => {
       expect(decodeSshAuthority(forkAuthority)).toEqual({
         sshHost: "10.0.0.1",
         sshUser: "root",
+        sshPort: 22,
       });
     });
 
@@ -114,6 +117,7 @@ describe("containerProxy", () => {
       expect(decodeSshAuthority("ssh-remote+dev@example.com")).toEqual({
         sshHost: "example.com",
         sshUser: "dev",
+        sshPort: 22,
       });
     });
 
@@ -127,6 +131,7 @@ describe("containerProxy", () => {
       expect(decodeSshAuthority("ssh-remote+dev@host.example:2222")).toEqual({
         sshHost: "host.example",
         sshUser: "dev",
+        sshPort: 2222,
       });
     });
 
@@ -134,12 +139,14 @@ describe("containerProxy", () => {
       const result = decodeSshAuthority("ssh-remote+host.example:2222");
       expect(result?.sshHost).toBe("host.example");
       expect(result?.sshUser).toBe(os.userInfo().username);
+      expect(result?.sshPort).toBe(2222);
     });
 
     it("decodes a plain user@host authority with leading whitespace", () => {
       expect(decodeSshAuthority("ssh-remote+ dev@example.com")).toEqual({
         sshHost: "example.com",
         sshUser: "dev",
+        sshPort: 22,
       });
     });
 
@@ -153,11 +160,34 @@ describe("containerProxy", () => {
       expect(decodeSshAuthority(`ssh-remote+dev@${escaped}`)).toEqual({
         sshHost: "MyHost.example",
         sshUser: "dev",
+        sshPort: 22,
       });
     });
 
     it("returns undefined for a plain authority without a host", () => {
       expect(decodeSshAuthority("ssh-remote+")).toBeUndefined();
+    });
+
+    it("decodes a port from hex-JSON authority", () => {
+      const json = JSON.stringify({ hostName: "1.2.3.4", user: "dev", port: 2222 });
+      const hex = Buffer.from(json, "utf-8").toString("hex");
+      expect(decodeSshAuthority(`ssh-remote+${hex}`)).toEqual({
+        sshHost: "1.2.3.4",
+        sshUser: "dev",
+        sshPort: 2222,
+      });
+    });
+
+    it("falls back to port 22 when hex-JSON port is missing", () => {
+      const json = JSON.stringify({ hostName: "1.2.3.4", user: "dev" });
+      const hex = Buffer.from(json, "utf-8").toString("hex");
+      expect(decodeSshAuthority(`ssh-remote+${hex}`)?.sshPort).toBe(22);
+    });
+
+    it("ignores a non-numeric port in hex-JSON", () => {
+      const json = JSON.stringify({ hostName: "1.2.3.4", user: "dev", port: "bogus" });
+      const hex = Buffer.from(json, "utf-8").toString("hex");
+      expect(decodeSshAuthority(`ssh-remote+${hex}`)?.sshPort).toBe(22);
     });
   });
 

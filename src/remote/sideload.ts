@@ -243,9 +243,8 @@ async function tarStreamToRemote(
 
 /**
  * Per-platform candidate server extension directories, relative to the
- * remote home. Returned by the platform adapter so only the current
- * build target's candidate ships in each vendor VSIX (guard-bundle.mjs
- * rejects builds that leak other vendor names).
+ * remote home. Returned by the platform adapter; each build target ships
+ * only its own candidate dir.
  */
 async function candidateRelDirs(): Promise<string[]> {
   const adapter = await getPlatformAdapter();
@@ -458,15 +457,15 @@ async function patchRemoteArgvJson(
     return undefined;
   }
 
-  // Find node on the remote, then run `node -` so the script arrives on
+  // node on the remote, then run `node -` so the script arrives on
   // stdin. The remote usually has no system node; the vendor's server
   // ships its own under ~/.<vendor>-server/bin/<commit>/node, which is
   // essentially always present, so probe that first and fall back to
   // system locations. Derive the server roots from the adapter's
-  // extensions-dir candidates (per-vendor and tree-shaken, so only this
-  // build's vendor dirs are searched). The script body is piped via
-  // stdin (never interpolated); only the wrapper + argv are shell-quoted,
-  // and the argv values (extension ID + derived paths) are single-quoted.
+  // extensions-dir candidates (one entry per build target). The script
+  // body is piped via stdin (never interpolated); only the wrapper +
+  // argv are shell-quoted, and the argv values (extension ID + derived
+  // paths) are single-quoted.
   const serverRoots = adapter
     .getRemoteExtensionsDirCandidates()
     .map((rel) => rel.replace(/\/extensions\/?$/, ""));
@@ -780,7 +779,7 @@ async function readApexInstalledExtensions(
     const extId = e.identifier?.id;
     if (!extId) continue;
     // Skip built-ins (vscode.* prefix) and Artizo itself.
-    // Note: ms-vscode.* (e.g. hexeditor) is a marketplace publisher,
+    // ms-vscode.* (e.g. hexeditor) is a marketplace publisher,
     // distinct from vscode.* built-ins - keep those.
     if (extId.startsWith("vscode.")) continue;
     if (/^aergic\.artizo-/.test(extId)) continue;
@@ -1276,7 +1275,7 @@ export async function bootstrapRemoteSideLoad(
     // a bad password.
     if (askpass?.server.usedHostPassword) {
       diag(`evicting host password cache entries`);
-      askpass.server.evictHostPasswords();
+      await askpass.server.evictHostPasswords();
     }
     throw err;
   } finally {

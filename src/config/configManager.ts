@@ -92,7 +92,19 @@ export class ConfigManager implements IConfigManager {
           `ConfigManager.getConfigPath: found ${candidate.fsPath}`,
         );
         return candidate;
-      } catch {
+      } catch (err: unknown) {
+        // vscode.workspace.fs.stat rejects with ErrorCode.FileNotFound for a
+        // missing file (the common case). Other errors (permission denied,
+        // dangling symlink, FS unavailable) indicate a broken config that
+        // exists but can't be read - surfacing "create one?" would be wrong.
+        const code =
+          (err as { code?: string; name?: string })?.code ??
+          (err as { name?: string })?.name;
+        if (code !== "FileNotFound" && code !== "EntryNotFound") {
+          getLogger().info(
+            `ConfigManager.getConfigPath: stat error for ${candidate.fsPath}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
         // Common case - most workspaces have no devcontainer config.
         // The absence of a "found" log is sufficient; don't spam INFO
         // with a miss line for every workspace we probe.
