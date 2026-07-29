@@ -147,6 +147,8 @@ export async function dockerInspect(
     },
     config: {
       image: raw.Config?.Image ?? "",
+      // Always an object from both docker and podman-compat (verified live
+      // against podman 5.4.2, 2026-07-29). Do not add string handling.
       labels: raw.Config?.Labels ?? {},
       env: raw.Config?.Env ?? [],
       workingDir: raw.Config?.WorkingDir ?? "",

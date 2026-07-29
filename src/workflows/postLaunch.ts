@@ -88,6 +88,9 @@ export async function connectToContainer(
           `[extensions] ${failed.length} extension(s) failed to install: ` +
             failed.map((r) => r.id).join(", "),
         );
+        for (const f of failed) {
+          getLogger().warn(`[extensions]   ${f.id}: ${f.error ?? "unknown error"}`);
+        }
       }
     }
 

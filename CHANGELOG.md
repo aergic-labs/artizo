@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1]
+
+### Fixed
+
+- Podman compatibility: the sidebar container list crashed on podman's docker-compat output (`Names` as an array, `Id` vs `ID`). Verified against podman 5.4.2.
+- Added podman-specific unit tests covering the compat output to prevent future regression.
+- Extension install failures now log the underlying error per extension instead of just the count.
+
 ## [0.6.0]
 
 ### Added

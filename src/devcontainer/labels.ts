@@ -82,30 +82,40 @@ export function parseContainerList(stdout: string): ContainerSummary[] {
     if (!line) continue;
     let c: {
       ID?: string;
-      Names?: string;
+      Id?: string;
+      Names?: string | string[];
       State?: string;
       Image?: string;
-      Labels?: string;
+      Labels?: string | Record<string, string>;
     };
     try {
       c = JSON.parse(line) as {
         ID?: string;
-        Names?: string;
+        Id?: string;
+        Names?: string | string[];
         State?: string;
         Image?: string;
-        Labels?: string;
+        Labels?: string | Record<string, string>;
       };
     } catch {
       // Skip malformed lines (docker CLI warnings, proxy banners). Logging
       // here would require injecting a logger; callers log the count.
       continue;
     }
+    // Docker emits Names as a string; podman's compat API emits an array.
+    const names = Array.isArray(c.Names) ? (c.Names[0] ?? "") : (c.Names ?? "");
+    // Labels likewise: string from docker, object from podman.
+    const labels =
+      c.Labels && typeof c.Labels === "object"
+        ? c.Labels
+        : parseLabelString(typeof c.Labels === "string" ? c.Labels : "");
     summaries.push({
-      id: c.ID || "",
-      name: (c.Names || "").replace(/^\/+/, ""),
+      // Docker emits "ID"; podman's compat emits "Id".
+      id: c.ID || c.Id || "",
+      name: names.replace(/^\/+/, ""),
       state: c.State || "",
       image: c.Image || "",
-      labels: parseLabelString(c.Labels || ""),
+      labels,
     });
   }
   return summaries;

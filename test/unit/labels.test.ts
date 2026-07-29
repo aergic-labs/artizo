@@ -145,6 +145,24 @@ describe("labels", () => {
       expect(list[1].name).toBe("c2");
     });
 
+    // Field shapes below were verified live against podman 5.4.2's
+    // docker-compat shim (2026-07-29), not invented defensively. Do not
+    // "simplify" the union types back to docker-only shapes.
+    it("handles podman-style Names array and Labels object", () => {
+      const stdout = JSON.stringify({
+        Id: "abc",
+        Names: ["/c1", "alias1"],
+        State: "running",
+        Image: "ubuntu",
+        Labels: { "devcontainer.local_folder": "/p" },
+      });
+      const list = parseContainerList(stdout);
+      expect(list).toHaveLength(1);
+      expect(list[0].id).toBe("abc");
+      expect(list[0].name).toBe("c1");
+      expect(list[0].labels).toEqual({ "devcontainer.local_folder": "/p" });
+    });
+
     it("handles empty stdout", () => {
       expect(parseContainerList("")).toEqual([]);
       expect(parseContainerList("  \n  ")).toEqual([]);
