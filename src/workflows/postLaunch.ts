@@ -17,6 +17,10 @@ import { getPlatformAdapter } from "../platform";
 import { getLogger } from "../utils/logger";
 import { getTier } from "../host/state";
 import { buildContainerAuthority } from "../remote/state4Authority";
+import {
+  computeConfigHashes,
+  serializeConfigHashes,
+} from "../config/configHash";
 import type {
   ProgressReport,
   WorkflowDependencies,
@@ -137,14 +141,21 @@ export async function writeOverrideConfig(
  * Docker labels that bind a container to a workspace folder (and config file).
  * Shared by the folder-based workflows (reopen, rebuild, open-folder) for both
  * the build filter and lookup. Clone-in-volume uses a different label set.
+ *
+ * When config + configPath are provided, also computes config file hashes
+ * (devcontainer.json + referenced Dockerfile/compose files) and emits the
+ * artizo.config_hash label so reconnects can detect config drift. Hashing
+ * failures are logged and skipped - a missing hash label prompts the user
+ * to rebuild, which is the safe fallback.
  */
-export function buildIdentityLabels(params: {
+export async function buildIdentityLabels(params: {
   platformTarget: string;
   workspaceFolder: string;
   configPath?: string | null;
-}): string[] {
-  const { platformTarget, workspaceFolder, configPath } = params;
-  return [
+  config?: Record<string, unknown>;
+}): Promise<string[]> {
+  const { platformTarget, workspaceFolder, configPath, config } = params;
+  const labels = [
     `artizo.target=${platformTarget}`,
     `artizo.local_folder=${workspaceFolder}`,
     `devcontainer.local_folder=${workspaceFolder}`,
@@ -155,6 +166,27 @@ export function buildIdentityLabels(params: {
         ]
       : []),
   ];
+
+  if (config && configPath) {
+    try {
+      const path = await import("node:path");
+      const hashes = await computeConfigHashes(
+        config,
+        path.dirname(configPath),
+        configPath,
+      );
+      labels.push(`artizo.config_hash=${serializeConfigHashes(hashes)}`);
+      getLogger().info(
+        `[config-hash] label written: ${Object.keys(hashes).length} file(s) hashed: ${Object.keys(hashes).join(", ")}`,
+      );
+    } catch (err) {
+      getLogger().warn(
+        `config hash computation failed: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  return labels;
 }
 
 /**

@@ -79,6 +79,7 @@ import {
   ServerManager,
   validateArch,
   buildStartCommand,
+  parseProbeOutput,
   type ServerManagerOptions,
 } from "../../src/remote/serverManager";
 import type { ProductInfo } from "../../src/remote/productInfo";
@@ -498,6 +499,8 @@ describe("serverManager", () => {
           { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "my-connection-token\n" },
+          // probe: no pidFile
+          { stdout: "NONE\n" },
           // stop: cat pidFile (no existing server)
           { stdout: "", exitCode: 1 },
           // stop: pgrep fallback (no existing server)
@@ -524,6 +527,8 @@ describe("serverManager", () => {
           { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "my-token\n" },
+          // probe: no pidFile
+          { stdout: "NONE\n" },
           // stop: cat pidFile (no existing server)
           { stdout: "", exitCode: 1 },
           // stop: pgrep fallback (no existing server)
@@ -537,7 +542,7 @@ describe("serverManager", () => {
         await manager.start("container1");
 
         // The nohup start command is the 6th call (index 5)
-        const startCallArgs = mockHost.dockerExec.mock.calls[5];
+        const startCallArgs = mockHost.dockerExec.mock.calls[6];
         const args = startCallArgs[1] as string[];
         const shCmdIndex = args.indexOf("-c");
         expect(shCmdIndex).toBeGreaterThan(-1);
@@ -560,6 +565,8 @@ describe("serverManager", () => {
           { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "my-token\n" },
+          // probe: no pidFile
+          { stdout: "NONE\n" },
           // stop: cat pidFile (no existing server)
           { stdout: "", exitCode: 1 },
           // stop: pgrep fallback (no existing server)
@@ -572,7 +579,7 @@ describe("serverManager", () => {
 
         await manager.start("container1");
 
-        const startCallArgs = mockHost.dockerExec.mock.calls[5];
+        const startCallArgs = mockHost.dockerExec.mock.calls[6];
         const args = startCallArgs[1] as string[];
         const shCmdIndex = args.indexOf("-c");
         const shellCmd = args[shCmdIndex + 1];
@@ -588,6 +595,8 @@ describe("serverManager", () => {
           { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "arm-token\n" },
+          // probe: no pidFile
+          { stdout: "NONE\n" },
           // stop: cat pidFile (no existing server)
           { stdout: "", exitCode: 1 },
           // stop: pgrep fallback (no existing server)
@@ -611,6 +620,8 @@ describe("serverManager", () => {
           { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "my-token\n" },
+          // probe: no pidFile
+          { stdout: "NONE\n" },
           // stop: cat pidFile (no existing server)
           { stdout: "", exitCode: 1 },
           // stop: pgrep fallback (no existing server)
@@ -632,6 +643,8 @@ describe("serverManager", () => {
           { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "my-token\n" },
+          // probe: no pidFile
+          { stdout: "NONE\n" },
           // stop: cat pidFile (no existing server)
           { stdout: "", exitCode: 1 },
           // stop: pgrep fallback (no existing server)
@@ -644,7 +657,7 @@ describe("serverManager", () => {
 
         await manager.start("container1");
 
-        const startCallArgs = mockHost.dockerExec.mock.calls[5];
+        const startCallArgs = mockHost.dockerExec.mock.calls[6];
         const args = startCallArgs[1] as string[];
         const shCmdIndex = args.indexOf("-c");
         const shellCmd = args[shCmdIndex + 1];
@@ -659,6 +672,8 @@ describe("serverManager", () => {
           { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "my-token\n" },
+          // probe: no pidFile
+          { stdout: "NONE\n" },
           // stop: cat pidFile (no existing server)
           { stdout: "", exitCode: 1 },
           // stop: pgrep fallback (no existing server)
@@ -672,6 +687,124 @@ describe("serverManager", () => {
         await expect(manager.start("container1")).rejects.toThrow(
           "Server did not announce a listening port",
         );
+      });
+
+      it("reuses a running healthy server without stop/start", async () => {
+        setupExecFileResponses([
+          // detectArch
+          { stdout: "x86_64\n" },
+          // resolveServerCommit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
+          // ensureConnectionToken
+          { stdout: "my-token\n" },
+          // probe: live server on port 8080
+          { stdout: "REUSE:1234:8080\n" },
+        ]);
+
+        const info = await manager.start("container1");
+
+        expect(info.port).toBe(8080);
+        expect(info.connectionToken).toBe("my-token");
+        // No further docker exec calls beyond the probe (no stop, no start,
+        // no waitForPort).
+        expect(mockHost.dockerExec.mock.calls.length).toBe(4);
+      });
+
+      it("starts fresh when the pidFile is stale (dead pid)", async () => {
+        setupExecFileResponses([
+          // detectArch
+          { stdout: "x86_64\n" },
+          // resolveServerCommit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
+          // ensureConnectionToken
+          { stdout: "my-token\n" },
+          // probe: dead pid
+          { stdout: "DEAD:1234\n" },
+          // stop: cat pidFile (already removed by probe)
+          { stdout: "", exitCode: 1 },
+          // stop: pgrep fallback
+          { stdout: "", exitCode: 1 },
+          // nohup start command
+          { stdout: "" },
+          // waitForPort: cat logFile
+          { stdout: "Extension host agent listening on 6000\n" },
+        ]);
+
+        const info = await manager.start("container1");
+        expect(info.port).toBe(6000);
+      });
+
+      it("kills and restarts an unresponsive server", async () => {
+        setupExecFileResponses([
+          // detectArch
+          { stdout: "x86_64\n" },
+          // resolveServerCommit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
+          // ensureConnectionToken
+          { stdout: "my-token\n" },
+          // probe: unresponsive
+          { stdout: "UNRESPONSIVE:1234:8080\n" },
+          // stop: cat pidFile
+          { stdout: "1234\n" },
+          // stop: kill -TERM
+          { stdout: "" },
+          // stop: rm pidFile
+          { stdout: "" },
+          // nohup start command
+          { stdout: "" },
+          // waitForPort: cat logFile
+          { stdout: "Extension host agent listening on 7000\n" },
+        ]);
+
+        const info = await manager.start("container1");
+        expect(info.port).toBe(7000);
+      });
+    });
+
+    describe("parseProbeOutput", () => {
+      it("parses REUSE with pid and port", () => {
+        expect(parseProbeOutput("REUSE:1234:8080\n")).toEqual({
+          status: "reuse",
+          pid: "1234",
+          port: 8080,
+        });
+      });
+
+      it("parses NONE", () => {
+        expect(parseProbeOutput("NONE\n")).toEqual({ status: "none" });
+      });
+
+      it("parses DEAD with pid", () => {
+        expect(parseProbeOutput("DEAD:1234\n")).toEqual({
+          status: "dead",
+          pid: "1234",
+        });
+      });
+
+      it("parses NOPORT with pid", () => {
+        expect(parseProbeOutput("NOPORT:1234\n")).toEqual({
+          status: "noport",
+          pid: "1234",
+        });
+      });
+
+      it("parses UNRESPONSIVE with pid and port", () => {
+        expect(parseProbeOutput("UNRESPONSIVE:1234:8080\n")).toEqual({
+          status: "unresponsive",
+          pid: "1234",
+          port: 8080,
+        });
+      });
+
+      it("treats malformed REUSE (bad port) as none", () => {
+        expect(parseProbeOutput("REUSE:1234:abc\n")).toEqual({
+          status: "none",
+        });
+      });
+
+      it("treats empty output as none", () => {
+        expect(parseProbeOutput("")).toEqual({ status: "none" });
+        expect(parseProbeOutput("\n")).toEqual({ status: "none" });
       });
     });
 
@@ -879,6 +1012,8 @@ describe("serverManager", () => {
           { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
           // ensureConnectionToken
           { stdout: "my-token\n" },
+          // probe: no pidFile
+          { stdout: "NONE\n" },
           // stop: cat pidFile (no existing server)
           { stdout: "", exitCode: 1 },
           // stop: pgrep fallback (no existing server)
@@ -892,7 +1027,7 @@ describe("serverManager", () => {
         await customManager.start("container1");
 
         // The nohup start command is the 6th call (index 5)
-        const startCallArgs = mockHost.dockerExec.mock.calls[5];
+        const startCallArgs = mockHost.dockerExec.mock.calls[6];
         const args = startCallArgs[1] as string[];
         const shCmdIndex = args.indexOf("-c");
         const shellCmd = args[shCmdIndex + 1];

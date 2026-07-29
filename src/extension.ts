@@ -29,6 +29,7 @@ import { registerCoreCommands, type CommandContext } from "./host/commands";
 import { bootstrapRemoteSideLoad } from "./remote/sideload";
 import { clearAllCached, initCache, disposeCache } from "./ssh/askpassCache";
 import { initVscodiumFeed } from "./remote/vscodiumFeed";
+import { configureDownloadCache, maybePruneCache } from "./remote/download";
 import { registerServerDownloadPanel } from "./webviews/serverDownloadPanel";
 import { FORK_TEMPLATES } from "./platform/forkTemplates";
 
@@ -122,6 +123,16 @@ export async function activate(
       `remoteName=${detected.remoteName ?? "none"} ` +
       `kind=${detected.extensionKind ?? "none"} ` +
       `authority=${detected.remoteAuthority ?? "none"}`,
+  );
+
+  // Set artizo.hostContext as early as possible so the sidebar icon renders
+  // without waiting for the resolver gate below. Tradeoff: command palette
+  // items gated on this key become visible before registration completes
+  // (subsecond gap in the normal path).
+  vscode.commands.executeCommand(
+    "setContext",
+    "artizo.hostContext",
+    canDriveDocker(),
   );
 
   // Workspace-side inside a devcontainer: can't drive Docker, would loop.
@@ -257,7 +268,8 @@ async function activateInternal(
   const productInfo = await loadProductInfo();
 
   // Initialize the persistent askpass cache before any resolve attempt.
-  // Only on the UI-side (apex) - the workspace-side host doesn't run askpass.
+  // Only on the UI-side (apex) - the workspace-side host doesn't run askpass
+  // and doesn't download REH tarballs.
   if (detected.extensionKind !== vscode.ExtensionKind.Workspace) {
     const storageDir = context.globalStorageUri.fsPath;
     try {
@@ -282,6 +294,27 @@ async function activateInternal(
     } catch (err) {
       getLogger().warn(
         `[activate] askpass cache init failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    // On-disk HTTP cache for REH tarball downloads. Keyed by URL (which
+    // encodes commit+arch+binaryName); 304-revalidated when stale. Prune
+    // asynchronously on activation if over 2GB.
+    const rehCacheDir = path.join(storageDir, "reh-cache");
+    try {
+      fs.mkdirSync(rehCacheDir, { recursive: true });
+      configureDownloadCache(rehCacheDir, {
+        onCacheStatus: (status, u) =>
+          getLogger().info(`[download] cache=${status} url=${u}`),
+        onRetry: (cause, u) =>
+          getLogger().info(
+            `[download] retrying ${u}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          ),
+      });
+      void maybePruneCache();
+    } catch (err) {
+      getLogger().warn(
+        `[activate] REH cache init failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
@@ -340,15 +373,6 @@ async function activateInternal(
   if (await ensureResolversAvailable()) {
     return; // restart needed
   }
-
-  // Set artizo.hostContext only after the resolver-restart gate. Setting it
-  // before would expose artizo commands in the palette that fail with
-  // "command not found" when activate bails mid-way for a restart.
-  vscode.commands.executeCommand(
-    "setContext",
-    "artizo.hostContext",
-    canDriveDocker(),
-  );
 
   // 5. Register authority resolver early (before any async work)
   const resolver = registerResolverEarly(context, settings);

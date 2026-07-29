@@ -119,6 +119,48 @@ export function buildStartCommand(params: {
   ];
 }
 
+export type ProbeStatus =
+  | "none"
+  | "dead"
+  | "noport"
+  | "unresponsive"
+  | "reuse";
+
+export interface ProbeResult {
+  status: ProbeStatus;
+  pid?: string;
+  port?: number;
+}
+
+/** Parse the probe script's stdout into a ProbeResult. Pure; exported for tests. */
+export function parseProbeOutput(out: string): ProbeResult {
+  const trimmed = out.trim();
+  if (trimmed.startsWith("REUSE:")) {
+    const [, pid, portStr] = trimmed.split(":");
+    const port = parseInt(portStr, 10);
+    if (pid && !isNaN(port) && port > 0) {
+      return { status: "reuse", pid, port };
+    }
+    return { status: "none" };
+  }
+  if (trimmed.startsWith("DEAD:")) {
+    return { status: "dead", pid: trimmed.slice(5) || undefined };
+  }
+  if (trimmed.startsWith("NOPORT:")) {
+    return { status: "noport", pid: trimmed.slice(7) || undefined };
+  }
+  if (trimmed.startsWith("UNRESPONSIVE:")) {
+    const [, pid, portStr] = trimmed.split(":");
+    const port = parseInt(portStr, 10);
+    return {
+      status: "unresponsive",
+      pid: pid || undefined,
+      port: isNaN(port) ? undefined : port,
+    };
+  }
+  return { status: "none" };
+}
+
 export interface ServerManagerOptions {
   dockerPath?: string;
   productInfo?: ProductInfo;
@@ -614,6 +656,24 @@ export class ServerManager implements IServerManager {
     const logFile = pathPosix.join(installPath, "server.log");
     const pidFile = pathPosix.join(installPath, "server.pid");
 
+    const log = getLogger();
+    const probe = await this.probeRunningServer(containerId, pidFile, logFile);
+    log.info(
+      `[server] probe ${containerId.slice(0, 12)}: ${probe.status}` +
+        (probe.port ? ` port=${probe.port}` : "") +
+        (probe.pid ? ` pid=${probe.pid}` : ""),
+    );
+
+    if (probe.status === "reuse" && probe.port) {
+      log.info(
+        `[server] reusing running server in ${containerId.slice(0, 12)} on port ${probe.port} (no stop/start)`,
+      );
+      return { commit, arch, installPath, port: probe.port, connectionToken };
+    }
+
+    log.info(
+      `[server] not reusing (${probe.status}); stopping and starting fresh in ${containerId.slice(0, 12)}`,
+    );
     await this.stop(containerId);
 
     const startCmd = buildStartCommand({
@@ -654,6 +714,63 @@ export class ServerManager implements IServerManager {
       port,
       connectionToken,
     };
+  }
+
+  /**
+   * Probe for a running server on the current install path.
+   *
+   * Single docker exec sh script:
+   * - no pidFile            -> "none"
+   * - pid dead              -> "dead" (stale pidFile removed)
+   * - pid alive, no port in log -> "noport" (stale pidFile removed)
+   * - pid alive, port found, /version responds -> "reuse"
+   * - pid alive, port found, /version fails    -> "unresponsive"
+   *
+   * The port is parsed from server.log (the server announces it there;
+   * there is no dedicated port file). The /version check uses wget or curl,
+   * whichever the image has; if neither exists we fall back to trusting the
+   * live pid + announced port ("reuse"), since a hung server is rare and
+   * the connection attempt will fail fast anyway.
+   */
+  private async probeRunningServer(
+    containerId: string,
+    pidFile: string,
+    logFile: string,
+  ): Promise<ProbeResult> {
+    const script =
+      `pid=$(cat "${pidFile}" 2>/dev/null); ` +
+      `if [ -z "$pid" ]; then echo NONE; exit 0; fi; ` +
+      `if ! kill -0 "$pid" 2>/dev/null; then rm -f "${pidFile}"; echo "DEAD:$pid"; exit 0; fi; ` +
+      `port=$(grep -oE 'Extension host agent listening on [0-9]+|listeningOn: *[0-9]+|listening on port [0-9]+' "${logFile}" 2>/dev/null | grep -oE '[0-9]+' | tail -1); ` +
+      `if [ -z "$port" ]; then rm -f "${pidFile}"; echo "NOPORT:$pid"; exit 0; fi; ` +
+      `if command -v curl >/dev/null 2>&1; then ` +
+      `  if curl -s -f -o /dev/null --max-time 3 "http://127.0.0.1:$port/version"; then echo "REUSE:$pid:$port"; else echo "UNRESPONSIVE:$pid:$port"; fi; ` +
+      `elif command -v wget >/dev/null 2>&1; then ` +
+      `  if wget -q -T 3 -O /dev/null "http://127.0.0.1:$port/version"; then echo "REUSE:$pid:$port"; else echo "UNRESPONSIVE:$pid:$port"; fi; ` +
+      `else echo "REUSE:$pid:$port"; fi`;
+
+    let out: string;
+    try {
+      const result = await this.host.dockerExec(containerId, [
+        "sh",
+        "-c",
+        script,
+      ]);
+      if (result.exitCode !== 0) {
+        getLogger().warn(
+          `[server] probe exec failed (exit ${result.exitCode}): ${result.stderr}`,
+        );
+        return { status: "none" };
+      }
+      out = result.stdout;
+    } catch (err) {
+      getLogger().warn(
+        `[server] probe error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return { status: "none" };
+    }
+
+    return parseProbeOutput(out);
   }
 
   private async waitForPort(

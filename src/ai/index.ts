@@ -54,4 +54,4 @@ export async function getAiAssist(): Promise<AiAssist> {
   return _ai!;
 }
 
-export type { AiAssist, AiSubmitOptions } from "./types";
+export type { AiAssist } from "./types";

@@ -7,11 +7,12 @@
     "test-project/**",
     "scripts/**"
   ],
-  "ignoreDependencies": ["ovsx", "@vscode/vsce", "upng-js"],
+  "ignoreBinaries": ["ssh-keygen"],
+  "ignoreDependencies": ["ovsx", "upng-js"],
   "ignoreExportsUsedInFile": {
     "interface": true,
     "type": true,
     "function": true
   },
-  "ignoreFiles": ["resources/sidebar/app.js", "resources/serverDownload/app.js", "src/remote/argvPatchRemoteMain.ts"]
+  "ignoreFiles": ["resources/sidebar/app.js", "resources/serverDownload/app.js"]
 }

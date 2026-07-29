@@ -5,7 +5,10 @@
 
 import { describe, it, expect } from "vitest";
 import * as path from "node:path";
-import { resolveDockerfilePath } from "../../src/config/dockerfilePath";
+import {
+  resolveDockerfilePath,
+  resolveComposeFilePaths,
+} from "../../src/config/dockerfilePath";
 
 const DIR = path.join("/repo", ".devcontainer");
 
@@ -56,5 +59,49 @@ describe("resolveDockerfilePath", () => {
       DIR,
     );
     expect(p).toBe(path.resolve(DIR, "Dockerfile"));
+  });
+});
+
+describe("resolveComposeFilePaths", () => {
+  it("returns a single path for a string dockerComposeFile", () => {
+    const ps = resolveComposeFilePaths(
+      { dockerComposeFile: "docker-compose.yml" },
+      DIR,
+    );
+    expect(ps).toEqual([path.resolve(DIR, "docker-compose.yml")]);
+  });
+
+  it("returns every path for a dockerComposeFile array", () => {
+    const ps = resolveComposeFilePaths(
+      { dockerComposeFile: ["compose.yaml", "compose.override.yaml"] },
+      DIR,
+    );
+    expect(ps).toEqual([
+      path.resolve(DIR, "compose.yaml"),
+      path.resolve(DIR, "compose.override.yaml"),
+    ]);
+  });
+
+  it("filters non-string entries from a dockerComposeFile array", () => {
+    const ps = resolveComposeFilePaths(
+      { dockerComposeFile: ["compose.yaml", 0 as unknown as string] },
+      DIR,
+    );
+    expect(ps).toEqual([path.resolve(DIR, "compose.yaml")]);
+  });
+
+  it("returns an empty array for an image-based config", () => {
+    expect(
+      resolveComposeFilePaths(
+        { image: "mcr.microsoft.com/devcontainers/base" },
+        DIR,
+      ),
+    ).toEqual([]);
+  });
+
+  it("returns an empty array for a Dockerfile config", () => {
+    expect(
+      resolveComposeFilePaths({ build: { dockerfile: "Dockerfile" } }, DIR),
+    ).toEqual([]);
   });
 });

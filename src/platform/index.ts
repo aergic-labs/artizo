@@ -13,7 +13,7 @@
  * branch and discards the others.
  */
 
-import type { IPlatformAdapter, PlatformConfig } from "./types";
+import type { IPlatformAdapter } from "./types";
 
 let _adapter: IPlatformAdapter | undefined;
 
@@ -74,4 +74,4 @@ export async function getPlatformAdapter(): Promise<IPlatformAdapter> {
   return _adapter!;
 }
 
-export type { IPlatformAdapter, PlatformConfig };
+export type { IPlatformAdapter } from "./types";

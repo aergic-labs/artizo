@@ -10,6 +10,7 @@ import type { BuildResult, WorkflowDependencies, WorkflowUI } from "./types";
 import { launchProvision, withDefaults } from "../devcontainer/api";
 import { ProvisionFailedError } from "../devcontainer/provisionError";
 import { getPlatformAdapter } from "../platform";
+import { getLogger } from "../utils/logger";
 import {
   connectToContainer,
   writeOverrideConfig,
@@ -80,6 +81,7 @@ export async function reopenInContainer(
       ]) {
         const psResult = await dockerExecPolicy([
           "ps",
+          "-a",
           "-q",
           "--no-trunc",
           "--filter",
@@ -109,6 +111,7 @@ export async function reopenInContainer(
         ]) {
           const psResult = await dockerExecPolicy([
             "ps",
+            "-a",
             "-q",
             "--no-trunc",
             "--filter",
@@ -126,6 +129,32 @@ export async function reopenInContainer(
       if (existingContainerId) {
         ui.showBuildLog(
           `${BRAND_PREFIX} Found existing container ${existingContainerId.slice(0, 12)}, reconnecting...`,
+        );
+        // Config drift check before reusing: this workflow runs on the side
+        // that owns Docker (local host or the SSH host), so inspect is local.
+        const { dockerInspect } = await import("../utils/dockerUtils.js");
+        const { checkContainerConfig } = await import(
+          "../remote/configCheck.js"
+        );
+        const existingInfo = await dockerInspect(existingContainerId);
+        const checkResult = await checkContainerConfig(existingInfo);
+        if (checkResult === "rebuild") {
+          return; // rebuild command opens its own window
+        }
+        // The ps -a lookup includes stopped containers (matching the official
+        // extension). A stopped container must be started before docker exec
+        // works downstream; `docker start` on a running container is a no-op.
+        const startResult = await dockerExecPolicy([
+          "start",
+          existingContainerId,
+        ]);
+        if (startResult.exitCode !== 0) {
+          throw new Error(
+            `Failed to start existing container ${existingContainerId.slice(0, 12)}: ${startResult.stderr}`,
+          );
+        }
+        getLogger().info(
+          `[reopen] started existing container ${existingContainerId.slice(0, 12)}`,
         );
         // Derive identity from devcontainer.json. workspaceFolder is
         // authoritative from config (or the CLI default /workspaces/<basename>);
@@ -172,14 +201,14 @@ export async function reopenInContainer(
           }
 
           progress.report({ message: "Building container..." });
-          const idLabels = buildIdentityLabels({
+          const idLabels = await buildIdentityLabels({
             platformTarget,
             workspaceFolder,
             configPath: configResult.configPath,
+            config: configResult.config as Record<string, unknown> | undefined,
           });
           const options = withDefaults({
             workspaceFolder,
-            removeExistingContainer: true,
             additionalLabels: idLabels,
             configFile: configResult.configPath
               ? URI.file(configResult.configPath)

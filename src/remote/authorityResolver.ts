@@ -27,6 +27,7 @@ import type { ProxyAuthorityInfo } from "./containerProxy";
 import { startManagedSshTunnel, type TunnelController } from "./sshTunnel";
 import { startExecServerBridge, type ExecServer as ExecServerLike } from "./execServerBridge";
 import { startAskpass } from "../ssh/askpass";
+import { checkContainerConfig } from "./configCheck";
 
 /** File-based logger that works regardless of window state. */
 const LOG_FILE = path.join(os.tmpdir(), "artizo-resolver.log");
@@ -207,7 +208,7 @@ export class RemoteAuthorityResolver {
       };
     }
 
-    return this.resolveContainerById(containerId);
+    return this.resolveContainerById(containerId, { checkConfig: true });
   }
 
   /**
@@ -260,6 +261,69 @@ export class RemoteAuthorityResolver {
   }
 
   /**
+   * Run the config drift check for a container on an SSH host, via the
+   * ExecServer. Returns "ok" to proceed or "abort" (user chose Rebuild:
+   * the prompt directs them to run Rebuild from the plain-SSH window,
+   * since this side cannot drive a rebuild).
+   */
+  private async checkRemoteConfig(
+    execServer: ExecServerLike,
+    proxy: ProxyAuthorityInfo,
+  ): Promise<"ok" | "abort"> {
+    try {
+      const { checkContainerConfigRemote } = await import(
+        "./configCheckRemote.js"
+      );
+      // Find the container by the host workspace folder label.
+      if (!proxy.hostWorkspacePath) {
+        logToFile("[remote-check] no hostWorkspacePath in payload, skipping");
+        return "ok";
+      }
+      const { remoteFindContainer } = await import("./configCheckRemote.js");
+      const containerId = await remoteFindContainer(
+        execServer,
+        proxy.hostWorkspacePath,
+        logToFile,
+      );
+      if (!containerId) {
+        logToFile("[remote-check] no container found on host, skipping");
+        return "ok";
+      }
+      const outcome = await checkContainerConfigRemote(
+        execServer,
+        containerId,
+        logToFile,
+      );
+      if (outcome.kind === "changed") {
+        const action = await vscode.window.showWarningMessage(
+          `Container config has changed: ${outcome.files.join(", ")}. To rebuild, open the folder on the SSH host and run 'Artizo: Rebuild Container'.`,
+          "Continue anyway",
+        );
+        logToFile(
+          `[remote-check] user chose ${action === "Continue anyway" ? "Continue anyway" : "dismissed"} (mismatch)`,
+        );
+        return "ok";
+      }
+      if (outcome.kind === "no-label") {
+        await vscode.window.showWarningMessage(
+          "This container predates config tracking. To enable change detection, rebuild it from the SSH host window.",
+          "Continue anyway",
+        );
+        return "ok";
+      }
+      if (outcome.kind === "skip") {
+        logToFile(`[remote-check] skipped: ${outcome.reason}`);
+      }
+      return "ok";
+    } catch (err: unknown) {
+      logToFile(
+        `[remote-check] failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return "ok"; // never block resolve on a check failure
+    }
+  }
+
+  /**
    * State 4 proxy path. The authority was encoded by the workspace-side
    * extension (running on the SSH host) with the relay daemon's listener
    * port, the container's connection token, and the SSH endpoint. The apex
@@ -286,6 +350,15 @@ export class RemoteAuthorityResolver {
     // connection. No ssh -L tunnel, no askpass, no password prompt.
     const execServer = await this.tryGetExecServer(proxy.sshAuthority);
     if (execServer) {
+      // Config drift check on the SSH host via the ExecServer. Runs before
+      // the bridge is established; a mismatch prompt may abort the resolve.
+      const checkOutcome = await this.checkRemoteConfig(execServer, proxy);
+      if (checkOutcome === "abort") {
+        return {
+          type: "error",
+          message: "Container configuration changed; rebuild requested.",
+        };
+      }
       logToFile(`[Resolver] using ExecServer bridge for relayPort=${proxy.relayPort}`);
       try {
         const controller = await startExecServerBridge(
@@ -409,6 +482,7 @@ export class RemoteAuthorityResolver {
    */
   private async resolveContainerById(
     containerId: string,
+    options?: { checkConfig?: boolean },
   ): Promise<ResolveResult> {
     logToFile(`[Resolver] resolveContainerById: ${containerId}`);
     let containerInfo: ContainerInfo;
@@ -432,6 +506,16 @@ export class RemoteAuthorityResolver {
         type: "error",
         message: `Container "${containerId}" is not running (status: ${containerInfo.state.status})`,
       };
+    }
+
+    if (options?.checkConfig) {
+      const hashCheck = await checkContainerConfig(containerInfo);
+      if (hashCheck === "rebuild") {
+        return {
+          type: "error",
+          message: "Container configuration changed; rebuild requested.",
+        };
+      }
     }
 
     if (this.serverManager) {

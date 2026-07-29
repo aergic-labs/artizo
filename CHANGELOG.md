@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0]
+
+### Added
+
+- On-disk REH download cache (cacache) keyed on the original URL. Cache hits skip the network. 2GB cap with async prune. Synced from zygos.
+- Container config change detection. Containers now record a hash of devcontainer.json, Dockerfile, and compose files at build time. On reopen or reconnect, if the config changed, you're prompted to rebuild or continue anyway.
+- Server reuse on reconnect. A healthy running server is reused instead of killed and restarted, cutting reconnect time. Dead or unresponsive servers are cleaned up and restarted.
+
+### Changed
+
+- Reopen in Container now reuses an existing container (running or stopped) instead of rebuilding it, matching the official extension. Only explicit Rebuild recreates the container.
+
+- `tsconfig.json` adds `"types": ["node"]` for cacache type resolution.
+
 ## [0.5.0]
 
 ### Added

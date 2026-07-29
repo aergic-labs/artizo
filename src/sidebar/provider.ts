@@ -52,6 +52,8 @@ const ALLOWED_WEBVIEW_COMMANDS = new Set<string>([
   "artizo.reopenInHost",
   "artizo.closeRemoteConnection",
   "artizo.configureServerDownload",
+  "artizo.revealOutputLog",
+  "workbench.action.remote.showMenu",
 ]);
 
 function isAllowedWebviewCommand(command: string): boolean {

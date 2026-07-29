@@ -76,10 +76,11 @@ export async function rebuildContainer(
         });
 
         const platformTarget = (await getPlatformAdapter()).name.toLowerCase();
-        const idLabels = buildIdentityLabels({
+        const idLabels = await buildIdentityLabels({
           platformTarget,
           workspaceFolder,
           configPath: configResult!.configPath,
+          config: configResult!.config as Record<string, unknown> | undefined,
         });
         const options = withDefaults({
           workspaceFolder,
@@ -157,10 +158,13 @@ export async function rebuildContainer(
             const relaunchPlatformTarget = (
               await getPlatformAdapter()
             ).name.toLowerCase();
-            const relaunchIdLabels = buildIdentityLabels({
+            const relaunchIdLabels = await buildIdentityLabels({
               platformTarget: relaunchPlatformTarget,
               workspaceFolder,
               configPath: configResult!.configPath,
+              config: configResult!.config as
+                | Record<string, unknown>
+                | undefined,
             });
             const upOptions = withDefaults({
               workspaceFolder,

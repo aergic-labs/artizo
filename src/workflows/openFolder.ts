@@ -96,10 +96,11 @@ export async function openFolderInContainer(
         progress.report({ message: "Building container..." });
 
         const platformTarget = (await getPlatformAdapter()).name.toLowerCase();
-        const idLabels = buildIdentityLabels({
+        const idLabels = await buildIdentityLabels({
           platformTarget,
           workspaceFolder: folder,
           configPath: configFile,
+          config: configResult.config as Record<string, unknown> | undefined,
         });
         const options = withDefaults({
           workspaceFolder: folder,
