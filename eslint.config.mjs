@@ -21,7 +21,7 @@ const nodeGlobals = {
 
 export default tseslint.config(
   {
-    ignores: ["vendor/**", "dist/**", "coverage/**", "node_modules/**"],
+    ignores: ["vendor/**", "dist/**", "coverage/**", "node_modules/**", "plans/**"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

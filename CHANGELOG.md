@@ -1,6 +1,11 @@
 # Changelog
 
-## [0.6.1]
+## 0.6.2
+
+- Patch transitive deps (brace-expansion, fast-uri)
+- Ignore `plans/` in eslint
+
+## 0.6.1
 
 ### Fixed
 
