@@ -164,6 +164,9 @@ export async function cloneInVolume(
         deps,
         ui,
         buildResult.containerId,
+        undefined,
+        undefined,
+        buildResult.remoteUser,
       );
 
       ui.showInfo(`${BRAND_PREFIX} Container ready, opening workspace.`);

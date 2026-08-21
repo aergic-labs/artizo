@@ -165,7 +165,12 @@ export async function attachToContainer(
       async (progress, token) => {
         progress.report({ message: "Ensuring server is installed..." });
 
-        await serverManager.ensureInstalled(selectedContainer!.id);
+        await serverManager.ensureInstalled(selectedContainer!.id, existingConfig?.remoteUser);
+
+        // Resolve remoteUser via preflight (cached from ensureInstalled).
+        // Falls back to undefined if the user doesn't exist.
+        const attachRemoteUser =
+          await serverManager.preflightRemoteUser(selectedContainer!.id, existingConfig?.remoteUser);
 
         // Install extensions declared in the attach config (if any).
         // Downloads on the host, then docker cp + unzip into the
@@ -178,15 +183,16 @@ export async function attachToContainer(
           await deps.extensionInstaller.installExtensions(
             selectedContainer!.id,
             existingConfig.extensions,
+            attachRemoteUser,
           );
         }
 
-        const serverInfo = await serverManager.start(selectedContainer!.id);
+        const serverInfo = await serverManager.start(selectedContainer!.id, attachRemoteUser);
         serverPort = serverInfo.port;
         serverInstallPath = serverInfo.installPath;
         serverConnectionToken = serverInfo.connectionToken;
 
-        await gitConfigCopier.copyGitConfig(selectedContainer!.id);
+        await gitConfigCopier.copyGitConfig(selectedContainer!.id, undefined, attachRemoteUser);
         throwIfCancelled(token);
       },
     );

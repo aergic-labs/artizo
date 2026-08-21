@@ -107,11 +107,13 @@ describe("GitConfigCopier", () => {
 
       await copier.copyGitConfig("test-container");
 
-      // First docker exec call should be to get $HOME
-      expect(mockHost.dockerExec).toHaveBeenCalledWith("test-container", [
-        "printenv",
-        "HOME",
-      ]);
+      // First docker exec call should be to get $HOME (3rd arg is the
+      // remoteUser options object, undefined when not threaded).
+      expect(mockHost.dockerExec).toHaveBeenCalledWith(
+        "test-container",
+        ["printenv", "HOME"],
+        { user: undefined },
+      );
     });
 
     it("writes gitconfig to the remote user home directory", async () => {

@@ -18,6 +18,7 @@ export interface IGitConfigCopier {
   copyGitConfig(
     containerId: string,
     perContainerDisable?: boolean,
+    remoteUser?: string,
   ): Promise<void>;
 }
 
@@ -45,6 +46,7 @@ export class GitConfigCopier implements IGitConfigCopier {
   async copyGitConfig(
     containerId: string,
     perContainerDisable?: boolean,
+    remoteUser?: string,
   ): Promise<void> {
     if (!this.enabled) {
       return;
@@ -67,7 +69,7 @@ export class GitConfigCopier implements IGitConfigCopier {
     const homeResult = await this.host.dockerExec(containerId, [
       "printenv",
       "HOME",
-    ]);
+    ], { user: remoteUser });
 
     const remoteHome = homeResult.stdout.trim() || "/root";
 
@@ -79,6 +81,6 @@ export class GitConfigCopier implements IGitConfigCopier {
       "sh",
       "-c",
       `echo '${escapeShellArg(base64Content)}' | base64 -d > ${escapeShellArg(remoteHome)}/.gitconfig`,
-    ]);
+    ], { user: remoteUser });
   }
 }

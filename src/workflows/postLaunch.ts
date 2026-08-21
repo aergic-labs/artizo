@@ -13,10 +13,12 @@
  */
 
 import { BRAND_PREFIX } from "../utils/constants";
+import * as vscode from "vscode";
 import { getPlatformAdapter } from "../platform";
 import { getLogger } from "../utils/logger";
-import { getTier } from "../host/state";
+import { getTier, ExecutionTier } from "../host/state";
 import { buildContainerAuthority } from "../remote/state4Authority";
+import { FolderDescriptor } from "../remote/folderHistory";
 import {
   computeConfigHashes,
   serializeConfigHashes,
@@ -54,6 +56,7 @@ export async function connectToContainer(
   containerId: string,
   perContainerDisable?: boolean,
   config?: Record<string, unknown>,
+  remoteUser?: string,
   progress?: ProgressReport,
   token?: CancellationSignal,
 ): Promise<{
@@ -73,7 +76,13 @@ export async function connectToContainer(
 
     throwIfCancelled(token);
     report(`Ensuring server is installed...`);
-    await serverManager.ensureInstalled(containerId);
+    await serverManager.ensureInstalled(containerId, remoteUser);
+
+    // Resolve remoteUser via preflight (cached). Falls back to undefined
+    // if the user doesn't exist in the image, so extension install and
+    // server start get the correct resolved value.
+    const resolvedUser =
+      await serverManager.preflightRemoteUser(containerId, remoteUser);
 
     if (config) {
       throwIfCancelled(token);
@@ -81,6 +90,7 @@ export async function connectToContainer(
       const results = await extensionInstaller.installFromConfig(
         containerId,
         config,
+        resolvedUser,
       );
       const failed = results.filter((r) => !r.success);
       if (failed.length > 0) {
@@ -96,11 +106,11 @@ export async function connectToContainer(
 
     throwIfCancelled(token);
     report(`Starting ${serverName}...`);
-    const startedServer = await serverManager.start(containerId);
+    const startedServer = await serverManager.start(containerId, resolvedUser);
 
     throwIfCancelled(token);
     report("Copying Git config...");
-    await gitConfigCopier.copyGitConfig(containerId, perContainerDisable);
+    await gitConfigCopier.copyGitConfig(containerId, perContainerDisable, resolvedUser);
 
     return {
       port: startedServer.port,
@@ -169,6 +179,16 @@ export async function buildIdentityLabels(params: {
         ]
       : []),
   ];
+
+  // Preserve remoteUser as a label so the resolver can recover it on
+  // re-attach without re-reading devcontainer.json (which may be gone).
+  // containerUser is already recoverable from Config.User via docker
+  // inspect; no label needed for it.
+  const remoteUser =
+    typeof config?.remoteUser === "string" ? config.remoteUser : undefined;
+  if (remoteUser) {
+    labels.push(`artizo.remote_user=${remoteUser}`);
+  }
 
   if (config && configPath) {
     try {
@@ -247,5 +267,23 @@ export async function buildAuthorityAndOpen(params: {
     await params.ui.openWindow(url, params.windowOptions);
   } else {
     await params.ui.openWindow(url);
+  }
+
+  // Capture the folder we just opened for the Recent Folders list. Skip
+  // State 4 (tier RemoteSSH + owner "workspace"): the authority built
+  // there is the opaque `{ proxy: true, ... }` relay payload (ephemeral
+  // relay port), not a stable reopenable key. The shared module's keyPrefix
+  // keeps this history separate from zygos's SSH history.
+  const isState4 =
+    tier.tier === ExecutionTier.RemoteSSH && tier.owner === "workspace";
+  if (!isState4) {
+    try {
+      const d = FolderDescriptor.fromUri(vscode.Uri.parse(url));
+      if (d) await params.deps.folderHistory.addFolders([d]);
+    } catch (err) {
+      getLogger().info(
+        `[history] capture failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 }

@@ -13,19 +13,25 @@ import {
   type ContainerTarget,
   CategoryTreeItem,
   ContainerTreeItem,
+  RecentFolderGroupTreeItem,
   RecentFolderTreeItem,
   VolumeTreeItem,
 } from "./treeItems";
-import { buildRemoteAuthority } from "../utils/uriUtils";
+import { buildRemoteAuthority, decodeAuthority } from "../utils/uriUtils";
 import {
-  SCHEME_DEV_CONTAINER,
   SCHEME_ATTACHED_CONTAINER,
 } from "../remote/authorityResolver";
-
-const RECENT_FOLDERS_KEY = "artizo.recentFolders";
+import {
+  FolderDescriptor,
+  type FolderHistoryManager,
+} from "../remote/folderHistory";
 
 type ExplorerTreeItem =
-  CategoryTreeItem | ContainerTreeItem | RecentFolderTreeItem | VolumeTreeItem;
+  | CategoryTreeItem
+  | ContainerTreeItem
+  | RecentFolderGroupTreeItem
+  | RecentFolderTreeItem
+  | VolumeTreeItem;
 
 export interface IContainerExplorerProvider extends vscode.TreeDataProvider<ExplorerTreeItem> {
   refresh(): void;
@@ -33,11 +39,17 @@ export interface IContainerExplorerProvider extends vscode.TreeDataProvider<Expl
 }
 
 export interface ContainerExplorerOptions {
-  globalState: vscode.Memento;
+  history: FolderHistoryManager;
 }
 
 /**
  * TreeDataProvider for the Dev Containers explorer in the Remote Explorer panel.
+ *
+ * "Recent Folders" is backed by the shared `FolderHistoryManager` and grouped
+ * by container authority (`artizo-container+<hex>` / `attached-container+<hex>`),
+ * so folders opened against the same container show together. The old flat
+ * `artizo.recentFolders` string[] store was never populated (dead code) and
+ * is dropped — no migration needed.
  */
 export class ContainerExplorerProvider implements IContainerExplorerProvider {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<
@@ -47,10 +59,10 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
     ExplorerTreeItem | undefined | void
   > = this._onDidChangeTreeData.event;
 
-  private readonly globalState: vscode.Memento;
+  private readonly history: FolderHistoryManager;
 
   constructor(options: ContainerExplorerOptions) {
-    this.globalState = options.globalState;
+    this.history = options.history;
   }
 
   refresh(): void {
@@ -58,12 +70,11 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
   }
 
   async getTargets(): Promise<ContainerTarget[]> {
-    const [containers, recentFolders, volumes] = await Promise.all([
+    const [containers, volumes] = await Promise.all([
       this.getRunningContainers(),
-      this.getRecentFolders(),
       this.getVolumes(),
     ]);
-    return [...containers, ...recentFolders, ...volumes];
+    return [...containers, ...volumes];
   }
 
   getTreeItem(element: ExplorerTreeItem): vscode.TreeItem {
@@ -86,12 +97,19 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
             (t) => new ContainerTreeItem(t),
           );
         case "recent-folders":
-          return (await this.getRecentFolders()).map(
-            (t) => new RecentFolderTreeItem(t),
-          );
+          // One collapsible group per container authority that has folders.
+          return this.history
+            .getRemotes()
+            .map((remote) => new RecentFolderGroupTreeItem(remote, groupLabel(remote)));
         case "volumes":
           return (await this.getVolumes()).map((t) => new VolumeTreeItem(t));
       }
+    }
+
+    if (element instanceof RecentFolderGroupTreeItem) {
+      return this.history
+        .getFolders(element.remote)
+        .map((d) => new RecentFolderTreeItem(d));
     }
 
     return [];
@@ -125,16 +143,6 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
     }
   }
 
-  private async getRecentFolders(): Promise<ContainerTarget[]> {
-    const folders = this.globalState.get<string[]>(RECENT_FOLDERS_KEY, []);
-    return folders.map((folder) => ({
-      type: "recent-folder" as const,
-      label: folder.split(/[/]/).pop() || folder,
-      workspacePath: folder,
-      status: "stopped" as const,
-    }));
-  }
-
   private async getVolumes(): Promise<ContainerTarget[]> {
     try {
       const result = await dockerExecPolicy([
@@ -166,28 +174,18 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
     }
   }
 
-  async addRecentFolder(folderPath: string): Promise<void> {
-    const folders = this.globalState.get<string[]>(RECENT_FOLDERS_KEY, []);
-    const updated = [
-      folderPath,
-      ...folders.filter((f) => f !== folderPath),
-    ].slice(0, 20);
-    await this.globalState.update(RECENT_FOLDERS_KEY, updated);
-    this.refresh();
-  }
-
-  async removeRecentFolder(folderPath: string): Promise<void> {
-    const folders = this.globalState.get<string[]>(RECENT_FOLDERS_KEY, []);
-    const updated = folders.filter((f) => f !== folderPath);
-    await this.globalState.update(RECENT_FOLDERS_KEY, updated);
-    this.refresh();
-  }
-
   /** Register the tree view and commands. Called from services.ts. */
-  static register(context: vscode.ExtensionContext): ContainerExplorerProvider {
-    const provider = new ContainerExplorerProvider({
-      globalState: context.globalState,
-    });
+  static register(
+    context: vscode.ExtensionContext,
+    history: FolderHistoryManager,
+  ): ContainerExplorerProvider {
+    const provider = new ContainerExplorerProvider({ history });
+
+    // Auto-refresh when the history changes (addFolders after connecting,
+    // removeFolder after forgetting).
+    context.subscriptions.push(
+      history.onDidChange(() => provider.refresh()),
+    );
 
     const treeView = vscode.window.createTreeView("artizo.explorer", {
       treeDataProvider: provider,
@@ -202,16 +200,28 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
         provider.refresh(),
       ),
 
-      // Connect (containers + recent folders)
+      // Connect (containers + recent folders). Dispatch on item type:
+      // containers reuse the existing connectToTarget path (now also
+      // captures so an attached container shows up in Recent Folders);
+      // recent folders reopen via the folder descriptor's vscode-remote
+      // URI and re-capture (bumps to front, most-recent-first).
       vscode.commands.registerCommand(
         "artizo.explorer.connectCurrentWindow",
-        (item: ContainerTreeItem | RecentFolderTreeItem) =>
-          connectToTarget(item.target, false),
+        (item: ContainerTreeItem | RecentFolderTreeItem) => {
+          if (item instanceof RecentFolderTreeItem) {
+            return openRecentFolder(item.descriptor, false, history, provider);
+          }
+          return connectToTarget(item.target, false, history, provider);
+        },
       ),
       vscode.commands.registerCommand(
         "artizo.explorer.connectNewWindow",
-        (item: ContainerTreeItem | RecentFolderTreeItem) =>
-          connectToTarget(item.target, true),
+        (item: ContainerTreeItem | RecentFolderTreeItem) => {
+          if (item instanceof RecentFolderTreeItem) {
+            return openRecentFolder(item.descriptor, true, history, provider);
+          }
+          return connectToTarget(item.target, true, history, provider);
+        },
       ),
 
       // Container lifecycle
@@ -232,11 +242,17 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
         (item: ContainerTreeItem) => showContainerLogs(item.target),
       ),
 
-      // Recent folders
+      // Forget a recent folder: remove the visual link only. The folder on
+      // disk and the container are not touched. No confirmation dialog -
+      // the label + tooltip make the scope clear (matches MS Remote-SSH).
       vscode.commands.registerCommand(
-        "artizo.explorer.removeRecentFolder",
-        (item: RecentFolderTreeItem) =>
-          provider.removeRecentFolder(item.target.workspacePath ?? ""),
+        "artizo.explorer.forgetFolder",
+        async (item: RecentFolderTreeItem) => {
+          if (!item) return;
+          const descriptor: FolderDescriptor = item.descriptor;
+          await history.removeFolder(descriptor);
+          provider.refresh();
+        },
       ),
 
       // Volumes
@@ -261,9 +277,47 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
   }
 }
 
+/** Human-readable label for a recent-folder group authority. */
+function groupLabel(remote: string): string {
+  try {
+    const { scheme, id } = decodeAuthority(remote);
+    if (scheme === "attached-container") {
+      // id is the container id; show a short prefix.
+      return `Container ${id.substring(0, 12)}`;
+    }
+    // artizo-container: id is the host-side workspace folder path.
+    // Show just the basename (e.g. "aergic" from
+    // "C:\Users\kerry\github\aergic" or "/home/user/project").
+    const basename = id.split(/[\\/]/).filter(Boolean).pop();
+    return basename || id;
+  } catch {
+    return remote;
+  }
+}
+
+/** Reopen a recent folder. Re-captures so the entry moves to the front. */
+async function openRecentFolder(
+  descriptor: FolderDescriptor,
+  newWindow: boolean,
+  history: FolderHistoryManager,
+  provider: ContainerExplorerProvider,
+): Promise<void> {
+  try {
+    await history.addFolders([descriptor]);
+  } catch {
+    // best effort — never block the open
+  }
+  await vscode.commands.executeCommand("vscode.openFolder", descriptor.toUri(), {
+    forceNewWindow: newWindow,
+  });
+  provider.refresh();
+}
+
 async function connectToTarget(
   target: ContainerTarget,
   newWindow: boolean,
+  history: FolderHistoryManager,
+  provider: ContainerExplorerProvider,
 ): Promise<void> {
   if (target.type === "running-container" && target.containerId) {
     const authority = buildRemoteAuthority(
@@ -271,18 +325,22 @@ async function connectToTarget(
       target.containerId,
     );
     const uri = vscode.Uri.parse(`vscode-remote://${authority}/`);
+    // Capture so an attached container also shows up in Recent Folders
+    // for one-click reopen next time. Same skip rule as buildAuthorityAndOpen:
+    // at State 4 (RemoteSSH + owner workspace) the authority is the opaque
+    // relay payload and isn't a stable reopenable key. Here we're always on
+    // the apex (the explorer only renders where artizo.hostContext is set),
+    // so State 4 doesn't apply — but the try/catch keeps it fire-and-forget.
+    try {
+      const d = FolderDescriptor.fromUri(uri);
+      if (d) await history.addFolders([d]);
+    } catch {
+      // best effort
+    }
     await vscode.commands.executeCommand("vscode.openFolder", uri, {
       forceNewWindow: newWindow,
     });
-  } else if (target.type === "recent-folder" && target.workspacePath) {
-    const authority = buildRemoteAuthority(
-      SCHEME_DEV_CONTAINER,
-      target.workspacePath,
-    );
-    const uri = vscode.Uri.parse(`vscode-remote://${authority}/`);
-    await vscode.commands.executeCommand("vscode.openFolder", uri, {
-      forceNewWindow: newWindow,
-    });
+    provider.refresh();
   }
 }
 

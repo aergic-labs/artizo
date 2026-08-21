@@ -57,6 +57,7 @@ fi
 
 const HELPER_SCRIPT_PATH = "/tmp/.kiro-server/artizo-credential-helper.sh";
 
+// Future use: defined but not yet instantiated or called from any workflow.
 export class CredentialForwarder implements ICredentialForwarder {
   private readonly host: Host;
   private readonly hostContainerRef: string | undefined;

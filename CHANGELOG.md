@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.7.0
+
+### Added
+
+- "Reopen in Container (New Window)" command (`><` menu and sidebar).
+- Recent folders in the Remote Explorer, grouped per container authority, with a working Forget context menu.
+- `remoteUser` saved as docker label `artizo.remote_user` at build; restored on re-attach so install/start run as the right user instead of root.
+- `containerUser` read from `docker inspect` `Config.User` as fallback when `remoteUser` is absent or missing in the image.
+- `preflightRemoteUser` validates via `getent passwd` and caches per container.
+- `isValidDockerUser` rejects argument injection before `docker exec -u`.
+- `remoteUser`/`containerUser` threaded through `gitConfigCopier`, `serverManager`, and `bootstrap`.
+- `src/utils/tar.ts` factored out of `bootstrap.ts`; used to stream extension installs as `remoteUser`.
+- `folderHistory.ts` (and test) shared from zygos via `make sync-shared`.
+
+### Changed
+
+- `><` menu: "Return to Host" moved to end of section (just before "Close Remote Connection").
+- `><` menu: removed "Clean Up Dev Containers", "Open Folder in Container", and "Open Folder in Container (New Window)".
+- `removeRecentFolder` → `forgetFolder` (title "Forget").
+- Recent folder groups labeled by workspace basename; attached containers show "Container <short-id>".
+- Folder history tree auto-refreshes via `FolderHistoryManager.onDidChange`.
+- README template system restored: `{{section:name}}` placeholders flow from `BEGIN/END` blocks in README.md.
+- Vendor READMEs: added "Reduces friction..." line, added `## License` header, relocated AI-assisted setup section.
+- `dockerCp` removed from `dockerUtils.ts`.
+
+### Fixed
+
+- Re-attach path defaulted to root for install/start when `remoteUser` was set in `devcontainer.json`.
+- Extensions installed via `docker cp` were root-owned; now written as `remoteUser`.
+- Recent folders never populated (dead `globalState` store); replaced with `FolderHistoryManager`.
+- Stale upgrade notes removed from README and vendor templates.
+
 ## 0.6.2
 
 - Patch transitive deps (brace-expansion, fast-uri)

@@ -2,7 +2,7 @@
   "name": "artizo",
   "displayName": "Artizo Dev Containers",
   "description": "Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "publisher": "aergic",
   "productName": "Artizo",
   "license": "AGPL-3.0-only",
@@ -69,6 +69,11 @@
       {
         "command": "artizo.reopenInContainer",
         "title": "Artizo: Reopen in Container",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
+        "command": "artizo.reopenInContainerNewWindow",
+        "title": "Artizo: Reopen in Container (New Window)",
         "category": "Dev Containers (Artizo)"
       },
       {
@@ -223,8 +228,8 @@
         "category": "Dev Containers (Artizo)"
       },
       {
-        "command": "artizo.explorer.removeRecentFolder",
-        "title": "Artizo: Remove from Recent",
+        "command": "artizo.explorer.forgetFolder",
+        "title": "Forget",
         "category": "Dev Containers (Artizo)",
         "icon": "$(trash)"
       },
@@ -291,29 +296,23 @@
           "group": "remote_30_artizo-container_2_actions@0"
         },
         {
-          "command": "artizo.rebuildContainerMenu",
+          "command": "artizo.reopenInContainerNewWindow",
           "when": "workspaceFolderCount != 0 && artizo.hostContext && artizo.hasDevcontainerConfig",
           "group": "remote_30_artizo-container_2_actions@1"
         },
         {
-          "command": "artizo.openFolderInContainer",
-          "when": "artizo.hostContext",
+          "command": "artizo.rebuildContainerMenu",
+          "when": "workspaceFolderCount != 0 && artizo.hostContext && artizo.hasDevcontainerConfig",
           "group": "remote_30_artizo-container_2_actions@2"
         },
         {
-          "command": "artizo.openFolderInContainerNewWindow",
-          "when": "artizo.hostContext",
-          "group": "remote_30_artizo-container_2_actions@3"
-        },
-        {
-          "command": "artizo.cleanUpContainers",
-          "when": "artizo.hostContext",
-          "group": "remote_30_artizo-container_2_actions@5"
+          "command": "artizo.revealLogTerminal",
+          "group": "remote_30_artizo-container_2_actions@9"
         },
         {
           "command": "artizo.reopenInHost",
           "when": "remoteName =~ /^artizo-container/",
-          "group": "remote_30_artizo-container_2_actions@9"
+          "group": "remote_30_artizo-container_2_actions@10"
         },
         {
           "command": "artizo.reopenInHost",
@@ -324,10 +323,6 @@
           "command": "artizo.revealLogTerminal",
           "when": "remoteName =~ /^ssh-remote$/",
           "group": "remote_20_ssh-remote_1general@10"
-        },
-        {
-          "command": "artizo.revealLogTerminal",
-          "group": "remote_30_artizo-container_2_actions@10"
         }
       ],
       "view/title": [
@@ -409,7 +404,7 @@
           "group": "navigation@2"
         },
         {
-          "command": "artizo.explorer.removeRecentFolder",
+          "command": "artizo.explorer.forgetFolder",
           "when": "view == artizo.explorer && viewItem == recent-folder",
           "group": "navigation@9"
         },

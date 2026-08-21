@@ -39,6 +39,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Validate a user value before it reaches `docker exec -u <value>`
+ * or `docker run -u <value>`. The value is user-controlled (from
+ * `devcontainer.json` `remoteUser` or `containerUser`) and passed as a
+ * raw argv element. Without validation, values like `--privileged` or
+ * `--user=root` could be interpreted by docker as flags rather than the
+ * `-u` argument.
+ *
+ * Accepts:
+ * - POSIX username: `^[a-z_][a-z0-9_-]*$` (IEEE Std 1003.1)
+ * - Numeric uid: `^\d+$`
+ * - Numeric uid:gid: `^\d+:\d+$`
+ *
+ * Rejects anything else, including empty strings, values starting
+ * with `-`, and strings with shell metacharacters.
+ */
+export function isValidDockerUser(value: string): boolean {
+  return /^[a-z_][a-z0-9_-]*$/.test(value) || /^\d+(:\d+)?$/.test(value);
+}
+
 export interface ServerInfo {
   commit: string;
   arch: string;
@@ -49,8 +69,8 @@ export interface ServerInfo {
 }
 
 export interface IServerManager {
-  ensureInstalled(containerId: string): Promise<ServerInfo>;
-  start(containerId: string): Promise<ServerInfo>;
+  ensureInstalled(containerId: string, remoteUser?: string): Promise<ServerInfo>;
+  start(containerId: string, remoteUser?: string): Promise<ServerInfo>;
   stop(containerId: string): Promise<void>;
   getStatus(containerId: string): Promise<ServerInfo | null>;
   getCompatibleVersion(): string;
@@ -62,6 +82,13 @@ export interface IServerManager {
    * --extensions-dir.
    */
   getUserExtensionsDir(containerId: string): Promise<string>;
+  /**
+   * Check if remoteUser exists in the container. Cached per container.
+   * Returns the remoteUser if it exists (or is empty/numeric), undefined
+   * if it doesn't (fallback to containerUser). When called without
+   * remoteUser, returns the cached value from a prior call (if any).
+   */
+  preflightRemoteUser(containerId: string, remoteUser?: string): Promise<string | undefined>;
 }
 
 export function validateArch(unameArch: string): string {
@@ -186,6 +213,8 @@ export class ServerManager implements IServerManager {
   private resolvedCommit: string | undefined;
   /** Cached container arch. Avoids re-running `uname -m` on every start. */
   private resolvedArch: string | undefined;
+  /** Cached remoteUser preflight result per container: { user, exists }. */
+  private remoteUserChecked = new Map<string, { user: string; exists: boolean }>();
 
   constructor(options: ServerManagerOptions) {
     this.dockerPath = options?.dockerPath ?? "docker";
@@ -410,7 +439,54 @@ export class ServerManager implements IServerManager {
     return { arch, commit, binaryPresent };
   }
 
-  async ensureInstalled(containerId: string): Promise<ServerInfo> {
+  async preflightRemoteUser(containerId: string, remoteUser?: string): Promise<string | undefined> {
+    // No remoteUser provided — return cached value (for resolver re-attach path)
+    if (!remoteUser) {
+      const cached = this.remoteUserChecked.get(containerId);
+      return cached?.exists ? cached.user : undefined;
+    }
+    // Validate before any docker exec. remoteUser is user-controlled
+    // (devcontainer.json) and reaches `docker exec -u <user>` as a raw
+    // argv element. Reject anything that isn't a POSIX username, a
+    // numeric uid, or a uid:gid pair — prevents argument injection
+    // (e.g. "--privileged") and garbage from crashing docker or worse.
+    if (!isValidDockerUser(remoteUser)) {
+      getLogger().warn(
+        `[remote-user] remoteUser "${remoteUser}" is not a valid username or uid; ignoring.`,
+      );
+      return undefined;
+    }
+    // Numeric (uid or uid:gid) — Docker accepts these, no need to check existence
+    if (/^\d+(:\d+)?$/.test(remoteUser)) {
+      this.remoteUserChecked.set(containerId, { user: remoteUser, exists: true });
+      return remoteUser;
+    }
+    // Check cache — if same user already preflighted, return cached result
+    const cached = this.remoteUserChecked.get(containerId);
+    if (cached?.user === remoteUser) {
+      return cached.exists ? cached.user : undefined;
+    }
+    // Run preflight: getent passwd <remoteUser> as containerUser (no -u)
+    const result = await this.host.dockerExec(containerId, ["getent", "passwd", remoteUser]);
+    const exists = result.exitCode === 0 && result.stdout.trim().length > 0;
+    if (!exists) {
+      getLogger().warn(
+        `[remote-user] remoteUser "${remoteUser}" does not exist in the container. ` +
+          `Falling back to containerUser. Either add the user to the image ` +
+          `(Dockerfile RUN useradd) or set containerUser to a user that exists.`,
+      );
+    }
+    this.remoteUserChecked.set(containerId, { user: remoteUser, exists });
+    return exists ? remoteUser : undefined;
+  }
+
+  async ensureInstalled(containerId: string, remoteUser?: string): Promise<ServerInfo> {
+    // Resolve remoteUser early so the result is cached before extension
+    // install. The resolved user is threaded through installServer so the
+    // install dir is owned by remoteUser, matching how start runs.
+    const resolvedUser = remoteUser
+      ? await this.preflightRemoteUser(containerId, remoteUser)
+      : undefined;
     getLogger().info(`[install] probing container...`);
     const { arch, commit, binaryPresent } =
       await this.probeContainer(containerId);
@@ -419,7 +495,7 @@ export class ServerManager implements IServerManager {
     );
 
     if (!binaryPresent) {
-      await this.installServer(containerId, arch);
+      await this.installServer(containerId, arch, resolvedUser);
     } else {
       getLogger().info(`[install] already installed, skipping download`);
     }
@@ -438,6 +514,7 @@ export class ServerManager implements IServerManager {
   private async installServer(
     containerId: string,
     arch: string,
+    user?: string,
   ): Promise<void> {
     if (!this.bootstrap) {
       throw new Error(
@@ -463,10 +540,10 @@ export class ServerManager implements IServerManager {
     // it cannot pre-exist. setup.sh mkdir's it.
 
     getLogger().info(`[install] bootstrapping busybox...`);
-    await this.bootstrap.bootstrapBusybox(containerId, arch);
+    await this.bootstrap.bootstrapBusybox(containerId, arch, user);
 
     getLogger().info(`[install] deploying tools...`);
-    await this.bootstrap.deployTools(containerId);
+    await this.bootstrap.deployTools(containerId, user);
 
     const adapter = await getPlatformAdapter();
     const authToken = adapter.readAuthToken?.();
@@ -532,6 +609,7 @@ export class ServerManager implements IServerManager {
       authToken,
       authTokenPath,
       serverBuffer,
+      user,
     );
 
 
@@ -563,11 +641,11 @@ export class ServerManager implements IServerManager {
       `rm -rf "${finalDir}" && ` +
       `mkdir -p "${pathPosix.dirname(finalDir)}" && ` +
       `mv "${stagingDir}" "${finalDir}"`;
-    const finalizeResult = await this.host.dockerExec(containerId, [
-      "sh",
-      "-c",
-      finalizeCmd,
-    ]);
+    const finalizeResult = await this.host.dockerExec(
+      containerId,
+      ["sh", "-c", finalizeCmd],
+      user ? { user } : undefined,
+    );
     if (finalizeResult.exitCode !== 0) {
       throw new Error(
         `Commit patch + move failed (exit ${finalizeResult.exitCode}): ${finalizeResult.stderr || finalizeResult.stdout}`,
@@ -586,7 +664,10 @@ export class ServerManager implements IServerManager {
    * Uses umask 377 for restrictive permissions (0400) and mv -n for
    * race-condition safety.
    */
-  async ensureConnectionToken(containerId: string): Promise<string> {
+  async ensureConnectionToken(
+    containerId: string,
+    remoteUser?: string,
+  ): Promise<string> {
     const installRoot = await this.getServerInstallRoot(containerId);
     const commit = await this.resolveServerCommit(containerId);
     const tokenPath = this.getTokenFilePath(installRoot, commit);
@@ -601,7 +682,11 @@ export class ServerManager implements IServerManager {
         `rm -f '${tokenPath}-${uuid}' && cat '${tokenPath}')`,
     ];
 
-    const result = await this.host.dockerExec(containerId, tokenCmd);
+    const result = await this.host.dockerExec(
+      containerId,
+      tokenCmd,
+      remoteUser ? { user: remoteUser } : undefined,
+    );
 
     if (result.exitCode !== 0) {
       throw new Error(
@@ -644,11 +729,15 @@ export class ServerManager implements IServerManager {
    * redirecting stdout to a log file. Then polls the log file until the
    * server announces its listening port.
    */
-  async start(containerId: string): Promise<ServerInfo> {
+  async start(containerId: string, remoteUser?: string): Promise<ServerInfo> {
     const arch = await this.detectArch(containerId);
     const installRoot = await this.getServerInstallRoot(containerId);
     const commit = await this.resolveServerCommit(containerId);
-    const connectionToken = await this.ensureConnectionToken(containerId);
+    const resolvedUser = await this.preflightRemoteUser(containerId, remoteUser);
+    const connectionToken = await this.ensureConnectionToken(
+      containerId,
+      resolvedUser,
+    );
     const installPath = this.getInstallPathWithRoot(installRoot, commit);
     const tokenFilePath = this.getTokenFilePath(installRoot, commit);
     const serverDataDir = this.getServerDataDir(installRoot);
@@ -686,7 +775,7 @@ export class ServerManager implements IServerManager {
       pidFile,
     });
 
-    const startResult = await this.host.dockerExec(containerId, startCmd);
+    const startResult = await this.host.dockerExec(containerId, startCmd, resolvedUser ? { user: resolvedUser } : undefined);
 
     if (startResult.exitCode !== 0) {
       throw new Error(

@@ -113,6 +113,7 @@ function createMockServerManager(
     getStatus: vi.fn().mockResolvedValue(null),
     getCompatibleVersion: vi.fn().mockReturnValue("1.96.0"),
     getUserExtensionsDir: vi.fn().mockResolvedValue("/tmp/test-extensions"),
+    preflightRemoteUser: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -155,6 +156,12 @@ describe("openFolderInContainer", () => {
       serverManager: createMockServerManager(),
       gitConfigCopier: createMockGitConfigCopier(),
       dockerPath: "docker",
+      folderHistory: {
+        addFolders: vi.fn().mockResolvedValue(undefined),
+        removeFolder: vi.fn().mockResolvedValue(false),
+        getFolders: () => [],
+        getRemotes: () => [],
+      } as any,
       extensionInstaller: {
         installFromConfig: vi.fn().mockResolvedValue([]),
         installExtensions: vi.fn().mockResolvedValue([]),
@@ -170,8 +177,8 @@ describe("openFolderInContainer", () => {
       fsPath: "/project",
     });
     expect(launch).toHaveBeenCalled();
-    expect(deps.serverManager.ensureInstalled).toHaveBeenCalledWith("abc123");
-    expect(deps.serverManager.start).toHaveBeenCalledWith("abc123");
+    expect(deps.serverManager.ensureInstalled).toHaveBeenCalledWith("abc123", "vscode");
+    expect(deps.serverManager.start).toHaveBeenCalledWith("abc123", undefined);
     expect(ui.openWindow).toHaveBeenCalled();
   });
 

@@ -46,6 +46,7 @@ export function isSafeRepoUrl(url: string): boolean {
   return true;
 }
 
+// Future use: defined but not yet instantiated or called from any workflow.
 export class DotfilesManager implements IDotfilesManager {
   private readonly host: Host;
 

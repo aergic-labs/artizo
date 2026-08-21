@@ -820,14 +820,15 @@ describe("command handlers", () => {
 
       registerCoreCommands(context, ctx);
 
-      // 10 spec-based commands across the 5 spec arrays
-      expect(registerCommand).toHaveBeenCalledTimes(10);
+      // 11 spec-based commands across the 5 spec arrays
+      expect(registerCommand).toHaveBeenCalledTimes(11);
       const ids = vi
         .mocked(registerCommand)
         .mock.calls.map((c) => (c[2] as any).id);
       expect(ids).toEqual(
         expect.arrayContaining([
           "artizo.reopenInContainer",
+          "artizo.reopenInContainerNewWindow",
           "artizo.rebuildAndReopenInContainer",
           "artizo.cloneInVolume",
           "artizo.attachToRunningContainer",

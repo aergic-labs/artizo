@@ -41,6 +41,11 @@ export function computeCommands(
       when: !managed && hasWorkspace && hasConfig,
     },
     {
+      id: "artizo.reopenInContainerNewWindow",
+      label: "Reopen in Container (New Window)",
+      when: !managed && hasWorkspace && hasConfig,
+    },
+    {
       id: "artizo.rebuildContainer",
       label: "Rebuild Container",
       when: !managed && hasWorkspace && hasConfig,

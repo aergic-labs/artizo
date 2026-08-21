@@ -64,15 +64,19 @@ vi.mock("../../src/docker/execPolicy.js", () => ({
 }));
 
 import * as vscode from "vscode";
-import { execFile } from "node:child_process";
 import { dockerExecPolicy } from "../../src/docker/execPolicy.js";
 import { ContainerExplorerProvider } from "../../src/views/containerExplorer";
 import {
   CategoryTreeItem,
   ContainerTreeItem,
+  RecentFolderGroupTreeItem,
   RecentFolderTreeItem,
   VolumeTreeItem,
 } from "../../src/views/treeItems";
+import {
+  FolderDescriptor,
+  FolderHistoryManager,
+} from "../../src/remote/folderHistory";
 
 function createMockGlobalState(
   data: Record<string, unknown> = {},
@@ -109,14 +113,19 @@ function mockExecFileError(exitCode: number, stderr: string) {
 
 describe("ContainerExplorerProvider", () => {
   let provider: ContainerExplorerProvider;
-  let globalState: vscode.Memento;
+  let history: FolderHistoryManager;
+
+  function makeHistory(data: Record<string, string[]> = {}): FolderHistoryManager {
+    const globalState = createMockGlobalState({
+      "artizo.folderHistory.v1": data,
+    });
+    return new FolderHistoryManager({ state: globalState, keyPrefix: "artizo" });
+  }
 
   beforeEach(() => {
     vi.clearAllMocks();
-    globalState = createMockGlobalState();
-    provider = new ContainerExplorerProvider({
-      globalState,
-    });
+    history = makeHistory();
+    provider = new ContainerExplorerProvider({ history });
   });
 
   describe("getChildren (root)", () => {
@@ -191,13 +200,12 @@ describe("ContainerExplorerProvider", () => {
   });
 
   describe("getChildren (recent-folders category)", () => {
-    it("returns recent folders from globalState", async () => {
-      globalState = createMockGlobalState({
-        "artizo.recentFolders": ["/home/user/project1", "/home/user/project2"],
+    it("returns one group per container authority", async () => {
+      history = makeHistory({
+        "artizo-container+2f686f6d652f757365722f70726f6a65637431": ["/home/user/project1"],
+        "attached-container+616263": ["/app"],
       });
-      provider = new ContainerExplorerProvider({
-        globalState,
-      });
+      provider = new ContainerExplorerProvider({ history });
 
       mockExecFileSuccess("");
 
@@ -205,13 +213,8 @@ describe("ContainerExplorerProvider", () => {
       const children = await provider.getChildren(category);
 
       expect(children).toHaveLength(2);
-      expect(children[0]).toBeInstanceOf(RecentFolderTreeItem);
-      expect((children[0] as RecentFolderTreeItem).target.label).toBe(
-        "project1",
-      );
-      expect((children[0] as RecentFolderTreeItem).target.workspacePath).toBe(
-        "/home/user/project1",
-      );
+      expect(children[0]).toBeInstanceOf(RecentFolderGroupTreeItem);
+      expect(children[1]).toBeInstanceOf(RecentFolderGroupTreeItem);
     });
 
     it("returns empty array when no recent folders", async () => {
@@ -219,6 +222,23 @@ describe("ContainerExplorerProvider", () => {
       const children = await provider.getChildren(category);
 
       expect(children).toHaveLength(0);
+    });
+
+    it("lists folders under a group", async () => {
+      const remote = "artizo-container+2f686f6d652f757365722f70726f6a65637431";
+      history = makeHistory({
+        [remote]: ["/home/user/project1", "/home/user/project2"],
+      });
+      provider = new ContainerExplorerProvider({ history });
+
+      const group = new RecentFolderGroupTreeItem(remote, "label");
+      const children = await provider.getChildren(group);
+
+      expect(children).toHaveLength(2);
+      expect(children[0]).toBeInstanceOf(RecentFolderTreeItem);
+      const folder = children[0] as RecentFolderTreeItem;
+      expect(folder.descriptor.remote).toBe(remote);
+      expect(folder.descriptor.folder).toBe("/home/user/project1");
     });
   });
 
@@ -274,107 +294,52 @@ describe("ContainerExplorerProvider", () => {
     });
   });
 
-  describe("addRecentFolder", () => {
-    it("adds folder to the front of the list", async () => {
-      globalState = createMockGlobalState({
-        "artizo.recentFolders": ["/existing/folder"],
+  describe("forgetFolder (via history.removeFolder)", () => {
+    it("removes a folder from the history", async () => {
+      const remote = "artizo-container+2f686f6d652f757365722f70726f6a65637431";
+      history = makeHistory({
+        [remote]: ["/first", "/second", "/third"],
       });
-      provider = new ContainerExplorerProvider({
-        globalState,
-      });
+      provider = new ContainerExplorerProvider({ history });
 
-      await provider.addRecentFolder("/new/folder");
+      await history.removeFolder(new FolderDescriptor(remote, "/second"));
 
-      expect(globalState.update).toHaveBeenCalledWith("artizo.recentFolders", [
-        "/new/folder",
-        "/existing/folder",
-      ]);
-    });
-
-    it("deduplicates existing folder by moving it to front", async () => {
-      globalState = createMockGlobalState({
-        "artizo.recentFolders": ["/first", "/second", "/third"],
-      });
-      provider = new ContainerExplorerProvider({
-        globalState,
-      });
-
-      await provider.addRecentFolder("/second");
-
-      expect(globalState.update).toHaveBeenCalledWith("artizo.recentFolders", [
-        "/second",
+      expect(history.getFolders(remote).map((f) => f.folder)).toEqual([
         "/first",
         "/third",
       ]);
     });
 
-    it("limits list to 20 entries", async () => {
-      const folders = Array.from({ length: 20 }, (_, i) => `/folder${i}`);
-      globalState = createMockGlobalState({
-        "artizo.recentFolders": folders,
-      });
-      provider = new ContainerExplorerProvider({
-        globalState,
-      });
+    it("prunes a remote when its last folder is forgotten", async () => {
+      const remote = "artizo-container+2f686f6d652f757365722f70726f6a65637431";
+      history = makeHistory({ [remote]: ["/only"] });
+      provider = new ContainerExplorerProvider({ history });
 
-      await provider.addRecentFolder("/new-folder");
+      await history.removeFolder(new FolderDescriptor(remote, "/only"));
 
-      const updateCall = vi.mocked(globalState.update).mock.calls[0];
-      expect((updateCall[1] as string[]).length).toBe(20);
-      expect((updateCall[1] as string[])[0]).toBe("/new-folder");
-    });
-  });
-
-  describe("removeRecentFolder", () => {
-    it("removes folder from the list", async () => {
-      globalState = createMockGlobalState({
-        "artizo.recentFolders": ["/first", "/second", "/third"],
-      });
-      provider = new ContainerExplorerProvider({
-        globalState,
-      });
-
-      await provider.removeRecentFolder("/second");
-
-      expect(globalState.update).toHaveBeenCalledWith("artizo.recentFolders", [
-        "/first",
-        "/third",
-      ]);
+      expect(history.getRemotes()).toEqual([]);
     });
   });
 
   describe("getTargets", () => {
-    it("returns combined targets from all categories", async () => {
+    it("returns combined targets from containers + volumes", async () => {
       const dockerOutput = JSON.stringify({
         ID: "abc123",
         Names: "container1",
         State: "running",
         Labels: "devcontainer.local_folder=/home/user/project",
       });
-      // First call is for containers (docker ps), second for volumes (docker volume ls)
-      let callCount = 0;
-      vi.mocked(execFile).mockImplementation(
-        (_cmd: any, args: any, callback: any) => {
-          callCount++;
-          if (Array.isArray(args) && args.includes("volume")) {
-            callback(
-              null,
-              JSON.stringify({ Name: "vol1", Driver: "local" }),
-              "",
-            );
-          } else {
-            callback(null, dockerOutput, "");
-          }
-          return {} as any;
-        },
-      );
+      const volumeOutput = JSON.stringify({
+        Name: "vol1", Driver: "local" });
+      vi.mocked(dockerExecPolicy).mockImplementation((_args: any) => {
+        if (Array.isArray(_args) && _args.includes("volume")) {
+          return Promise.resolve({ exitCode: 0, stdout: volumeOutput, stderr: "" });
+        }
+        return Promise.resolve({ exitCode: 0, stdout: dockerOutput, stderr: "" });
+      });
 
-      globalState = createMockGlobalState({
-        "artizo.recentFolders": ["/home/user/project"],
-      });
-      provider = new ContainerExplorerProvider({
-        globalState,
-      });
+      history = makeHistory();
+      provider = new ContainerExplorerProvider({ history });
 
       const targets = await provider.getTargets();
 
@@ -383,13 +348,18 @@ describe("ContainerExplorerProvider", () => {
   });
 
   describe("register", () => {
+    let history: FolderHistoryManager;
+    beforeEach(() => {
+      history = makeHistory();
+    });
+
     it("creates a tree view with the correct id", () => {
       const context = {
         subscriptions: [] as vscode.Disposable[],
         globalState: createMockGlobalState(),
       } as unknown as vscode.ExtensionContext;
 
-      ContainerExplorerProvider.register(context);
+      ContainerExplorerProvider.register(context, history);
 
       expect(vscode.window.createTreeView).toHaveBeenCalledWith(
         "artizo.explorer",
@@ -400,13 +370,13 @@ describe("ContainerExplorerProvider", () => {
       );
     });
 
-    it("registers refresh, connectCurrentWindow, and connectNewWindow commands", () => {
+    it("registers refresh, connectCurrentWindow, connectNewWindow, and forgetFolder commands", () => {
       const context = {
         subscriptions: [] as vscode.Disposable[],
         globalState: createMockGlobalState(),
       } as unknown as vscode.ExtensionContext;
 
-      ContainerExplorerProvider.register(context);
+      ContainerExplorerProvider.register(context, history);
 
       const registeredCommands = vi
         .mocked(vscode.commands.registerCommand)
@@ -416,6 +386,7 @@ describe("ContainerExplorerProvider", () => {
         "artizo.explorer.connectCurrentWindow",
       );
       expect(registeredCommands).toContain("artizo.explorer.connectNewWindow");
+      expect(registeredCommands).toContain("artizo.explorer.forgetFolder");
     });
 
     it("pushes disposables to context subscriptions", () => {
@@ -424,7 +395,7 @@ describe("ContainerExplorerProvider", () => {
         globalState: createMockGlobalState(),
       } as unknown as vscode.ExtensionContext;
 
-      ContainerExplorerProvider.register(context);
+      ContainerExplorerProvider.register(context, history);
 
       expect(context.subscriptions.length).toBeGreaterThanOrEqual(4);
     });

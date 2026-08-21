@@ -65,7 +65,7 @@ function createContainerInfo(
       image: "node:18",
       labels: { "devcontainer.local_folder": "/home/user/project" },
       env: ["NODE_ENV=development", "PATH=/usr/bin"],
-      workingDir: "/workspace",
+      workingDir: "/workspace", user: "root",
     },
     mounts: [
       {
@@ -117,7 +117,7 @@ describe("DetailsViewProvider", () => {
             image: "ubuntu:22.04",
             labels: {},
             env: [],
-            workingDir: "/",
+            workingDir: "/", user: "root",
           },
         }),
       );
@@ -223,7 +223,7 @@ describe("DetailsViewProvider", () => {
     it("omits environment category when no env vars", () => {
       provider.setContainerInfo(
         createContainerInfo({
-          config: { image: "node:18", labels: {}, env: [], workingDir: "/" },
+          config: { image: "node:18", labels: {}, env: [], workingDir: "/", user: "root" },
         }),
       );
 
@@ -240,7 +240,7 @@ describe("DetailsViewProvider", () => {
             image: "node:18",
             labels: {},
             env: ["A=1"],
-            workingDir: "/",
+            workingDir: "/", user: "root",
           },
         }),
       );

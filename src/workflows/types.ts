@@ -14,6 +14,7 @@ import type { IConfigManager } from "../config/configManager";
 import type { IServerManager } from "../remote/serverManager";
 import type { IGitConfigCopier } from "../credentials/gitConfigCopier";
 import type { ExtensionInstaller } from "../extensions/extensionInstaller";
+import type { FolderHistoryManager } from "../remote/folderHistory";
 
 /**
  * Result of a container build/provision step.
@@ -42,6 +43,12 @@ export interface WorkflowDependencies {
    * State 4 workspace-side relay daemon to spawn `docker exec`.
    */
   dockerPath: string;
+  /**
+   * Recent-folder history for the Remote Explorer. Captured at the open
+   * path (`buildAuthorityAndOpen`) for the LocalHost tier; read by the
+   * container explorer tree to render + reopen + forget.
+   */
+  folderHistory: FolderHistoryManager;
 }
 
 /**

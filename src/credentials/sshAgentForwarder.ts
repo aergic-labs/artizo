@@ -55,6 +55,7 @@ server.listen(sock, () => process.stdout.write('READY\\n'));
 process.stdin.resume();
 `;
 
+// Future use: defined but not yet instantiated or called from any workflow.
 export class SshAgentForwarder implements ISshAgentForwarder {
   private readonly dockerPath: string;
   private readonly host: Host;

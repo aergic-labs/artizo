@@ -80,6 +80,7 @@ import {
   validateArch,
   buildStartCommand,
   parseProbeOutput,
+  isValidDockerUser,
   type ServerManagerOptions,
 } from "../../src/remote/serverManager";
 import type { ProductInfo } from "../../src/remote/productInfo";
@@ -168,6 +169,59 @@ describe("serverManager", () => {
       expect(() => validateArch("mips")).toThrow(
         'Unsupported architecture: "mips"',
       );
+    });
+  });
+
+  describe("isValidDockerUser", () => {
+    it("accepts POSIX usernames", () => {
+      expect(isValidDockerUser("dev")).toBe(true);
+      expect(isValidDockerUser("vscode")).toBe(true);
+      expect(isValidDockerUser("_dev")).toBe(true);
+      expect(isValidDockerUser("dev-user")).toBe(true);
+      expect(isValidDockerUser("dev_user")).toBe(true);
+      expect(isValidDockerUser("user123")).toBe(true);
+    });
+
+    it("accepts numeric uids", () => {
+      expect(isValidDockerUser("0")).toBe(true);
+      expect(isValidDockerUser("1000")).toBe(true);
+      expect(isValidDockerUser("65534")).toBe(true);
+    });
+
+    it("accepts uid:gid pairs", () => {
+      expect(isValidDockerUser("1000:1000")).toBe(true);
+      expect(isValidDockerUser("0:0")).toBe(true);
+    });
+
+    it("rejects argument injection attempts", () => {
+      expect(isValidDockerUser("--privileged")).toBe(false);
+      expect(isValidDockerUser("--user=root")).toBe(false);
+      expect(isValidDockerUser("-u")).toBe(false);
+      expect(isValidDockerUser("-v")).toBe(false);
+    });
+
+    it("rejects shell metacharacters", () => {
+      expect(isValidDockerUser("FOO;BAR:baz")).toBe(false);
+      expect(isValidDockerUser("dev;rm -rf /")).toBe(false);
+      expect(isValidDockerUser("dev$(whoami)")).toBe(false);
+      expect(isValidDockerUser("dev`whoami`")).toBe(false);
+      expect(isValidDockerUser("dev|cat")).toBe(false);
+      expect(isValidDockerUser("dev && whoami")).toBe(false);
+    });
+
+    it("rejects empty and whitespace", () => {
+      expect(isValidDockerUser("")).toBe(false);
+      expect(isValidDockerUser(" ")).toBe(false);
+      expect(isValidDockerUser("dev user")).toBe(false);
+    });
+
+    it("rejects uppercase usernames", () => {
+      expect(isValidDockerUser("Dev")).toBe(false);
+      expect(isValidDockerUser("DEV")).toBe(false);
+    });
+
+    it("rejects usernames starting with a digit", () => {
+      expect(isValidDockerUser("1dev")).toBe(false);
     });
   });
 
@@ -350,8 +404,8 @@ describe("serverManager", () => {
         expect(info.arch).toBe("x64");
         // 2 dockerExec: probe + finalize (bootstrap/deploy/setup are mocks)
         expect(mockHost.dockerExec).toHaveBeenCalledTimes(2);
-        expect(mockBootstrapBusybox).toHaveBeenCalledWith("container1", "x64");
-        expect(mockDeployTools).toHaveBeenCalledWith("container1");
+        expect(mockBootstrapBusybox).toHaveBeenCalledWith("container1", "x64", undefined);
+        expect(mockDeployTools).toHaveBeenCalledWith("container1", undefined);
         expect(mockRunSetup).toHaveBeenCalledWith(
           "container1",
           expect.any(String),
@@ -359,6 +413,7 @@ describe("serverManager", () => {
           undefined,
           expect.any(String),
           expect.any(Buffer),
+          undefined,
         );
       });
 
@@ -380,6 +435,7 @@ describe("serverManager", () => {
           '{"token":"mock"}',
           expect.any(String),
           expect.any(Buffer),
+          undefined,
         );
       });
 
@@ -398,6 +454,7 @@ describe("serverManager", () => {
         expect(mockBootstrapBusybox).toHaveBeenCalledWith(
           "container1",
           "arm64",
+          undefined,
         );
       });
 

@@ -59,6 +59,7 @@ SHARED_FROM_ZYGOS := \
   src/remote/checksum.ts:src/remote/checksum.ts \
   src/remote/vscodiumFeed.ts:src/remote/vscodiumFeed.ts \
   src/remote/download.ts:src/remote/download.ts \
+  src/remote/folderHistory.ts:src/remote/folderHistory.ts \
   src/ssh/askpassCache.ts:src/ssh/askpassCache.ts \
   src/ssh/askpassServer.ts:src/ssh/askpassServer.ts \
   src/common/temp.ts:src/common/temp.ts \
@@ -74,6 +75,7 @@ SHARED_FROM_ZYGOS := \
   test/unit/checksum.test.ts:test/unit/checksum.test.ts \
   test/unit/download.test.ts:test/unit/download.test.ts \
   test/unit/url.test.ts:test/unit/url.test.ts \
+  test/unit/folderHistory.test.ts:test/unit/folderHistory.test.ts \
   test/unit/vscodiumFeed.test.ts:test/unit/vscodiumFeed.test.ts \
   test/unit/askpassCache.test.ts:test/unit/askpassCache.test.ts \
   test/unit/askpass.test.ts:test/unit/askpass.test.ts \

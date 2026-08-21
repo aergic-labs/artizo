@@ -9,9 +9,10 @@
  * Installs extensions from devcontainer.json into the container.
  * Downloads VSIX files on the host (apex) so containers without
  * outbound internet access still work, extracts them on the apex
- * using yauzl (no `unzip` needed in the container), then `docker cp`s
- * the extracted directory tree into the container's server extensions
- * directory.
+ * using yauzl (no `unzip` needed in the container), then streams the
+ * extracted directory tree into the container's server extensions
+ * directory via `docker exec -i tar -xC` (no `docker cp` — files land
+ * owned by the container's remoteUser, not root).
  *
  * Dependency resolution: Open VSX metadata includes `dependencies`
  * (hard deps, won't activate without them) and `bundledExtensions`
@@ -42,7 +43,13 @@ import {
   hasPlatformVariants,
 } from "./platformDetect";
 import { getLogger } from "../utils/logger";
-import { dockerInspect, dockerInspectImage } from "../utils/dockerUtils";
+import {
+  dockerInspect,
+  dockerInspectImage,
+  dockerSpawn,
+  childPipes,
+} from "../utils/dockerUtils";
+import { tarDirectory } from "../utils/tar";
 
 /**
  * Default path inside the container where extensions are installed.
@@ -204,9 +211,10 @@ export class ExtensionInstaller {
   async installFromConfig(
     containerId: string,
     config: Record<string, unknown>,
+    remoteUser?: string,
   ): Promise<ExtensionInstallResult[]> {
     const extensionIds = extractExtensionIds(config);
-    return this.installExtensions(containerId, extensionIds);
+    return this.installExtensions(containerId, extensionIds, remoteUser);
   }
 
   /**
@@ -222,6 +230,7 @@ export class ExtensionInstaller {
   async installExtensions(
     containerId: string,
     extensionIds: string[],
+    remoteUser?: string,
   ): Promise<ExtensionInstallResult[]> {
     if (extensionIds.length === 0) {
       return [];
@@ -285,7 +294,7 @@ export class ExtensionInstaller {
     }
 
     // Ensure the extensions directory exists in the container
-    await this.ensureExtensionsDir(containerId, extensionsDir);
+    await this.ensureExtensionsDir(containerId, extensionsDir, remoteUser);
 
     const results: ExtensionInstallResult[] = [];
 
@@ -295,6 +304,7 @@ export class ExtensionInstaller {
         meta,
         extensionsDir,
         targetPlatform,
+        remoteUser,
       );
       results.push(result);
     }
@@ -419,15 +429,16 @@ export class ExtensionInstaller {
    *      fresh for the target platform.
    *
    * After obtaining the VSIX (copy or download), extracts on the apex
-   * using yauzl (no `unzip` needed in container), `docker cp`s the
-   * extracted tree into the container's extensions dir, and registers
-   * in `extensions.json`.
+   * using yauzl (no `unzip` needed in container), streams the extracted
+   * tree into the container's extensions dir via `docker exec -i tar -xC`,
+   * and registers in `extensions.json`.
    */
   private async installSingleExtension(
     containerId: string,
     meta: ExtensionMetadata,
     extensionsDir: string,
     targetPlatform: TargetPlatform | undefined,
+    remoteUser?: string,
   ): Promise<ExtensionInstallResult> {
     const tmpDir = os.tmpdir();
     const id = `${meta.namespace}.${meta.name}`;
@@ -455,12 +466,18 @@ export class ExtensionInstaller {
             meta.targetPlatform,
           );
           const containerExtDir = `${extensionsDir}/${folderName}`;
-          await this.copyToContainer(containerId, localPath, containerExtDir);
+          await this.copyToContainer(
+            containerId,
+            localPath,
+            containerExtDir,
+            remoteUser,
+          );
           await this.registerInExtensionsJson(
             containerId,
             extensionsDir,
             id,
             meta,
+            remoteUser,
           );
           copiedFromLocal = true;
           return { id, success: true };
@@ -490,10 +507,21 @@ export class ExtensionInstaller {
         meta.targetPlatform,
       );
       const containerExtDir = `${extensionsDir}/${folderName}`;
-      await this.copyToContainer(containerId, extractedDir, containerExtDir);
+      await this.copyToContainer(
+        containerId,
+        extractedDir,
+        containerExtDir,
+        remoteUser,
+      );
 
       // 4. Register in extensions.json
-      await this.registerInExtensionsJson(containerId, extensionsDir, id, meta);
+      await this.registerInExtensionsJson(
+        containerId,
+        extensionsDir,
+        id,
+        meta,
+        remoteUser,
+      );
 
       return { id, success: true };
     } catch (err) {
@@ -523,12 +551,13 @@ export class ExtensionInstaller {
   private async ensureExtensionsDir(
     containerId: string,
     extensionsDir: string,
+    remoteUser?: string,
   ): Promise<void> {
-    const result = await this.host.dockerExec(containerId, [
-      "mkdir",
-      "-p",
-      extensionsDir,
-    ]);
+    const result = await this.host.dockerExec(
+      containerId,
+      ["mkdir", "-p", extensionsDir],
+      remoteUser ? { user: remoteUser } : undefined,
+    );
 
     if (result.exitCode !== 0) {
       throw new Error(
@@ -537,20 +566,55 @@ export class ExtensionInstaller {
     }
   }
 
+  private containerTarCache = new Map<string, string>();
+
+  /**
+   * Resolve a `tar` binary inside the container. Probes via `command -v`,
+   * caches per container, and falls back to the artizo-bootstrapped busybox
+   * tar at `/tmp/.artizo/bin/tar`.
+   */
+  private async resolveContainerTar(containerId: string): Promise<string> {
+    const cached = this.containerTarCache.get(containerId);
+    if (cached) return cached;
+    const result = await this.host.dockerExec(containerId, [
+      "sh",
+      "-c",
+      "command -v tar || echo /tmp/.artizo/bin/tar",
+    ]);
+    const tarBin = result.stdout.trim() || "/tmp/.artizo/bin/tar";
+    this.containerTarCache.set(containerId, tarBin);
+    return tarBin;
+  }
+
   private async copyToContainer(
     containerId: string,
     hostPath: string,
     containerPath: string,
+    remoteUser?: string,
   ): Promise<void> {
-    const { dockerCp } = await import("../utils/dockerUtils.js");
-    const result = await dockerCp(
-      this.dockerPath,
-      hostPath,
-      containerId,
-      containerPath,
+    // Stream a tar of the host tree into `docker exec -i tar -xC <dir>`.
+    // Files land owned by whatever user the exec runs as (remoteUser when
+    // set, otherwise the container's default — usually root). This replaces
+    // `docker cp`, which always wrote as root and caused the
+    // root-owned extensions.json / extension folders seen in issue #7.
+    const tarBin = await this.resolveContainerTar(containerId);
+    const tarBuf = tarDirectory(hostPath);
+    const args = ["exec", "-i"];
+    if (remoteUser) args.push("-u", remoteUser);
+    args.push(containerId, tarBin, "-xC", containerPath);
+    const child = dockerSpawn(this.dockerPath, args);
+    const pipes = childPipes(child);
+    let stderr = "";
+    pipes.stderr.on("data", (c: Buffer) => (stderr += c.toString()));
+    pipes.stdin.write(tarBuf);
+    pipes.stdin.end();
+    const exitCode = await new Promise<number>((resolve) =>
+      child.on("close", resolve),
     );
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to copy file to container: ${result.stderr}`);
+    if (exitCode !== 0) {
+      throw new Error(
+        `Failed to copy extension to container (exit ${exitCode}): ${stderr}`,
+      );
     }
   }
 
@@ -559,17 +623,20 @@ export class ExtensionInstaller {
    *
    * Reads the file via `docker exec cat`, parses on the apex, injects
    * the entry if not already present (dedup by identifier.id or
-   * relativeLocation), and writes back via a temp file + `docker cp`.
+   * relativeLocation), and writes back by streaming the JSON to
+   * `docker exec -i sh -c "cat > path"`.
    *
    * No script is pushed into the container - the JSON manipulation
    * happens on the apex where we have full Node.js, and `docker exec`
-   * / `docker cp` are used only for file I/O.
+   * is used only for file I/O. Writes run as remoteUser so the ledger
+   * is owned by the container user, not root.
    */
   private async registerInExtensionsJson(
     containerId: string,
     extensionsDir: string,
     extId: string,
     meta: ExtensionMetadata,
+    remoteUser?: string,
   ): Promise<void> {
     const version = meta.version;
     const jsonPath = `${extensionsDir}/extensions.json`;
@@ -618,36 +685,31 @@ export class ExtensionInstaller {
     });
     entries.push(entry);
 
-    // Write back via temp file + docker cp to avoid shell quoting issues
-    // with the JSON content.
-    const os = await import("node:os");
-    const tmpFile = path.join(
-      os.tmpdir(),
-      `artizo-ext-json-${Date.now()}.json`,
+    // Write back by streaming the JSON to `docker exec -i sh -c "cat > path"`.
+    // Runs as remoteUser so extensions.json is owned by the container user
+    // (not root). jsonPath is artizo-controlled and derived from
+    // extensionsDir (validated above) + the fixed filename `extensions.json`,
+    // so no shell metacharacter injection is possible here.
+    const jsonContent = JSON.stringify(entries, null, 2);
+    const writeArgs = ["exec", "-i"];
+    if (remoteUser) writeArgs.push("-u", remoteUser);
+    writeArgs.push(containerId, "sh", "-c", `cat > ${jsonPath}`);
+    const child = dockerSpawn(this.dockerPath, writeArgs);
+    const pipes = childPipes(child);
+    let stderr = "";
+    pipes.stderr.on("data", (c: Buffer) => (stderr += c.toString()));
+    pipes.stdin.write(jsonContent);
+    pipes.stdin.end();
+    const exitCode = await new Promise<number>((resolve) =>
+      child.on("close", resolve),
     );
-    fs.writeFileSync(tmpFile, JSON.stringify(entries, null, 2));
-    try {
-      const { dockerCp } = await import("../utils/dockerUtils.js");
-      const cpResult = await dockerCp(
-        this.dockerPath,
-        tmpFile,
-        containerId,
-        jsonPath,
+    if (exitCode !== 0) {
+      throw new Error(
+        `Failed to write extensions.json (exit ${exitCode}): ${stderr}`,
       );
-      if (cpResult.exitCode !== 0) {
-        throw new Error(
-          `Failed to write extensions.json (exit ${cpResult.exitCode}): ${cpResult.stderr}`,
-        );
-      }
-      getLogger().info(
-        `[extensions] registered ${extId} v${version} in extensions.json`,
-      );
-    } finally {
-      try {
-        fs.unlinkSync(tmpFile);
-      } catch {
-        // Ignore cleanup errors
-      }
     }
+    getLogger().info(
+      `[extensions] registered ${extId} v${version} in extensions.json`,
+    );
   }
 }

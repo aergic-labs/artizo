@@ -25,6 +25,7 @@ import type { ReadConfigResult } from "../config/configManager";
 export interface ReopenInContainerParams {
   workspaceFolder: string;
   workspaceUri: vscode.Uri;
+  forceNewWindow?: boolean;
 }
 
 export async function reopenInContainer(
@@ -33,7 +34,7 @@ export async function reopenInContainer(
   params: ReopenInContainerParams,
 ): Promise<void> {
   const { configManager } = deps;
-  const { workspaceFolder, workspaceUri } = params;
+  const { workspaceFolder, workspaceUri, forceNewWindow } = params;
 
   let configResult: ReadConfigResult;
   let perContainerDisable = false;
@@ -258,6 +259,7 @@ export async function reopenInContainer(
         buildResult.containerId,
         perContainerDisable,
         configResult!.config as Record<string, unknown> | undefined,
+        buildResult.remoteUser,
         progress,
         token,
       );
@@ -277,7 +279,9 @@ export async function reopenInContainer(
         workspaceFolder,
         workspacePath: remotePath,
         uriPath: remotePath.startsWith("/") ? remotePath : "/" + remotePath,
-        windowOptions: { forceReuseWindow: true },
+        windowOptions: forceNewWindow
+          ? { forceNewWindow: true }
+          : { forceReuseWindow: true },
       });
     });
 

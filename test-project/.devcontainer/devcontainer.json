@@ -6,6 +6,7 @@
       "extensions": []
     }
   },
+  "remoteUser": "vscode",
   "mounts": [],
   "features": {
     "ghcr.io/devcontainers/features/aws-cli:latest": {}

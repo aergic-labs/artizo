@@ -43,6 +43,7 @@ import { ConfigWatcher } from "../config/configWatcher";
 import { ContainerLifecycle } from "../lifecycle/containerLifecycle";
 import { SidebarProvider } from "../sidebar/provider";
 import { ContainerExplorerProvider } from "../views/containerExplorer";
+import { FolderHistoryManager } from "../remote/folderHistory";
 
 /**
  * Extension settings read from workspace configuration.
@@ -414,6 +415,14 @@ export function createServices(
 ): CreatedServices {
   const logger = getLogger();
 
+  // Recent-folder history for the container explorer. Namespaced per
+  // extension so it never collides with zygos's SSH history when both are
+  // installed. Captured at the open path (see buildAuthorityAndOpen).
+  const folderHistory = new FolderHistoryManager({
+    state: context.globalState,
+    keyPrefix: "artizo",
+  });
+
   const configManager = new ConfigManager();
 
   const serverManager = new ServerManager({
@@ -457,6 +466,7 @@ export function createServices(
     gitConfigCopier,
     extensionInstaller,
     dockerPath: settings.dockerPath,
+    folderHistory,
   };
 
   // Register tree views, sidebar, and config watcher (local only)
@@ -509,7 +519,7 @@ export function createServices(
   );
 
   // Register the container explorer (host-side only).
-  ContainerExplorerProvider.register(context);
+  ContainerExplorerProvider.register(context, folderHistory);
 
   logger.info("Sidebar and config watcher registered");
 

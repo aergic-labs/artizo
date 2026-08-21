@@ -6,6 +6,7 @@
 /** Shared tree item definitions and icons for the container explorer views. */
 
 import * as vscode from "vscode";
+import type { FolderDescriptor } from "../remote/folderHistory";
 
 /** Represents a target in the container explorer tree. */
 export interface ContainerTarget {
@@ -43,13 +44,40 @@ export class ContainerTreeItem extends vscode.TreeItem {
 
 /** Tree item representing a recent folder. */
 export class RecentFolderTreeItem extends vscode.TreeItem {
-  constructor(public readonly target: ContainerTarget) {
-    super(target.label, vscode.TreeItemCollapsibleState.None);
+  constructor(public readonly descriptor: FolderDescriptor) {
+    const name =
+      descriptor.folder.split("/").filter(Boolean).pop() ??
+      descriptor.folder;
+    super(name, vscode.TreeItemCollapsibleState.None);
 
-    this.description = target.workspacePath;
-    this.tooltip = target.workspacePath ?? target.label;
+    this.description = descriptor.folder;
+    this.tooltip =
+      `Forget this folder from the Recent list. ` +
+      `The folder on disk and the container are not affected.\n` +
+      `Path: ${descriptor.folder}`;
     this.contextValue = "recent-folder";
     this.iconPath = new vscode.ThemeIcon("folder");
+    // Single-click opens in the current window (matches MS Remote-SSH and
+    // the zygos tree). The context menu still offers open-new + forget.
+    this.command = {
+      command: "artizo.explorer.connectCurrentWindow",
+      title: "Open in Current Window",
+      arguments: [this],
+    };
+  }
+}
+
+/**
+ * Collapsible group of recent folders under one container authority
+ * (e.g. one `artizo-container+<hex>` or `attached-container+<hex>`).
+ * `remote` is the full authority string used as the history key.
+ */
+export class RecentFolderGroupTreeItem extends vscode.TreeItem {
+  constructor(readonly remote: string, label: string) {
+    super(label, vscode.TreeItemCollapsibleState.Collapsed);
+    this.contextValue = "recent-folder-group";
+    this.iconPath = new vscode.ThemeIcon("history");
+    this.tooltip = `Recent folders: ${label}`;
   }
 }
 

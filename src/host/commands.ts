@@ -113,10 +113,12 @@ async function reportRebuildFailure(
 export async function reopenInContainerHandler(
   ctx: CommandContext,
   workspaceFolder?: string,
+  forceNewWindow?: boolean,
 ): Promise<void> {
   await reopenInContainer(ctx.deps, ctx.ui, {
     workspaceFolder: workspaceFolder!,
     workspaceUri: vscode.workspace.workspaceFolders![0].uri,
+    forceNewWindow,
   });
 }
 
@@ -469,7 +471,17 @@ export function registerCoreCommands(
       guardDocker: true,
       workspaceRequired: true,
       handler: withHostReady(ctx, (ctxC, ws) =>
-        reopenInContainerHandler(ctxC, ws),
+        reopenInContainerHandler(ctxC, ws, false),
+      ),
+    },
+    {
+      id: "artizo.reopenInContainerNewWindow",
+      label: "Reopen in Container (New Window)",
+      guardLocal: true,
+      guardDocker: true,
+      workspaceRequired: true,
+      handler: withHostReady(ctx, (ctxC, ws) =>
+        reopenInContainerHandler(ctxC, ws, true),
       ),
     },
     {

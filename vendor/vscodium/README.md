@@ -1,17 +1,9 @@
 # Artizo Dev Containers for VSCodium
 
-> **0.3.0 upgrade note:** Existing devcontainers must be rebuilt after
-> upgrading. The container label scheme changed; old containers will not
-> be recognized by Artizo 0.3.0+.
->
-> **Unreleased upgrade note:** The server install path changed from
-> `bin/<reh-commit>/` to `bin/<ide-commit>/` to match the official
-> devcontainer extension and zygos. Existing containers need a
-> one-time rebuild after upgrading so the server re-provisions at the
-> new path.
-
 Open any folder inside a Docker container with a full development environment
 powered by [devcontainer.json](https://containers.dev).
+
+Reduces friction when developing for linux-centric targets on Windows or macOS.
 
 ## Features
 
@@ -25,6 +17,17 @@ on first connect.
   configuration wizard (`Artizo: Configure Server Download`) lets you
   override with a custom template, pick a fork preset, test the URL,
   and configure checksum sources.
+
+### AI-assisted setup (optional)
+
+Install an AI coding extension to enable AI-powered config creation and repair:
+
+- [Cline](https://github.com/cline/cline) - install via Open VSX
+- [Roo Code](https://github.com/RooVeterinaryInc/Roo-Code) - install via Open VSX
+- [Zoo Code](https://github.com/Zoo-Code-Org/Zoo-Code) - install via Open VSX
+
+Once installed, the Artizo sidebar will offer AI-generated devcontainer.json setup
+and automated build-failure diagnosis.
 - **JSON repair** - auto-fix syntax errors in broken config files
 - **Sidebar panel** - toggle GPU, privileged mode, mounts, ports, extensions
 - **Container lifecycle** - start, stop, rebuild, remove
@@ -40,17 +43,6 @@ remotes during setup
   connect to devcontainers without a second SSH authentication or
   password prompt
 
-### AI-assisted setup (optional)
-
-Install an AI coding extension to enable AI-powered config creation and repair:
-
-- [Cline](https://github.com/cline/cline) - install via Open VSX
-- [Roo Code](https://github.com/RooVeterinaryInc/Roo-Code) - install via Open VSX
-- [Zoo Code](https://github.com/Zoo-Code-Org/Zoo-Code) - install via Open VSX
-
-Once installed, the Artizo sidebar will offer AI-generated devcontainer.json setup
-and automated build-failure diagnosis.
-
 ## Requirements
 
 - [VSCodium](https://vscodium.com) - including code-oss and other VS Code OSS builds
@@ -59,6 +51,8 @@ and automated build-failure diagnosis.
     optional Docker CLI compatibility packages are installed and working.
 
 Everything else is bundled with the extension.
+
+## License
 
 GNU Affero General Public License v3.0 (AGPL-3.0). See [LICENSE](LICENSE) for
 the full text.

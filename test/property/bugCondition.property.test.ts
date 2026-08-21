@@ -237,7 +237,7 @@ describe("Server connection regression properties", () => {
               image: "ubuntu:22.04",
               labels: {},
               env: [],
-              workingDir: "/workspace",
+              workingDir: "/workspace", user: "root",
             },
             mounts: [],
             networkSettings: { ports: {} },

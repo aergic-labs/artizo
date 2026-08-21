@@ -40,6 +40,7 @@ export interface ContainerInfo {
     labels: Record<string, string>;
     env: string[];
     workingDir: string;
+    user: string;
   };
   mounts: Array<{
     type: string;
@@ -152,6 +153,7 @@ export async function dockerInspect(
       labels: raw.Config?.Labels ?? {},
       env: raw.Config?.Env ?? [],
       workingDir: raw.Config?.WorkingDir ?? "",
+      user: raw.Config?.User ?? "root",
     },
     mounts: (raw.Mounts || []).map((m: DockerMountRaw) => ({
       type: m.Type,
@@ -251,19 +253,6 @@ export function dockerSpawn(
   options?: SpawnOptions,
 ): ChildProcess {
   return spawn(dockerPath ?? "docker", args, options ?? {});
-}
-
-export async function dockerCp(
-  dockerPath: string | undefined,
-  hostPath: string,
-  containerId: string,
-  containerPath: string,
-): Promise<ExecResult> {
-  return execFilePromise(dockerPath ?? "docker", [
-    "cp",
-    hostPath,
-    `${containerId}:${containerPath}`,
-  ]);
 }
 
 export function execFilePromise(

@@ -138,6 +138,7 @@ export async function rebuildContainer(
 
     let containerId = buildResult.containerId;
     let remoteWorkspaceFolder = buildResult.remoteWorkspaceFolder;
+    let remoteUser = buildResult.remoteUser;
 
     if (overrideConfigPath) {
       let relaunchResult:
@@ -195,6 +196,7 @@ export async function rebuildContainer(
 
         containerId = relaunchResult.containerId;
         remoteWorkspaceFolder = relaunchResult.remoteWorkspaceFolder;
+        remoteUser = relaunchResult.remoteUser;
       } finally {
         // The override config is a temp file; clean it up so they don't
         // accumulate across reopens/rebuilds.
@@ -213,6 +215,7 @@ export async function rebuildContainer(
       containerId,
       perContainerDisable,
       configResult!.config as Record<string, unknown> | undefined,
+      remoteUser,
     );
 
     ui.showInfo(

@@ -1,17 +1,9 @@
 # Artizo Dev Containers for {{NAME}}
 
-> **0.3.0 upgrade note:** Existing devcontainers must be rebuilt after
-> upgrading. The container label scheme changed; old containers will not
-> be recognized by Artizo 0.3.0+.
->
-> **Unreleased upgrade note:** The server install path changed from
-> `bin/<reh-commit>/` to `bin/<ide-commit>/` to match the official
-> devcontainer extension and zygos. Existing containers need a
-> one-time rebuild after upgrading so the server re-provisions at the
-> new path.
-
 Open any folder inside a Docker container with a full development environment
 powered by [devcontainer.json](https://containers.dev).
+
+Reduces friction when developing for linux-centric targets on Windows or macOS.
 
 ## Features
 
@@ -49,6 +41,8 @@ remotes during setup
     optional Docker CLI compatibility packages are installed and working.
 
 Everything else is bundled with the extension.
+
+## License
 
 GNU Affero General Public License v3.0 (AGPL-3.0). See [LICENSE](LICENSE) for
 the full text.

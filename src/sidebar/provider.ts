@@ -38,6 +38,7 @@ declare const HAS_KIRO_ADAPTER: boolean;
  */
 const ALLOWED_WEBVIEW_COMMANDS = new Set<string>([
   "artizo.reopenInContainer",
+  "artizo.reopenInContainerNewWindow",
   "artizo.rebuildContainer",
   "artizo.rebuildContainerNoCache",
   "artizo.rebuildAndReopenInContainer",

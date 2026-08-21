@@ -520,10 +520,26 @@ export class RemoteAuthorityResolver {
 
     if (this.serverManager) {
       try {
+        // Recover remoteUser (from our label) and containerUser (from
+        // Config.User) so re-attach runs install/start as the right user
+        // instead of defaulting to root. Both come from the existing
+        // dockerInspect call above — no new docker calls.
+        const remoteUser =
+          containerInfo.config.labels["artizo.remote_user"];
+        const containerUser =
+          containerInfo.config.user &&
+          containerInfo.config.user !== "root"
+            ? containerInfo.config.user
+            : undefined;
+        const user = remoteUser || containerUser;
+
         logToFile(`[Resolver] Ensuring server is installed...`);
-        await this.serverManager.ensureInstalled(containerId);
+        await this.serverManager.ensureInstalled(containerId, user);
         logToFile(`[Resolver] Starting server...`);
-        const serverInfo = await this.serverManager.start(containerId);
+        const serverInfo = await this.serverManager.start(
+          containerId,
+          user,
+        );
         logToFile(
           `[Resolver] Server started on container port ${serverInfo.port}`,
         );

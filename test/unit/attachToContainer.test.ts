@@ -91,6 +91,7 @@ function createMockServerManager(): IServerManager {
     getStatus: vi.fn().mockResolvedValue(null),
     getCompatibleVersion: vi.fn().mockReturnValue("1.96.0"),
     getUserExtensionsDir: vi.fn().mockResolvedValue("/tmp/test-extensions"),
+    preflightRemoteUser: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -156,6 +157,12 @@ describe("attachToContainer", () => {
       serverManager: createMockServerManager(),
       gitConfigCopier: createMockGitConfigCopier(),
       dockerPath: "docker",
+      folderHistory: {
+        addFolders: vi.fn().mockResolvedValue(undefined),
+        removeFolder: vi.fn().mockResolvedValue(false),
+        getFolders: () => [],
+        getRemotes: () => [],
+      } as any,
       extensionInstaller: {
         installFromConfig: vi.fn().mockResolvedValue([]),
         installExtensions: vi.fn().mockResolvedValue([]),
@@ -234,6 +241,7 @@ describe("attachToContainer", () => {
       expect(ui.pickContainer).not.toHaveBeenCalled();
       expect(deps.serverManager.ensureInstalled).toHaveBeenCalledWith(
         "pre-selected-123",
+        undefined,
       );
     });
 
@@ -242,8 +250,12 @@ describe("attachToContainer", () => {
 
       expect(deps.serverManager.ensureInstalled).toHaveBeenCalledWith(
         "container-abc",
+        undefined,
       );
-      expect(deps.serverManager.start).toHaveBeenCalledWith("container-abc");
+      expect(deps.serverManager.start).toHaveBeenCalledWith(
+        "container-abc",
+        undefined,
+      );
       expect(ui.openWindow).toHaveBeenCalledWith(
         expect.stringContaining("vscode-remote://attached-container+"),
         { forceReuseWindow: true },

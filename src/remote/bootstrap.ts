@@ -17,66 +17,14 @@ import {
   dockerSpawn as realDockerSpawn,
   childPipes,
 } from "../utils/dockerUtils";
+import { createTar } from "../utils/tar";
 
 // Constants
 const ARTIZO_BIN = "/tmp/.artizo/bin";
-const BLOCK = 512;
 /** Inactivity timeout for the server download (ms). */
 const DOWNLOAD_TIMEOUT_MS = 60_000;
 /** Max HTTP redirects to follow when downloading the server. */
 const MAX_DOWNLOAD_REDIRECTS = 5;
-
-// Minimal tar creator (zero deps)
-function createTar(
-  entries: Array<{
-    name: string;
-    hostPath: string;
-    mode: number; // octal, e.g. 0o755
-  }>,
-): Buffer {
-  const chunks: Buffer[] = [];
-
-  for (const { name, hostPath, mode } of entries) {
-    const content = readFileSync(hostPath);
-    const header = Buffer.alloc(BLOCK, 0);
-    header.write(name.slice(0, 100), 0, 100, "utf-8"); // name
-    header.write(oct(mode, 7), 100, 8, "utf-8"); // mode
-    header.write(oct(0, 7), 108, 8, "utf-8"); // uid
-    header.write(oct(0, 7), 116, 8, "utf-8"); // gid
-    const size = content.length;
-    header.write(oct(size, 11), 124, 12, "utf-8"); // size
-    header.write(oct(Math.floor(Date.now() / 1000), 11), 136, 12, "utf-8"); // mtime
-    header.write("0", 156, 1, "utf-8"); // typeflag: regular file
-    header.write("ustar\0", 257, 6, "utf-8"); // magic
-    header.write(oct(checksum(header), 6), 148, 7, "utf-8"); // checksum
-
-    chunks.push(header);
-    chunks.push(content);
-
-    // Pad to 512-byte boundary
-    const rem = size % BLOCK;
-    if (rem > 0) chunks.push(Buffer.alloc(BLOCK - rem, 0));
-  }
-
-  // Two zero blocks = end of archive
-  chunks.push(Buffer.alloc(BLOCK * 2, 0));
-
-  return Buffer.concat(chunks);
-}
-
-function oct(num: number, len: number): string {
-  const s = num.toString(8);
-  return "0".repeat(Math.max(0, len - s.length)) + s + "\0";
-}
-
-function checksum(header: Buffer): number {
-  // Checksum field (bytes 148-155) is treated as spaces during calculation
-  let sum = 0;
-  for (let i = 0; i < BLOCK; i++) {
-    sum += i >= 148 && i < 156 ? 32 : header[i];
-  }
-  return sum;
-}
 
 // Public API
 /** Parse HOME=... line from setup script stdout. */
@@ -111,7 +59,11 @@ export class ContainerBootstrap {
     this.fetcher = options.fetcher ?? httpsGet;
   }
 
-  async bootstrapBusybox(containerId: string, arch: string): Promise<void> {
+  async bootstrapBusybox(
+    containerId: string,
+    arch: string,
+    user?: string,
+  ): Promise<void> {
     const busyboxPath = join(
       this.extensionPath,
       "tools",
@@ -120,9 +72,9 @@ export class ContainerBootstrap {
     );
     const busyboxBuf = readFileSync(busyboxPath);
 
-    const child = this.spawner(this.dockerPath, [
-      "exec",
-      "-i",
+    const args = ["exec", "-i"];
+    if (user) args.push("-u", user);
+    args.push(
       containerId,
       "sh",
       "-c",
@@ -130,7 +82,8 @@ export class ContainerBootstrap {
         "cat > /tmp/.artizo/bin/busybox && " +
         "chmod +x /tmp/.artizo/bin/busybox && " +
         "/tmp/.artizo/bin/busybox --install -s /tmp/.artizo/bin",
-    ]);
+    );
+    const child = this.spawner(this.dockerPath, args);
 
     const pipes = childPipes(child);
     let stderr = "";
@@ -150,7 +103,7 @@ export class ContainerBootstrap {
     }
   }
 
-  async deployTools(containerId: string): Promise<void> {
+  async deployTools(containerId: string, user?: string): Promise<void> {
     const toolsDir = join(this.extensionPath, "tools");
     const tarBuf = createTar([
       {
@@ -165,14 +118,10 @@ export class ContainerBootstrap {
       },
     ]);
 
-    const child = this.spawner(this.dockerPath, [
-      "exec",
-      "-i",
-      containerId,
-      "/tmp/.artizo/bin/tar",
-      "-xC",
-      ARTIZO_BIN,
-    ]);
+    const args = ["exec", "-i"];
+    if (user) args.push("-u", user);
+    args.push(containerId, "/tmp/.artizo/bin/tar", "-xC", ARTIZO_BIN);
+    const child = this.spawner(this.dockerPath, args);
 
     const pipes = childPipes(child);
     let stderr = "";
@@ -197,8 +146,11 @@ export class ContainerBootstrap {
     authToken?: string,
     authTokenPath?: string,
     serverBuffer?: Buffer,
+    user?: string,
   ): Promise<BootstrapResult> {
-    const args = ["exec", "-i", "-e", `ARTIZO_SERVER_ROOT=${installPath}`];
+    const args = ["exec", "-i"];
+    if (user) args.push("-u", user);
+    args.push("-e", `ARTIZO_SERVER_ROOT=${installPath}`);
     const sendToken = Boolean(authToken && authTokenPath);
     if (sendToken) {
       // The SSO token is streamed on stdin (base64, first line) rather than

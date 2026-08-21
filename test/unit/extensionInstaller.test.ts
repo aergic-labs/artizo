@@ -16,6 +16,15 @@ import {
 
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
+  spawn: vi.fn(),
+}));
+
+// Mock tar.ts so tests don't touch the host filesystem. tarDirectory is
+// used by the streaming copy path; createTar is unused here but exported
+// by the module so vitest requires it in the mock factory.
+vi.mock("../../src/utils/tar", () => ({
+  tarDirectory: vi.fn(() => Buffer.from("mock-tar")),
+  createTar: vi.fn(() => Buffer.from("mock-tar")),
 }));
 
 vi.mock("node:fs", () => ({
@@ -57,9 +66,43 @@ vi.mock("yauzl", () => ({
   ),
 }));
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { PassThrough, EventEmitter } from "node:stream";
 
 const mockExecFile = vi.mocked(execFile);
+const mockSpawn = vi.mocked(spawn);
+
+/**
+ * Build a fake ChildProcess for the streaming copy/write path. The
+ * extension installer streams a tar buffer (or JSON) to `docker exec -i`
+ * stdin and waits on the `close` event for the exit code.
+ */
+function createMockSpawnChild(opts: { exitCode?: number; stderr?: string } = {}) {
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const child = new EventEmitter();
+  (child as any).stdin = stdin;
+  (child as any).stdout = stdout;
+  (child as any).stderr = stderr;
+  if (opts.stderr) stderr.write(Buffer.from(opts.stderr));
+  setTimeout(() => child.emit("close", opts.exitCode ?? 0), 0);
+  return child as unknown as import("node:child_process").ChildProcess;
+}
+
+/**
+ * Configure sequential spawn responses (exit code + stderr) for the
+ * streaming `docker exec -i` calls. Unconfigured trailing calls succeed.
+ */
+function setupSpawnResponses(
+  responses: Array<{ exitCode?: number; stderr?: string }>,
+) {
+  let i = 0;
+  mockSpawn.mockImplementation(() => {
+    const r = responses[i++] ?? { exitCode: 0 };
+    return createMockSpawnChild(r);
+  });
+}
 
 function createMockHost() {
   return {
@@ -165,6 +208,9 @@ describe("extensionInstaller", () => {
 
     beforeEach(() => {
       mockExecFile.mockReset();
+      mockSpawn.mockReset();
+      // Default: all streaming `docker exec -i` calls succeed.
+      setupSpawnResponses([]);
       mockHttpGet = vi.fn();
       mockHttpDownload = vi.fn();
       mockHost = createMockHost();
@@ -206,16 +252,16 @@ describe("extensionInstaller", () => {
         );
         mockHttpDownload.mockResolvedValue(undefined);
 
-        // Mock docker exec calls:
-        // 1. mkdir -p extensions dir (dockerExec)
-        // 2. docker cp extracted dir (execFile)
-        // 3. cat extensions.json - not found (dockerExec)
-        // 4. docker cp extensions.json (execFile)
+        // Mock docker exec / spawn calls:
+        // 1. mkdir -p extensions dir (dockerExec -> execFile)
+        // 2. resolveContainerTar probe (dockerExec -> execFile)
+        // 3. stream tar -xC (spawn)
+        // 4. cat extensions.json - not found (dockerExec -> execFile)
+        // 5. stream cat > extensions.json (spawn)
         setupExecFileResponses([
           { stdout: "" }, // mkdir -p extensions dir (dockerExec)
-          { stdout: "" }, // docker cp extracted dir (execFile)
+          { stdout: "" }, // resolveContainerTar probe (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
         ]);
 
         const results = await installer.installFromConfig("container1", config);
@@ -243,9 +289,8 @@ describe("extensionInstaller", () => {
 
         setupExecFileResponses([
           { stdout: "" }, // mkdir -p extensions dir (dockerExec)
-          { stdout: "" }, // docker cp extracted dir (execFile)
+          { stdout: "" }, // resolveContainerTar probe (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
         ]);
 
         const results = await installer.installExtensions("container1", [
@@ -273,7 +318,7 @@ describe("extensionInstaller", () => {
         expect(results[0].error).toContain("HTTP 404");
       });
 
-      it("reports failure when docker cp fails", async () => {
+      it("reports failure when streaming copy to container fails", async () => {
         mockHttpGet.mockResolvedValue(
           JSON.stringify({
             version: "1.0.0",
@@ -282,9 +327,13 @@ describe("extensionInstaller", () => {
         );
         mockHttpDownload.mockResolvedValue(undefined);
 
+        // First streaming `docker exec -i tar -xC` fails.
+        setupSpawnResponses([
+          { exitCode: 1, stderr: "No such container" },
+        ]);
         setupExecFileResponses([
           { stdout: "" }, // mkdir -p extensions dir (dockerExec)
-          { stdout: "", stderr: "No such container", exitCode: 1 }, // docker cp fails (execFile)
+          { stdout: "" }, // resolveContainerTar probe (dockerExec)
         ]);
 
         const results = await installer.installExtensions("container1", [
@@ -293,7 +342,9 @@ describe("extensionInstaller", () => {
 
         expect(results).toHaveLength(1);
         expect(results[0].success).toBe(false);
-        expect(results[0].error).toContain("Failed to copy file to container");
+        expect(results[0].error).toContain(
+          "Failed to copy extension to container",
+        );
       });
 
       it("installs multiple extensions and reports individual results", async () => {
@@ -316,9 +367,8 @@ describe("extensionInstaller", () => {
 
         setupExecFileResponses([
           { stdout: "" }, // mkdir -p extensions dir (dockerExec)
-          { stdout: "" }, // docker cp ext1 extracted dir (execFile)
+          { stdout: "" }, // resolveContainerTar probe (dockerExec, first copy only)
           { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
         ]);
 
         const results = await installer.installExtensions("container1", [
@@ -384,12 +434,9 @@ describe("extensionInstaller", () => {
 
         setupExecFileResponses([
           { stdout: "" }, // mkdir (dockerExec)
-          { stdout: "" }, // docker cp child extracted dir (execFile)
-          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
-          { stdout: "" }, // docker cp parent extracted dir (execFile)
-          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
+          { stdout: "" }, // resolveContainerTar probe (dockerExec, first copy only)
+          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec) child
+          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec) parent
         ]);
 
         const results = await installer.installExtensions("container1", [
@@ -421,12 +468,9 @@ describe("extensionInstaller", () => {
 
         setupExecFileResponses([
           { stdout: "" }, // mkdir (dockerExec)
-          { stdout: "" }, // docker cp bundled extracted dir (execFile)
-          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
-          { stdout: "" }, // docker cp pack extracted dir (execFile)
-          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
+          { stdout: "" }, // resolveContainerTar probe (dockerExec, first copy only)
+          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec) bundled
+          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec) pack
         ]);
 
         const results = await installer.installExtensions("container1", [
@@ -461,15 +505,10 @@ describe("extensionInstaller", () => {
 
         setupExecFileResponses([
           { stdout: "" }, // mkdir (dockerExec)
-          { stdout: "" }, // docker cp shared extracted dir (execFile)
-          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
-          { stdout: "" }, // docker cp a extracted dir (execFile)
-          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
-          { stdout: "" }, // docker cp b extracted dir (execFile)
-          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
+          { stdout: "" }, // resolveContainerTar probe (dockerExec, first copy only)
+          { stdout: "", exitCode: 1 }, // cat extensions.json - shared
+          { stdout: "", exitCode: 1 }, // cat extensions.json - a
+          { stdout: "", exitCode: 1 }, // cat extensions.json - b
         ]);
 
         const results = await installer.installExtensions("container1", [
@@ -501,12 +540,9 @@ describe("extensionInstaller", () => {
 
         setupExecFileResponses([
           { stdout: "" }, // mkdir (dockerExec)
-          { stdout: "" }, // docker cp extracted dir (execFile)
-          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
-          { stdout: "" }, // docker cp extracted dir (execFile)
-          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
+          { stdout: "" }, // resolveContainerTar probe (dockerExec, first copy only)
+          { stdout: "", exitCode: 1 }, // cat extensions.json - x
+          { stdout: "", exitCode: 1 }, // cat extensions.json - y
         ]);
 
         const results = await installer.installExtensions("container1", [
@@ -542,17 +578,18 @@ describe("extensionInstaller", () => {
 
         setupExecFileResponses([
           { stdout: "" }, // mkdir -p extensions dir (dockerExec)
-          { stdout: "" }, // docker cp extracted dir (execFile)
+          { stdout: "" }, // resolveContainerTar probe (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
         ]);
 
         await customInstaller.installExtensions("container1", ["pub.ext"]);
 
-        // Verify mkdir was called through the host
+        // Verify mkdir was called through the host (3rd arg is the
+        // optional options object, now threaded for remoteUser).
         expect(customHost.dockerExec).toHaveBeenCalledWith(
           "container1",
           expect.arrayContaining(["mkdir"]),
+          undefined,
         );
       });
     });
@@ -579,9 +616,8 @@ describe("extensionInstaller", () => {
 
         setupExecFileResponses([
           { stdout: "" }, // mkdir (dockerExec)
-          { stdout: "" }, // docker cp local ext folder (execFile)
+          { stdout: "" }, // resolveContainerTar probe (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
         ]);
 
         const results = await localInstaller.installExtensions("container1", [
@@ -620,9 +656,8 @@ describe("extensionInstaller", () => {
 
         setupExecFileResponses([
           { stdout: "" }, // mkdir (dockerExec)
-          { stdout: "" }, // docker cp extracted dir (execFile)
+          { stdout: "" }, // resolveContainerTar probe (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
         ]);
 
         await localInstaller.installExtensions("container1", ["pub.ext"]);
@@ -661,9 +696,8 @@ describe("extensionInstaller", () => {
 
         setupExecFileResponses([
           { stdout: "" }, // mkdir (dockerExec)
-          { stdout: "" }, // docker cp extracted dir (execFile)
+          { stdout: "" }, // resolveContainerTar probe (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json (dockerExec)
-          { stdout: "" }, // docker cp extensions.json (execFile)
         ]);
 
         await localInstaller.installExtensions("container1", ["pub.ext"]);
@@ -673,6 +707,70 @@ describe("extensionInstaller", () => {
           "https://example.com/linux-x64.vsix",
           expect.any(String),
         );
+      });
+    });
+
+    describe("remoteUser threading", () => {
+      it("passes -u <remoteUser> to the streaming copy and json-write execs", async () => {
+        mockHttpGet.mockResolvedValue(
+          JSON.stringify({
+            version: "1.0.0",
+            files: { download: "https://example.com/download.vsix" },
+          }),
+        );
+        mockHttpDownload.mockResolvedValue(undefined);
+
+        setupExecFileResponses([
+          { stdout: "" }, // mkdir (dockerExec)
+          { stdout: "" }, // resolveContainerTar probe (dockerExec)
+          { stdout: "", exitCode: 1 }, // cat extensions.json - not found
+        ]);
+
+        await installer.installExtensions(
+          "container1",
+          ["pub.ext"],
+          "dev",
+        );
+
+        // mkdir runs as remoteUser via dockerExec options.user
+        expect(mockHost.dockerExec).toHaveBeenCalledWith(
+          "container1",
+          expect.arrayContaining(["mkdir"]),
+          { user: "dev" },
+        );
+
+        // Two streaming spawn calls: tar -xC (copy) + cat > (json write).
+        // Both must include -u dev in argv.
+        expect(mockSpawn).toHaveBeenCalledTimes(2);
+        for (const call of mockSpawn.mock.calls) {
+          const args = call[1] as string[];
+          expect(args).toContain("-u");
+          expect(args[args.indexOf("-u") + 1]).toBe("dev");
+        }
+      });
+
+      it("omits -u when remoteUser is not set", async () => {
+        mockHttpGet.mockResolvedValue(
+          JSON.stringify({
+            version: "1.0.0",
+            files: { download: "https://example.com/download.vsix" },
+          }),
+        );
+        mockHttpDownload.mockResolvedValue(undefined);
+
+        setupExecFileResponses([
+          { stdout: "" }, // mkdir
+          { stdout: "" }, // resolveContainerTar probe
+          { stdout: "", exitCode: 1 }, // cat extensions.json - not found
+        ]);
+
+        await installer.installExtensions("container1", ["pub.ext"]);
+
+        expect(mockSpawn).toHaveBeenCalledTimes(2);
+        for (const call of mockSpawn.mock.calls) {
+          const args = call[1] as string[];
+          expect(args).not.toContain("-u");
+        }
       });
     });
   });

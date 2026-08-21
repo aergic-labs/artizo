@@ -137,6 +137,7 @@ export async function openFolderInContainer(
       buildResult.containerId,
       perContainerDisable,
       configResult!.config as Record<string, unknown> | undefined,
+      buildResult.remoteUser,
     );
 
     ui.showInfo(
