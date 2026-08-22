@@ -32,8 +32,9 @@ describe("bootstrap files", () => {
     const s = readFileSync(join(process.cwd(), "tools", "setup.sh"), "utf-8");
     expect(s).toContain("#!/tmp/.artizo/bin/sh");
     expect(s).toContain("gzip -d | tar -xC");
-    // Auth token arrives on stdin (base64), never on argv.
-    expect(s).toContain("ARTIZO_AUTH_TOKEN_STDIN");
+    // Auth files arrive on stdin (path/b64 pairs, blank-line terminated),
+    // never on argv.
+    expect(s).toContain("ARTIZO_AUTH_FILES_STDIN");
     expect(s).toContain("base64 -d");
     expect(s).not.toContain('echo "${ARTIZO_AUTH_TOKEN}"');
   });
@@ -120,7 +121,7 @@ describe("ContainerBootstrap methods", () => {
     expect((await p).home).toBe("/root");
   });
 
-  it("streams auth token on stdin, keeping it off argv", async () => {
+  it("streams auth files on stdin, keeping them off argv", async () => {
     const s = vi.fn(),
       c = makeChild();
     s.mockReturnValue(c);
@@ -137,27 +138,22 @@ describe("ContainerBootstrap methods", () => {
       "c1",
       "https://x",
       "/tmp/.kiro",
-      "secret-token",
-      ".aws/sso/cache/k.json",
+      [{ path: ".aws/sso/cache/k.json", content: "secret-token" }],
     );
     c.emit("close", 0);
     await p;
 
     const args = s.mock.calls[0][1] as string[];
-    // Marker flag + destination path on argv, but never the token itself.
+    // Marker flag on argv, but never the file contents themselves.
     expect(args).toEqual(
-      expect.arrayContaining(["-e", "ARTIZO_AUTH_TOKEN_STDIN=1"]),
-    );
-    expect(args).toEqual(
-      expect.arrayContaining([
-        "-e",
-        "ARTIZO_AUTH_TOKEN_PATH=.aws/sso/cache/k.json",
-      ]),
+      expect.arrayContaining(["-e", "ARTIZO_AUTH_FILES_STDIN=1"]),
     );
     expect(args.join(" ")).not.toContain("secret-token");
-    // Token is streamed as a base64 line ahead of the tarball bytes.
-    const b64 = Buffer.from("secret-token").toString("base64");
+    // Path line + base64 content line + blank terminator, then tarball.
+    const b64 = Buffer.from("secret-token", "utf-8").toString("base64");
+    expect(c.stdin.write).toHaveBeenCalledWith(Buffer.from(".aws/sso/cache/k.json\n"));
     expect(c.stdin.write).toHaveBeenCalledWith(Buffer.from(`${b64}\n`));
+    expect(c.stdin.write).toHaveBeenCalledWith(Buffer.from("\n"));
     expect(c.stdin.write).toHaveBeenCalledWith(Buffer.from("server-bytes"));
   });
 

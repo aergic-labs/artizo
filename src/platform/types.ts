@@ -108,11 +108,17 @@ export interface IPlatformAdapter extends DownloadAdapter {
    */
   getApexExtensionsDir(): string;
 
-  /** Read auth token from host filesystem. */
-  readAuthToken?(): string | undefined;
-
-  /** Path for auth token inside container, relative to HOME. */
-  getAuthTokenPath?(): string;
+  /**
+   * Read auth files from the host filesystem for forwarding to the
+   * remote. Each entry is a path relative to the remote HOME and the
+   * file content (text). Returns empty if no auth files exist.
+   *
+   * Implementations should be resilient: if a primary token file
+   * exists but a refresh/registration sibling is missing or cannot
+   * be parsed, return just the primary so the remote still works
+   * until token expiry.
+   */
+  readAuthFiles?(): { path: string; content: string }[];
 
   /**
    * Checksum configuration for the detected fork. Returns undefined if

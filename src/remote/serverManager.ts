@@ -546,8 +546,7 @@ export class ServerManager implements IServerManager {
     await this.bootstrap.deployTools(containerId, user);
 
     const adapter = await getPlatformAdapter();
-    const authToken = adapter.readAuthToken?.();
-    const authTokenPath = adapter.getAuthTokenPath?.();
+    const authFiles = adapter.readAuthFiles?.() ?? [];
 
     // Download server tarball client-side and verify checksum before
     // streaming it into the container.
@@ -606,8 +605,7 @@ export class ServerManager implements IServerManager {
       containerId,
       url,
       stagingDir,
-      authToken,
-      authTokenPath,
+      authFiles,
       serverBuffer,
       user,
     );

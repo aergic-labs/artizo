@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.1
+
+### Fixed
+
+- Auth token forwarding now includes the `<clientIdHash>.json` registration sibling so the remote can refresh its own tokens. Previously only `kiro-auth-token.json` was forwarded; the remote would sign out ~1 hour into every session.
+- `tools/setup.sh`: auth file writes are atomic (temp + mv) and non-fatal on read-only bind-mounts. HOME detection moved before auth writes.
+- Reconnect now runs `postStartCommand` and `postAttachCommand` via the CLI's `launchProvision({expectExistingContainer: true})` instead of a bare `docker start`. Previously lifecycle hooks were silently skipped on reconnect (X11 display failures, etc.).
+- `resolveContainerById` path also runs lifecycle hooks (best-effort, non-blocking) before server install.
+
 ## 0.7.0
 
 ### Added

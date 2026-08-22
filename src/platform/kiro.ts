@@ -90,23 +90,46 @@ export class KiroAdapter implements IPlatformAdapter {
     }
   }
 
-  readAuthToken(): string | undefined {
-    const tokenPath = join(
-      homedir(),
-      ".aws",
-      "sso",
-      "cache",
-      "kiro-auth-token.json",
-    );
-    if (!existsSync(tokenPath)) return undefined;
-    try {
-      return readFileSync(tokenPath, "utf-8");
-    } catch {
-      return undefined;
-    }
-  }
+  readAuthFiles(): { path: string; content: string }[] {
+    // Always forward the token file when present. It works until
+    // expiry even without the registration sibling.
+    const cacheDir = join(homedir(), ".aws", "sso", "cache");
+    const tokenRelPath = ".aws/sso/cache/kiro-auth-token.json";
+    const tokenAbsPath = join(cacheDir, "kiro-auth-token.json");
+    if (!existsSync(tokenAbsPath)) return [];
 
-  getAuthTokenPath(): string {
-    return ".aws/sso/cache/kiro-auth-token.json";
+    let tokenContent: string;
+    try {
+      tokenContent = readFileSync(tokenAbsPath, "utf-8");
+    } catch {
+      return [];
+    }
+    const files: { path: string; content: string }[] = [
+      { path: tokenRelPath, content: tokenContent },
+    ];
+
+    // The registration file named by `clientIdHash` in the token JSON
+    // holds the clientId/clientSecret the remote needs to refresh.
+    // If we can't parse the hash or the sibling file is missing, we
+    // still return the token alone — many Kiro auth methods don't
+    // use SSO refresh and may not produce this file.
+    try {
+      const token = JSON.parse(tokenContent);
+      const hash =
+        typeof token?.clientIdHash === "string" ? token.clientIdHash : "";
+      if (hash && /^[a-f0-9]+$/i.test(hash)) {
+        const regAbsPath = join(cacheDir, `${hash}.json`);
+        if (existsSync(regAbsPath)) {
+          files.push({
+            path: `.aws/sso/cache/${hash}.json`,
+            content: readFileSync(regAbsPath, "utf-8"),
+          });
+        }
+      }
+    } catch {
+      // Token isn't valid JSON or doesn't expose clientIdHash.
+      // Token alone still works until expiry.
+    }
+    return files;
   }
 }

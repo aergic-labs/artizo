@@ -143,22 +143,19 @@ export class ContainerBootstrap {
     containerId: string,
     serverUrl: string,
     installPath: string,
-    authToken?: string,
-    authTokenPath?: string,
+    authFiles: Array<{ path: string; content: string }> = [],
     serverBuffer?: Buffer,
     user?: string,
   ): Promise<BootstrapResult> {
     const args = ["exec", "-i"];
     if (user) args.push("-u", user);
     args.push("-e", `ARTIZO_SERVER_ROOT=${installPath}`);
-    const sendToken = Boolean(authToken && authTokenPath);
-    if (sendToken) {
-      // The SSO token is streamed on stdin (base64, first line) rather than
-      // passed as `-e ARTIZO_AUTH_TOKEN=...`, so it never lands on the host
-      // `docker` process argv (visible via `ps` / `/proc/<pid>/cmdline`).
-      // Only the non-sensitive destination path and a marker flag go on argv.
-      args.push("-e", "ARTIZO_AUTH_TOKEN_STDIN=1");
-      args.push("-e", `ARTIZO_AUTH_TOKEN_PATH=${authTokenPath}`);
+    if (authFiles.length > 0) {
+      // Auth files are streamed on stdin (path\nbase64\n pairs followed
+      // by a blank line, then the server tarball) rather than passed as
+      // `-e` env vars, so file contents never land on the host `docker`
+      // process argv (visible via `ps` / `/proc/<pid>/cmdline`).
+      args.push("-e", "ARTIZO_AUTH_FILES_STDIN=1");
     }
     args.push(containerId, "/tmp/.artizo/bin/sh", "/tmp/.artizo/bin/setup.sh");
 
@@ -180,11 +177,17 @@ export class ContainerBootstrap {
     const serverBuf = serverBuffer ?? await this.downloadServer(serverUrl);
 
     getLogger().debug(`[install] streaming tarball to setup.sh...`);
-    // Auth token goes first as a single base64 line; setup.sh consumes it with
-    // one `read` before piping the remaining stdin (the tarball) into gzip.
-    if (sendToken) {
-      const tokenB64 = Buffer.from(authToken!).toString("base64");
-      pipes.stdin.write(Buffer.from(`${tokenB64}\n`));
+    // Auth files go first: for each, a relative-path line followed by a
+    // base64-content line. A blank line terminates the auth section so
+    // setup.sh knows to pipe the remaining stdin (the tarball) into gzip.
+    for (const f of authFiles) {
+      pipes.stdin.write(Buffer.from(`${f.path}\n`));
+      pipes.stdin.write(
+        Buffer.from(`${Buffer.from(f.content, "utf-8").toString("base64")}\n`),
+      );
+    }
+    if (authFiles.length > 0) {
+      pipes.stdin.write(Buffer.from("\n"));
     }
     pipes.stdin.write(serverBuf);
     pipes.stdin.end();

@@ -56,10 +56,7 @@ const { mockReadKiroToken } = vi.hoisted(() => ({
 
 vi.mock("../../src/platform", () => ({
   getPlatformAdapter: vi.fn().mockResolvedValue({
-    readAuthToken: mockReadKiroToken,
-    getAuthTokenPath: vi
-      .fn()
-      .mockReturnValue(".aws/sso/cache/kiro-auth-token.json"),
+    readAuthFiles: mockReadKiroToken,
     getServerInstallRoot: vi.fn(),
     name: "Kiro",
     serverApplicationName: "kiro-server",
@@ -410,15 +407,16 @@ describe("serverManager", () => {
           "container1",
           expect.any(String),
           expect.any(String),
-          undefined,
-          expect.any(String),
+          [],
           expect.any(Buffer),
           undefined,
         );
       });
 
-      it("passes kiro auth token to runSetup when adapter provides it", async () => {
-        mockReadKiroToken.mockReturnValue('{"token":"mock"}');
+      it("passes kiro auth files to runSetup when adapter provides them", async () => {
+        mockReadKiroToken.mockReturnValue([
+          { path: ".aws/sso/cache/kiro-auth-token.json", content: '{"token":"mock"}' },
+        ]);
 
         setupExecFileResponses([
           { stdout: `x86_64:::${TEST_PRODUCT_INFO.commit}:::no` },
@@ -432,8 +430,7 @@ describe("serverManager", () => {
           "container1",
           expect.any(String),
           expect.any(String),
-          '{"token":"mock"}',
-          expect.any(String),
+          [{ path: ".aws/sso/cache/kiro-auth-token.json", content: '{"token":"mock"}' }],
           expect.any(Buffer),
           undefined,
         );

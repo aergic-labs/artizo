@@ -28,6 +28,10 @@ import { startManagedSshTunnel, type TunnelController } from "./sshTunnel";
 import { startExecServerBridge, type ExecServer as ExecServerLike } from "./execServerBridge";
 import { startAskpass } from "../ssh/askpass";
 import { checkContainerConfig } from "./configCheck";
+import { launchProvision, withDefaults } from "../devcontainer/api";
+import { URI } from "vscode-uri";
+import { buildIdentityLabels } from "../workflows/postLaunch";
+import { getPlatformAdapter } from "../platform";
 
 /** File-based logger that works regardless of window state. */
 const LOG_FILE = path.join(os.tmpdir(), "artizo-resolver.log");
@@ -478,6 +482,68 @@ export class RemoteAuthorityResolver {
   }
 
   /**
+   * Run devcontainer lifecycle hooks (postStartCommand, postAttachCommand)
+   * on an existing container via the CLI. One-time hooks are skipped by
+   * the CLI's marker logic. Best-effort: failures are logged but don't
+   * block the resolve (the server can still start without hooks).
+   */
+  private async runLifecycleHooks(
+    containerInfo: ContainerInfo,
+  ): Promise<void> {
+    const workspaceFolder =
+      containerInfo.config.labels["artizo.local_folder"] ||
+      containerInfo.config.labels["devcontainer.local_folder"];
+    const configPath =
+      containerInfo.config.labels["artizo.config_file"] ||
+      containerInfo.config.labels["devcontainer.config_file"];
+
+    if (!workspaceFolder) {
+      logToFile(
+        "[Resolver] No workspace folder label; skipping lifecycle hooks",
+      );
+      return;
+    }
+
+    try {
+      const adapter = await getPlatformAdapter();
+      const platformTarget = adapter.name.toLowerCase();
+      const idLabels = await buildIdentityLabels({
+        platformTarget,
+        workspaceFolder,
+        configPath,
+        config: undefined,
+      });
+
+      const options = withDefaults({
+        workspaceFolder,
+        additionalLabels: idLabels,
+        configFile: configPath ? URI.file(configPath) : undefined,
+        expectExistingContainer: true,
+        removeExistingContainer: false,
+        log: (text: string) => logToFile(`[Resolver] [lifecycle] ${text}`),
+      });
+
+      logToFile(`[Resolver] Running lifecycle hooks via CLI...`);
+      const result = await launchProvision(
+        options,
+        configPath,
+        undefined,
+        idLabels,
+      );
+      logToFile(`[Resolver] Lifecycle hooks complete`);
+      // Finish any background tasks the CLI started (e.g. non-blocking hooks).
+      if (result?.finishBackgroundTasks) {
+        await result.finishBackgroundTasks();
+      }
+    } catch (err: unknown) {
+      // Best-effort: don't block the resolve if hooks fail. The server
+      // can still start without them.
+      const message = err instanceof Error ? err.message : String(err);
+      logToFile(`[Resolver] Lifecycle hooks failed (non-blocking): ${message}`);
+    }
+  }
+
+  /**
    * Resolve a container by its ID, verify it's running, and return connection info.
    */
   private async resolveContainerById(
@@ -520,6 +586,14 @@ export class RemoteAuthorityResolver {
 
     if (this.serverManager) {
       try {
+        // Run lifecycle hooks (postStartCommand, postAttachCommand) via
+        // the CLI before installing the server. One-time hooks
+        // (onCreateCommand, etc.) are skipped by the CLI's marker logic.
+        // Labels on the container carry the workspace folder + config path,
+        // both local to wherever this resolver runs (apex for local,
+        // remote-ssh host for dual-hop — same side that has Docker).
+        await this.runLifecycleHooks(containerInfo);
+
         // Recover remoteUser (from our label) and containerUser (from
         // Config.User) so re-attach runs install/start as the right user
         // instead of defaulting to root. Both come from the existing
