@@ -37,6 +37,7 @@ import {
   getHostWorkspaceFolder,
 } from "./guards";
 import { isInDevContainerWindow } from "./state";
+import { dockerVolumeCreate } from "../utils/dockerUtils";
 import type { Host } from "./host";
 import { registerCommand, type CommandSpec } from "./commandRunner";
 import { ProvisionFailedError } from "../devcontainer/provisionError";
@@ -142,6 +143,31 @@ export async function cloneInVolumeHandler(ctx: CommandContext): Promise<void> {
   if (!repoUrl) return;
   const cloneUI = buildCloneInVolumeUI(ctx.ui, repoUrl);
   await cloneInVolume(ctx.deps, cloneUI, { repoUrl });
+}
+
+export async function createVolumeHandler(_ctx: CommandContext): Promise<void> {
+  const name = await vscode.window.showInputBox({
+    prompt: "Enter a name for the new volume",
+    placeHolder: "my-volume",
+    validateInput: (v) =>
+      /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(v.trim())
+        ? undefined
+        : "Invalid volume name",
+  });
+  if (!name) return;
+  const trimmed = name.trim();
+  const result = await dockerVolumeCreate(trimmed, {
+    labels: { "com.artizo.managed": "true" },
+  });
+  if (result.exitCode !== 0) {
+    vscode.window.showErrorMessage(
+      `${BRAND_PREFIX} Failed to create volume: ${result.stderr}`,
+    );
+    return;
+  }
+  vscode.window.showInformationMessage(
+    `${BRAND_PREFIX} Created volume: ${trimmed}`,
+  );
 }
 
 export async function attachToRunningContainerHandler(
@@ -504,6 +530,14 @@ export function registerCoreCommands(
       guardDocker: true,
       workspaceRequired: false,
       handler: withHostReady(ctx, (ctxC) => cloneInVolumeHandler(ctxC)),
+    },
+    {
+      id: "artizo.createVolume",
+      label: "Create Volume",
+      guardLocal: true,
+      guardDocker: true,
+      workspaceRequired: false,
+      handler: withHostReady(ctx, (ctxC) => createVolumeHandler(ctxC)),
     },
     {
       id: "artizo.attachToRunningContainer",

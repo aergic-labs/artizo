@@ -820,8 +820,8 @@ describe("command handlers", () => {
 
       registerCoreCommands(context, ctx);
 
-      // 11 spec-based commands across the 5 spec arrays
-      expect(registerCommand).toHaveBeenCalledTimes(11);
+      // 12 spec-based commands across the 5 spec arrays
+      expect(registerCommand).toHaveBeenCalledTimes(12);
       const ids = vi
         .mocked(registerCommand)
         .mock.calls.map((c) => (c[2] as any).id);

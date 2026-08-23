@@ -99,10 +99,10 @@ describe("computeCommands", () => {
       expect(ids).not.toContain("artizo.reopenInContainer");
     });
 
-    it("labels open-folder as 'different' when workspace is open", () => {
+    it("labels open-folder as 'a folder' when workspace is open", () => {
       const cmd = commands.find((c) => c.id === "artizo.openFolderInContainer");
       expect(cmd).toBeDefined();
-      expect(cmd!.label).toBe("Open Different Folder in Container");
+      expect(cmd!.label).toBe("Open a Folder in Container");
     });
   });
 

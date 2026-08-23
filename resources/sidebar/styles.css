@@ -16,25 +16,18 @@ body {
     padding: 0;
 }
 
+/* ─── Root layout ─── */
 #root {
     display: flex;
     flex-direction: column;
     height: 100vh;
 }
 
-/* Status bar */
-#status-bar {
-    flex-shrink: 0;
-    padding: 4px 12px;
-    font-size: 12px;
-    color: var(--vscode-descriptionForeground);
-    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
-}
-
-/* Panels */
 .panel {
     display: none;
     flex-direction: column;
+    flex: 1;
+    min-height: 0;
     padding: 6px 6px;
     gap: 3px;
     overflow-y: auto;
@@ -45,7 +38,56 @@ body {
     display: flex;
 }
 
-/* Sections */
+.hidden {
+    display: none !important;
+}
+
+/* ─── Title ─── */
+.sidebar-title {
+    padding: 12px 12px 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--vscode-sideBarTitle-foreground);
+}
+
+/* ─── Status bar ─── */
+#status-bar {
+    flex-shrink: 0;
+    padding: 4px 12px;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
+}
+
+/* ─── Icon sizing ─── */
+/* Icons are slightly larger than surrounding text so they anchor the eye.
+   Each context gets its own size rather than a one-size-fits-all. */
+.cmd-icon {
+    font-size: 16px;
+    width: 20px;
+    text-align: center;
+    opacity: 0.7;
+    flex-shrink: 0;
+}
+
+.tab-icon {
+    font-size: 16px;
+    flex-shrink: 0;
+}
+
+/* ─── Press feedback ─── */
+.command-row:active,
+.accordion-header:active,
+.sub-accordion-header:active,
+.toggle-row:active,
+.tab-btn:active,
+.action-btn:active,
+.btn:active {
+    transform: scale(0.97);
+    background: var(--vscode-list-activeSelectionBackground) !important;
+}
+
+/* ─── Sections ── */
 .section {
     display: flex;
     flex-direction: column;
@@ -64,27 +106,12 @@ body {
     border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
 }
 
-.section .accordion-header h3 {
-    border-bottom: none;
-    padding-bottom: 0;
-    padding-top: 0;
-    font-size: 13px;
-}
-
 .section h4 {
     font-size: var(--vscode-font-size);
     font-weight: 500;
     color: var(--vscode-descriptionForeground);
     padding-bottom: 0;
     margin-top: 6px;
-}
-
-.accordion-body .section h4 {
-    font-size: 14px;
-}
-
-.hidden {
-    display: none !important;
 }
 
 .empty-state {
@@ -94,143 +121,291 @@ body {
     padding: 16px 8px;
 }
 
-/* Accordion */
+/* ─── Commands ─── */
+.command-list {
+    display: flex;
+    flex-direction: column;
+    padding: 2px 6px;
+}
+
+.command-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 6px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.1s;
+    border: 1px solid transparent;
+}
+
+.command-row:hover {
+    background: var(--vscode-list-hoverBackground);
+}
+
+.command-row:active {
+    border-color: var(--vscode-focusBorder);
+}
+
+.command-row .cmd-icon {
+    margin-right: 6px;
+    flex-shrink: 0;
+}
+
+.command-row span.cmd-label {
+    flex: 1;
+}
+
+
+
+/* ─── Accordions ─── */
+.accordion-group {
+    margin-top: 4px;
+    display: grid;
+    grid-template-rows: auto 0fr;
+    transition: grid-template-rows 0.15s ease;
+}
+
+.accordion-group:has(.accordion-header.open) {
+    grid-template-rows: auto 1fr;
+}
+
 .accordion-header {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 6px 0 4px 0;
-    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
+    padding: 6px 8px;
+    border-radius: 4px;
     cursor: pointer;
     user-select: none;
+    border-top: 1px solid var(--vscode-sideBarSectionHeader-border);
+    transition: background 0.1s;
 }
 
 .accordion-header:hover {
     background: var(--vscode-list-hoverBackground);
-    margin: 0 -12px;
-    padding-left: 12px;
-    padding-right: 12px;
 }
 
 .accordion-header .chevron {
-    display: inline-block;
-    width: 0;
-    height: 0;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 5px solid currentColor;
-    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 4px;
+    font-size: 14px;
+    color: var(--vscode-foreground);
+    opacity: 0.8;
     transition: transform 0.15s;
+    flex-shrink: 0;
 }
 
 .accordion-header:not(.open) .chevron {
     transform: rotate(-90deg);
 }
 
-.accordion-body {
-    padding: 6px 8px;
-    background: var(--vscode-list-inactiveSelectionBackground);
-    border-radius: 4px;
-    margin-top: 4px;
+.accordion-header .label {
+    flex: 1;
+    font-weight: 500;
 }
 
-.accordion-header:not(.open) + .accordion-body {
+/* Keep h3 inside accordion header from inheriting section styles */
+.accordion-header h3 {
+    border-bottom: none;
+    padding: 0;
+    font-size: 13px;
+    margin: 0;
+    font-weight: 500;
+}
+
+.accordion-body {
+    overflow: hidden;
+    min-height: 0;
+    padding: 0;
+}
+
+.accordion-header.open + .accordion-body {
+    padding: 4px 6px 6px;
+}
+
+/* ─── Tab bar ── */
+.tab-bar {
+    display: flex;
+    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
+    margin: 0 4px 4px;
+    gap: 0;
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-family: var(--vscode-font-family);
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    margin-bottom: -1px;
+}
+
+.tab-btn:hover {
+    color: var(--vscode-foreground);
+    background: var(--vscode-list-hoverBackground);
+}
+
+.tab-btn.active {
+    color: var(--vscode-foreground);
+    border-bottom-color: var(--vscode-focusBorder);
+    font-weight: 500;
+}
+
+.tab-panel {
     display: none;
 }
 
-/* Extension filter */
-#extension-filter {
-    padding: 3px 6px;
-    margin-top: 4px;
-    margin-bottom: 4px;
-    font-family: var(--vscode-font-family);
-    font-size: var(--vscode-font-size);
-    color: var(--vscode-input-foreground);
-    background: var(--vscode-input-background);
-    border: 1px solid var(--vscode-input-border);
-    border-radius: 2px;
-    outline: none;
+.tab-panel.active {
+    display: block;
 }
 
-#extension-filter:focus {
-    border-color: var(--vscode-focusBorder);
+/* ─── Sub-accordions (Options, Software, Ports, Extensions) ─── */
+.sub-accordion {
+    margin: 4px 0;
+    display: grid;
+    grid-template-rows: auto 0fr;
+    transition: grid-template-rows 0.15s ease;
 }
 
-#extension-filter::placeholder {
-    color: var(--vscode-input-placeholderForeground);
+.sub-accordion:has(.sub-accordion-header.open) {
+    grid-template-rows: auto 1fr;
 }
 
-/* Feature rows */
-.toggle-wrapper {
+.sub-accordion-header {
     display: flex;
-    flex-direction: column;
+    align-items: center;
+    padding: 5px 8px;
+    cursor: pointer;
+    user-select: none;
+    border-radius: 3px;
+    transition: background 0.1s;
 }
 
-.mount-path-row {
-    padding: 0 4px 4px 26px;
-    display: flex;
-    gap: 4px;
+.sub-accordion-header:hover {
+    background: var(--vscode-list-hoverBackground);
 }
 
-.mount-path-input {
-    padding: 2px 6px;
-    font-family: var(--vscode-font-family);
+.sub-accordion-header .chevron {
+    width: 14px;
+    height: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 4px;
     font-size: 12px;
-    color: var(--vscode-input-foreground);
-    background: var(--vscode-input-background);
-    border: 1px solid var(--vscode-input-border);
-    border-radius: 2px;
-    outline: none;
-    width: 100%;
-    box-sizing: border-box;
+    color: var(--vscode-foreground);
+    opacity: 0.7;
+    transition: transform 0.15s;
+    flex-shrink: 0;
 }
 
-.mount-path-input:focus {
-    border-color: var(--vscode-focusBorder);
+.sub-accordion-header:not(.open) .chevron {
+    transform: rotate(-90deg);
 }
 
-.mount-path-input::placeholder {
-    color: var(--vscode-input-placeholderForeground);
+.sub-accordion-header .label {
+    flex: 1;
 }
 
+.sub-accordion-body {
+    overflow: hidden;
+    min-height: 0;
+    padding: 0;
+}
+
+.sub-accordion-header.open + .sub-accordion-body {
+    padding: 2px 4px 4px;
+}
+
+/* ─── Toggle rows ─── */
 .toggle-row {
     display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 6px 4px;
+    flex-direction: column;
+    padding: 6px 8px;
     border-radius: 4px;
     cursor: pointer;
     user-select: none;
+    transition: background 0.1s;
 }
 
 .toggle-row:hover {
     background: var(--vscode-list-hoverBackground);
 }
 
-.toggle-row input[type="checkbox"] {
-    margin-top: 3px;
+.toggle-row .toggle-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Custom checkbox — larger hit area, themed */
+.toggle-checkbox {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid var(--vscode-input-border);
+    border-radius: 3px;
+    background: var(--vscode-input-background);
+    cursor: pointer;
     flex-shrink: 0;
-    width: 13px;
-    height: 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s, border-color 0.1s;
+    margin: 0;
+    position: relative;
 }
 
-.toggle-text {
-    line-height: 1.4;
+.toggle-checkbox:hover {
+    border-color: var(--vscode-focusBorder);
 }
 
-.toggle-text strong {
-    font-size: var(--vscode-font-size);
+.toggle-checkbox:checked {
+    background: var(--vscode-button-background);
+    border-color: var(--vscode-button-background);
+}
+
+.toggle-checkbox:checked::after {
+    content: "✓";
+    color: var(--vscode-button-foreground);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.toggle-checkbox:active {
+    transform: scale(0.9);
+}
+
+.toggle-row .toggle-label {
+    font-size: 13px;
     font-weight: 400;
 }
 
-.toggle-text small {
-    display: block;
+.toggle-row .toggle-desc {
+    font-size: 11px;
     color: var(--vscode-descriptionForeground);
-    font-size: var(--vscode-font-size);
+    margin-left: 24px;
     margin-top: 2px;
+    line-height: 1.3;
 }
 
-/* Resource rows (containers, volumes) */
+/* ─── Container / volume rows ─── */
 .resource-row {
     display: flex;
     flex-direction: column;
@@ -303,7 +478,32 @@ body {
     flex-shrink: 0;
 }
 
-/* Refresh button */
+/* Icon-only action buttons in container/volume rows */
+.resource-actions .btn.small {
+    background: transparent;
+    border: 1px solid var(--vscode-input-border);
+    color: var(--vscode-foreground);
+    font-size: 14px;
+    padding: 4px 6px;
+    min-width: 28px;
+}
+
+.resource-actions .btn.small:hover {
+    background: var(--vscode-list-hoverBackground);
+    border-color: var(--vscode-focusBorder);
+}
+
+.resource-actions .btn.small.danger {
+    color: var(--vscode-testing-iconFailed);
+    border-color: rgba(241, 76, 76, 0.4);
+}
+
+.resource-actions .btn.small.danger:hover {
+    background: rgba(241, 76, 76, 0.1);
+    border-color: var(--vscode-testing-iconFailed);
+}
+
+/* ─── Refresh button ─── */
 .refresh-btn {
     display: none;
     align-items: center;
@@ -312,7 +512,6 @@ body {
     height: 20px;
     margin-left: auto;
     font-size: 14px;
-    font-family: inherit;
     color: var(--vscode-descriptionForeground);
     background: none;
     border: none;
@@ -329,7 +528,7 @@ body {
     background: var(--vscode-toolbar-hoverBackground);
 }
 
-/* List rows */
+/* ─── List rows ─── */
 .list-row {
     display: flex;
     align-items: center;
@@ -350,28 +549,7 @@ body {
     flex: 1;
 }
 
-.command-parent {
-    cursor: pointer;
-}
-
-.command-children {
-    display: none;
-}
-
-.list-row.command-parent {
-    width: 100%;
-    box-sizing: border-box;
-}
-
-.command-children:not(.hidden) {
-    display: block;
-}
-
-.command-child {
-    padding-left: 20px;
-}
-
-/* Add row */
+/* ─── Add row ─── */
 .add-row {
     display: flex;
     gap: 4px;
@@ -399,14 +577,13 @@ body {
     color: var(--vscode-input-placeholderForeground);
 }
 
-/* Remove spinner arrows from number input */
 .add-row input[type="number"]::-webkit-inner-spin-button,
 .add-row input[type="number"]::-webkit-outer-spin-button {
     -webkit-appearance: none;
     margin: 0;
 }
 
-/* Buttons */
+/* ─── Buttons ─── */
 .btn {
     display: inline-flex;
     align-items: center;
@@ -442,54 +619,8 @@ body {
     text-align: center;
 }
 
-.command-list .btn.small {
-    min-width: 34px;
-}
-
-.btn.chevron-btn {
-    min-width: 32px;
-    font-size: 10px;
-    padding: 4px;
-}
-
 .btn.small:hover {
     background: var(--vscode-button-hoverBackground);
-}
-
-/* Scrollbar styling */
-.panel::-webkit-scrollbar {
-    width: 8px;
-}
-
-.panel::-webkit-scrollbar-thumb {
-    background: var(--vscode-scrollbarSlider-background);
-    border-radius: 4px;
-}
-
-.panel::-webkit-scrollbar-thumb:hover {
-    background: var(--vscode-scrollbarSlider-hoverBackground);
-}
-
-/* Software rows */
-.software-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 4px;
-    border-radius: 4px;
-    cursor: pointer;
-    user-select: none;
-    font-size: var(--vscode-font-size);
-}
-
-.software-row:hover {
-    background: var(--vscode-list-hoverBackground);
-}
-
-.software-row input[type="checkbox"] {
-    flex-shrink: 0;
-    width: 13px;
-    height: 13px;
 }
 
 /* Software freeform input */
@@ -516,46 +647,7 @@ body {
     border-color: var(--vscode-focusBorder);
 }
 
-/* Wizard tabs */
-.tab-bar {
-    display: flex;
-    border-bottom: 1px solid
-        var(--vscode-sideBar-border, rgba(128, 128, 128, 0.35));
-    margin-bottom: 8px;
-}
-
-.tab-btn {
-    flex: 1;
-    padding: 6px 8px;
-    font-size: 12px;
-    border: none;
-    border-bottom: 2px solid transparent;
-    background: none;
-    color: var(--vscode-foreground);
-    cursor: pointer;
-    opacity: 0.7;
-    transition:
-        opacity 0.15s,
-        border-color 0.15s;
-}
-
-.tab-btn:hover {
-    opacity: 1;
-}
-
-.tab-btn.active {
-    opacity: 1;
-    border-bottom-color: var(--vscode-focusBorder);
-}
-
-.tab-panel {
-    display: none;
-}
-
-.tab-panel.active {
-    display: block;
-}
-
+/* ─── AI ─── */
 .ai-desc {
     font-size: 12px;
     color: var(--vscode-descriptionForeground);
@@ -570,7 +662,7 @@ body {
     font-style: italic;
 }
 
-/* Error banner */
+/* ─── Error banner ─── */
 .error-banner {
     margin: 6px 8px;
     padding: 8px 10px;
@@ -599,4 +691,74 @@ body {
 
 .error-banner .subtle-link:hover {
     text-decoration: underline;
+}
+
+/* ─── Extension filter ─── */
+#extension-filter {
+    padding: 3px 6px;
+    margin-top: 4px;
+    margin-bottom: 4px;
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    color: var(--vscode-input-foreground);
+    background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 2px;
+    outline: none;
+}
+
+#extension-filter:focus {
+    border-color: var(--vscode-focusBorder);
+}
+
+#extension-filter::placeholder {
+    color: var(--vscode-input-placeholderForeground);
+}
+
+/* ─── Mount path row ─── */
+.mount-path-row {
+    padding: 0 4px 4px 26px;
+    display: flex;
+    gap: 4px;
+}
+
+.mount-path-input {
+    padding: 2px 6px;
+    font-family: var(--vscode-font-family);
+    font-size: 12px;
+    color: var(--vscode-input-foreground);
+    background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 2px;
+    outline: none;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.mount-path-input:focus {
+    border-color: var(--vscode-focusBorder);
+}
+
+.mount-path-input::placeholder {
+    color: var(--vscode-input-placeholderForeground);
+}
+
+/* ── Toggle wrapper ─── */
+.toggle-wrapper {
+    display: flex;
+    flex-direction: column;
+}
+
+/* ─── Scrollbar ── */
+.panel::-webkit-scrollbar {
+    width: 8px;
+}
+
+.panel::-webkit-scrollbar-thumb {
+    background: var(--vscode-scrollbarSlider-background);
+    border-radius: 4px;
+}
+
+.panel::-webkit-scrollbar-thumb:hover {
+    background: var(--vscode-scrollbarSlider-hoverBackground);
 }

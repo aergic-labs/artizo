@@ -28,7 +28,11 @@ import { startManagedSshTunnel, type TunnelController } from "./sshTunnel";
 import { startExecServerBridge, type ExecServer as ExecServerLike } from "./execServerBridge";
 import { startAskpass } from "../ssh/askpass";
 import { checkContainerConfig } from "./configCheck";
-import { launchProvision, withDefaults } from "../devcontainer/api";
+import {
+  launchProvision,
+  withDefaults,
+  dotfilesFromConfig,
+} from "../devcontainer/api";
 import { URI } from "vscode-uri";
 import { buildIdentityLabels } from "../workflows/postLaunch";
 import { getPlatformAdapter } from "../platform";
@@ -515,6 +519,7 @@ export class RemoteAuthorityResolver {
       });
 
       const options = withDefaults({
+        ...dotfilesFromConfig(vscode.workspace.getConfiguration()),
         workspaceFolder,
         additionalLabels: idLabels,
         configFile: configPath ? URI.file(configPath) : undefined,

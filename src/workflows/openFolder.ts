@@ -7,7 +7,11 @@ import * as vscode from "vscode";
 import { URI } from "vscode-uri";
 import { BRAND, BRAND_PREFIX } from "../utils/constants";
 import type { BuildResult, WorkflowDependencies, WorkflowUI } from "./types";
-import { launchProvision, withDefaults } from "../devcontainer/api";
+import {
+  launchProvision,
+  withDefaults,
+  dotfilesFromConfig,
+} from "../devcontainer/api";
 import { ProvisionFailedError } from "../devcontainer/provisionError";
 import { getPlatformAdapter } from "../platform";
 import {
@@ -103,6 +107,7 @@ export async function openFolderInContainer(
           config: configResult.config as Record<string, unknown> | undefined,
         });
         const options = withDefaults({
+          ...dotfilesFromConfig(vscode.workspace.getConfiguration()),
           workspaceFolder: folder,
           configFile: configFile ? URI.file(configFile) : undefined,
           additionalLabels: idLabels,

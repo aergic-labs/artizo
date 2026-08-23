@@ -182,19 +182,6 @@ describe("extractToggles", () => {
     expect(features.sshAgent).toBe(true);
   });
 
-  it("detects waylandSocket via artizoManaged tag", () => {
-    const features = extractToggles({
-      mounts: [
-        {
-          source: "${localEnv:WAYLAND_DISPLAY}",
-          target: "/tmp/.X11-unix",
-          artizoManaged: "waylandSocket",
-        },
-      ],
-    });
-    expect(features.waylandSocket).toBe(true);
-  });
-
   it("copyGitConfig defaults true", () => {
     expect(extractToggles({}).copyGitConfig).toBe(true);
   });
@@ -227,7 +214,6 @@ describe("extractToggles", () => {
     const e1 = extractToggles({ mounts: [] });
     expect(e1.mountHome).toBe(false);
     expect(e1.sshAgent).toBe(false);
-    expect(e1.waylandSocket).toBe(false);
   });
 
   it("reads extensions from customizations.vscode", () => {

@@ -15,7 +15,7 @@ vi.mock("../../src/utils/logger", () => ({
   }),
 }));
 
-import { withDefaults } from "../../src/devcontainer/api";
+import { withDefaults, dotfilesFromConfig } from "../../src/devcontainer/api";
 
 describe("devcontainer/api", () => {
   describe("withDefaults", () => {
@@ -110,6 +110,63 @@ describe("devcontainer/api", () => {
       } as any);
 
       expect((result as any).customField).toBe("value");
+    });
+  });
+
+  describe("dotfilesFromConfig", () => {
+    const makeConfig = (entries: Record<string, unknown>) => ({
+      get: (key: string) => entries[key],
+    });
+
+    it("returns empty when no repository set", () => {
+      const result = dotfilesFromConfig(makeConfig({}));
+      expect(result).toEqual({});
+    });
+
+    it("returns empty when repository is empty string", () => {
+      const result = dotfilesFromConfig(
+        makeConfig({ "artizo.dotfiles.repository": "" }),
+      );
+      expect(result).toEqual({});
+    });
+
+    it("returns repository only when installCommand unset", () => {
+      const result = dotfilesFromConfig(
+        makeConfig({ "artizo.dotfiles.repository": "https://github.com/me/dots" }),
+      );
+      expect(result).toEqual({
+        dotfiles: {
+          repository: "https://github.com/me/dots",
+          targetPath: "~/dotfiles",
+        },
+      });
+    });
+
+    it("returns all fields when all set", () => {
+      const result = dotfilesFromConfig(
+        makeConfig({
+          "artizo.dotfiles.repository": "https://github.com/me/dots",
+          "artizo.dotfiles.installCommand": "install.sh",
+          "artizo.dotfiles.targetPath": "~/my-dots",
+        }),
+      );
+      expect(result).toEqual({
+        dotfiles: {
+          repository: "https://github.com/me/dots",
+          installCommand: "install.sh",
+          targetPath: "~/my-dots",
+        },
+      });
+    });
+
+    it("falls back to ~/dotfiles when targetPath is empty", () => {
+      const result = dotfilesFromConfig(
+        makeConfig({
+          "artizo.dotfiles.repository": "https://github.com/me/dots",
+          "artizo.dotfiles.targetPath": "",
+        }),
+      );
+      expect(result.dotfiles).toMatchObject({ targetPath: "~/dotfiles" });
     });
   });
 });

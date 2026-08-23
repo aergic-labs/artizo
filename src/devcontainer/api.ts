@@ -122,3 +122,29 @@ export function withDefaults(
 ): ProvisionOptions {
   return { ...defaults, ...overrides };
 }
+
+/**
+ * Read dotfiles config from VS Code settings. Returns an object suitable
+ * for spreading into `withDefaults` overrides. When no repository is set,
+ * returns an empty object — the CLI's built-in default (targetPath
+ * "~/dotfiles") is used, and no dotfiles install runs.
+ *
+ * Decouples the settings read from the pure defaults logic so callers
+ * that already import vscode can pass the config in without forcing
+ * api.ts to depend on the vscode API.
+ */
+export function dotfilesFromConfig(
+  config: { get<T>(section: string): T | undefined },
+): Partial<Pick<ProvisionOptions, "dotfiles">> {
+  const repository = config.get<string>("artizo.dotfiles.repository");
+  if (!repository) return {};
+  const installCommand = config.get<string>("artizo.dotfiles.installCommand");
+  const targetPath = config.get<string>("artizo.dotfiles.targetPath");
+  return {
+    dotfiles: {
+      repository,
+      ...(installCommand ? { installCommand } : {}),
+      targetPath: targetPath || "~/dotfiles",
+    },
+  };
+}

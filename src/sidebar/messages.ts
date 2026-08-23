@@ -13,7 +13,6 @@
 // Data types
 export interface ConfigToggles {
   gpu: boolean;
-  waylandSocket: boolean;
   mountHome: boolean;
   privileged: boolean;
   sshAgent: boolean;
@@ -116,6 +115,8 @@ export type WebviewMessage =
       containerName?: string;
     }
   | { type: "volumeAction"; action: "inspect" | "remove"; volumeName: string }
+  | { type: "cloneInVolume" }
+  | { type: "createVolume" }
   | { type: "refreshSection"; section: "containers" | "volumes" }
   | { type: "runCommand"; command: string }
   | { type: "generateConfig"; image: string }

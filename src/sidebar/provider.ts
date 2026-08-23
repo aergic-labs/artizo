@@ -43,6 +43,7 @@ const ALLOWED_WEBVIEW_COMMANDS = new Set<string>([
   "artizo.rebuildContainerNoCache",
   "artizo.rebuildAndReopenInContainer",
   "artizo.cloneInVolume",
+  "artizo.createVolume",
   "artizo.attachToRunningContainer",
   "artizo.cleanUpContainers",
   "artizo.openDevContainerFile",
@@ -289,6 +290,8 @@ export class SidebarProvider
     containerAction: (m) =>
       this.handleContainerAction(m.action, m.containerId, m.containerName),
     volumeAction: (m) => this.handleVolumeAction(m.action, m.volumeName),
+    cloneInVolume: () => this.handleCloneInVolume(),
+    createVolume: () => this.handleCreateVolume(),
     refreshSection: (m) => {
       if (m.section === "containers") {
         this.refreshContainers();
@@ -388,6 +391,18 @@ export class SidebarProvider
     }
   }
 
+  // Clone in Volume
+  private async handleCloneInVolume(): Promise<void> {
+    await vscode.commands.executeCommand("artizo.cloneInVolume");
+    this.refreshVolumes();
+  }
+
+  // Create Volume
+  private async handleCreateVolume(): Promise<void> {
+    await vscode.commands.executeCommand("artizo.createVolume");
+    this.refreshVolumes();
+  }
+
   // HTML
   private getHtml(webview: vscode.Webview): string {
     const appUri = webview.asWebviewUri(
@@ -395,6 +410,9 @@ export class SidebarProvider
     );
     const styleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.extensionUri, "resources", "sidebar", "styles.css"),
+    );
+    const codiconCssUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, "resources", "sidebar", "codicon.css"),
     );
 
     const htmlPath = vscode.Uri.joinPath(
@@ -408,6 +426,7 @@ export class SidebarProvider
     // Substitute URIs
     html = html.replace("${SCRIPT_URI}", appUri.toString());
     html = html.replace("${STYLE_URI}", styleUri.toString());
+    html = html.replace("${CODICON_CSS_URI}", codiconCssUri.toString());
 
     // Remove the AI-assist markers, keeping their content. AI availability is
     // gated at runtime via aiAvailable (ai.isAvailable()), not at build time.
@@ -415,10 +434,6 @@ export class SidebarProvider
 
     // Platform-specific UI adjustments (AI-native tab layout)
     if (HAS_KIRO_ADAPTER) {
-      html = html.replace(
-        '<div id="wizard-section">',
-        '<div id="wizard-section" class="hidden">',
-      );
       html = html.replace(
         '<div id="config-manual-content">',
         '<div id="config-manual-content" class="hidden">',

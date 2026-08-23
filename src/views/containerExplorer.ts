@@ -264,9 +264,6 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
         "artizo.explorer.removeVolume",
         (item: VolumeTreeItem) => removeVolume(item.target),
       ),
-      vscode.commands.registerCommand("artizo.explorer.cloneInVolume", () =>
-        vscode.commands.executeCommand("artizo.cloneInVolume"),
-      ),
     );
 
     return provider;

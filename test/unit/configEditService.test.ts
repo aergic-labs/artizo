@@ -158,12 +158,28 @@ function createService() {
 // Stub the editor-doc boundary: getEditorDoc returns the given content,
 // applyAndSave performs the real jsonc edit (so we assert real output), and
 // reloadFromContent is a spy capturing the final patched JSON.
-async function editable(service: ConfigEditService, content: string) {
-  const { applyEdits } = await import("jsonc-parser");
-  vi.spyOn(service as any, "getEditorDoc").mockResolvedValue({
+function makeMockDoc(content: string) {
+  const lines = content.split("\n");
+  return {
     getText: () => content,
     uri: { fsPath: "/test/.devcontainer/devcontainer.json" },
-  });
+    lineCount: lines.length,
+    lineAt: (i: number) => ({
+      range: {
+        start: { line: i, character: 0 },
+        end: { line: i, character: (lines[i] || "").length },
+      },
+      text: lines[i] || "",
+    }),
+    save: vi.fn().mockResolvedValue(true),
+  };
+}
+
+async function editable(service: ConfigEditService, content: string) {
+  const { applyEdits } = await import("jsonc-parser");
+  vi.spyOn(service as any, "getEditorDoc").mockResolvedValue(
+    makeMockDoc(content),
+  );
   vi.spyOn(service as any, "applyAndSave").mockImplementation((async (
     c: unknown,
     edits: unknown,

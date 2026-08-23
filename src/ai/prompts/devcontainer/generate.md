@@ -18,6 +18,12 @@ Infer the dev environment from the repo:
   formatters, test runners).
 - Services implied by the code/config (databases, caches, queues) and ports.
 - Native build needs (node-gyp, C extensions) - these rule out Alpine.
+- **GUI applications** - native toolkits (Qt, GTK, wxWidgets, X11/Wayland
+  deps) and interpreted-language bindings: Python (Tkinter, PyQt, PySide,
+  wxPython, Kivy, PyGObject), Ruby (wxRuby, Gtk3/4), Node (Electron, Tauri).
+  These may benefit from display socket mounts.
+- **GPU/CUDA** - torch, tensorflow, jax, CUDA SDK, `nvidia-smi` in Dockerfile.
+  These benefit from `--gpus all`.
 - **The Makefile (or Justfile/taskfile) is authoritative when present** - mine
   its install/build/test targets, system packages, env vars, and tool versions.
   Treat it as the source of truth when it conflicts with other files.
@@ -60,6 +66,22 @@ and `customizations.vscode.extensions`. The result must be valid against the
 devcontainer schema:
 https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.base.schema.json
 (reference: https://containers.dev/implementors/json_reference/).
+
+### Display and hardware options
+
+When the project uses GUI toolkits (Qt, GTK, wxWidgets) or GPU frameworks
+(CUDA, OpenCL), consider the host environment before suggesting display
+forwarding. The host OS matters: Linux runs X11/Wayland natively; WSL/WSLg
+provides Wayland (and X11 via WSLg) on Windows; macOS uses XQuartz (X11 over
+TCP, not a socket); WSL2 has `/mnt/wslg/` for the socket. Ask the user what
+their host setup is before generating the mounts - the right mount varies.
+
+- **GPU passthrough**: `"runArgs": ["--gpus", "all"]`
+- **SSH agent forwarding**: `"mounts": [{ "source": "${localEnv:SSH_AUTH_SOCK}", "target": "/tmp/ssh-auth-sock" }]`
+- **Mount host home** (for dotfiles/shared config access): `"mounts": [{ "source": "${localEnv:HOME}", "target": "/host-home", "type": "bind" }]`
+
+For X11/Wayland, let the user's answers guide the exact mount source/target.
+Do not assume a single path works across all host OSes.
 
 After writing, verify it parses as valid JSONC (no trailing commas / stray
 braces / unquoted keys); fix any syntax errors immediately. Then briefly explain

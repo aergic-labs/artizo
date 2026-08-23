@@ -33,7 +33,6 @@ describe("messages types", () => {
     it("round-trips a fully-populated toggles object", () => {
       const toggles: ConfigToggles = {
         gpu: true,
-        waylandSocket: false,
         mountHome: true,
         privileged: false,
         sshAgent: true,
@@ -121,7 +120,6 @@ describe("messages types", () => {
         path: "/p/devcontainer.json",
         toggles: {
           gpu: false,
-          waylandSocket: false,
           mountHome: false,
           privileged: false,
           sshAgent: false,

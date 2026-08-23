@@ -70,6 +70,7 @@ vi.mock("../../src/devcontainer/api", async () => {
     launch,
     launchProvision,
     withDefaults: vi.fn().mockImplementation((o: Record<string, unknown>) => o),
+    dotfilesFromConfig: vi.fn().mockReturnValue({}),
     ContainerError: class extends Error {
       description = "mock error";
     },

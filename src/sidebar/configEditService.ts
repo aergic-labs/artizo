@@ -431,9 +431,6 @@ export class ConfigEditService {
         formattingOptions: { eol: "\n", insertSpaces: true, tabSize: 2 },
       });
       const patched = await this.applyAndSave(content, edits);
-      getLogger().debug(
-        `toggleOption: updated mounts=${JSON.stringify(updated)}`,
-      );
       await this.reloadFromContent(patched);
       return;
     }

@@ -2,7 +2,7 @@
   "name": "artizo",
   "displayName": "Artizo Dev Containers",
   "description": "Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "publisher": "aergic",
   "productName": "Artizo",
   "license": "AGPL-3.0-only",
@@ -137,6 +137,11 @@
         "category": "Dev Containers (Artizo)"
       },
       {
+        "command": "artizo.createVolume",
+        "title": "Artizo: Create Volume",
+        "category": "Dev Containers (Artizo)"
+      },
+      {
         "command": "artizo.attachToRunningContainer",
         "title": "Artizo: Attach to Running Container",
         "category": "Dev Containers (Artizo)"
@@ -243,12 +248,6 @@
         "title": "Artizo: Remove Volume",
         "category": "Dev Containers (Artizo)",
         "icon": "$(trash)"
-      },
-      {
-        "command": "artizo.explorer.cloneInVolume",
-        "title": "Artizo: Clone Repo in Volume",
-        "category": "Dev Containers (Artizo)",
-        "icon": "$(repo-clone)"
       }
     ],
     "views": {
@@ -256,7 +255,7 @@
         {
           "type": "webview",
           "id": "artizo.sidebar",
-          "name": "",
+          "name": "Artizo Dev Containers",
           "when": "artizo.hostContext || remoteName =~ /^artizo-container|attached-container/",
           "remoteName": [
             "artizo-container",
@@ -414,11 +413,6 @@
           "group": "navigation@1"
         },
         {
-          "command": "artizo.explorer.cloneInVolume",
-          "when": "view == artizo.explorer && viewItem == volume",
-          "group": "navigation@2"
-        },
-        {
           "command": "artizo.explorer.removeVolume",
           "when": "view == artizo.explorer && viewItem == volume",
           "group": "navigation@9"
@@ -463,20 +457,12 @@
         "artizo.dotfiles.installCommand": {
           "type": "string",
           "default": "",
-          "description": "Command to run after cloning dotfiles."
+          "markdownDescription": "Command to run after cloning dotfiles. See [dotfiles.github.io](https://dotfiles.github.io/) for background and examples."
         },
         "artizo.dotfiles.targetPath": {
           "type": "string",
           "default": "~/dotfiles",
           "description": "Target path for dotfiles inside the container."
-        },
-        "artizo.defaultExtensions": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [],
-          "description": "Extensions to install in every dev container."
         },
         "artizo.dockerPath": {
           "type": "string",

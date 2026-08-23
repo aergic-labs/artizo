@@ -22,7 +22,7 @@ interface ManagedMount extends Record<string, unknown> {
 // Option path table
 // ---------------------------------------------------------------------------
 
-/** A managed option's jsonPath (mounts/runArgs/flag entry) and its tag. */
+/** A managed option's jsonc path (mounts/runArgs/flag entry) and its tag. */
 export interface OptionPath {
   path: string[];
   managed: string;
@@ -31,10 +31,10 @@ export interface OptionPath {
 /**
  * Build the mount/runArg path table used by toggleOption.
  *
- * Maps each managed feature (gpu, waylandSocket, mountHome, privileged,
- * sshAgent, copyGitConfig) to its jsonPath entries and artizoManaged tag.
- * The home mount source is parameterized because it depends on the host
- * home directory, which is computed at the call site.
+ * Maps each managed feature (gpu, x11Socket, waylandSocket, mountHome,
+ * privileged, sshAgent, copyGitConfig) to its jsonPath entries and
+ * artizoManaged tag. The home mount source is parameterized because it
+ * depends on the host home directory, which is computed at the call site.
  *
  * @param homePath - Host home directory, pre-escaped for the current platform
  * @returns Record keyed by feature name
@@ -42,14 +42,6 @@ export interface OptionPath {
 export function optionPaths(homePath: string): Record<string, OptionPath> {
   return {
     gpu: { path: ["runArgs", "--gpus", "all"], managed: "gpu" },
-    waylandSocket: {
-      path: [
-        "mounts",
-        "source=${localEnv:WAYLAND_DISPLAY}",
-        "target=/tmp/.X11-unix",
-      ],
-      managed: "waylandSocket",
-    },
     mountHome: {
       path: ["mounts", `source=${homePath}`, "target=/host-home", "type=bind"],
       managed: "home",
@@ -173,7 +165,6 @@ export function extractToggles(raw: Record<string, unknown>): ConfigToggles {
 
   return {
     gpu: runArgs.includes("--gpus"),
-    waylandSocket: mounts.some((m) => m.artizoManaged === "waylandSocket"),
     mountHome: mounts.some((m) => m.artizoManaged === "home"),
     privileged: runArgs.includes("--privileged"),
     sshAgent: mounts.some((m) => m.artizoManaged === "sshAgent"),

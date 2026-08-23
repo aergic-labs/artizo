@@ -12,8 +12,6 @@ const state = {
 };
 
 // Helpers
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => document.querySelectorAll(sel);
 const el = (tag, className, attrs) => {
   const e = document.createElement(tag);
   if (className) e.className = className;
@@ -41,12 +39,7 @@ const COMMON_IMAGES = [
 ];
 
 const TOGGLES = [
-  { key: "gpu", label: "GPU passthrough", desc: "Mount /dev/dri" },
-  {
-    key: "waylandSocket",
-    label: "Wayland socket",
-    desc: "Mount $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY",
-  },
+  { key: "gpu", label: "GPU passthrough", desc: "Pass through GPU (--gpus all)" },
   {
     key: "mountHome",
     label: "Mount home",
@@ -109,14 +102,14 @@ function showManaged() {
   document.getElementById("empty-config").classList.add("hidden");
   // The Containers and Volumes sections don't have ids; target them via
   // their accordion-header data-section attributes and hide the parent
-  // .section.
+  // .accordion-group.
   document
     .querySelectorAll(
       '.accordion-header[data-section="containers"], .accordion-header[data-section="volumes"]',
     )
     .forEach((header) => {
-      const section = header.closest(".section");
-      if (section) section.classList.add("hidden");
+      const group = header.closest(".accordion-group");
+      if (group) group.classList.add("hidden");
     });
 }
 
@@ -144,17 +137,22 @@ function renderToggles(toggles) {
   if (!list) return;
   list.innerHTML = "";
   TOGGLES.forEach((t) => {
-    const wrapper = el("div");
-    const row = el("div", "list-row");
-    const cb = el("input");
+    const wrapper = el("div", "toggle-wrapper");
+    const row = el("div", "toggle-row");
+    const title = el("div", "toggle-title");
+    const cb = el("input", "toggle-checkbox");
     cb.type = "checkbox";
     cb.checked = toggles[t.key];
     cb.dataset.action = "toggleOption";
     cb.dataset.feature = t.key;
-    const text = el("span");
-    text.textContent = `${t.label}: ${t.desc}`;
-    row.appendChild(cb);
-    row.appendChild(text);
+    const label = el("span", "toggle-label");
+    label.textContent = t.label;
+    title.appendChild(cb);
+    title.appendChild(label);
+    const desc = el("div", "toggle-desc");
+    desc.textContent = t.desc;
+    row.appendChild(title);
+    row.appendChild(desc);
     wrapper.appendChild(row);
 
     if (t.key === "mountHome" && toggles[t.key]) {
@@ -223,16 +221,18 @@ function renderExtensionChecklist(exts) {
       )
     : state.allExtensions;
   filtered.forEach((ext) => {
-    const row = el("div", "list-row");
-    const cb = el("input");
+    const row = el("div", "toggle-row");
+    const title = el("div", "toggle-title");
+    const cb = el("input", "toggle-checkbox");
     cb.type = "checkbox";
     cb.checked = ext.enabled;
     cb.dataset.action = "toggleExtension";
     cb.dataset.extensionId = ext.id;
-    const text = el("span");
-    text.textContent = `${ext.label} (${ext.id})`;
-    row.appendChild(cb);
-    row.appendChild(text);
+    const label = el("span", "toggle-label");
+    label.textContent = `${ext.label} (${ext.id})`;
+    title.appendChild(cb);
+    title.appendChild(label);
+    row.appendChild(title);
     list.appendChild(row);
   });
 }
@@ -253,8 +253,8 @@ function renderContainers(containers) {
     const top = el("div", "resource-top");
     const dot = el("span", "status-dot " + c.status);
     const info = el("span", "resource-info");
-    const dir = c.localFolder ? c.localFolder.split(/[\\/]/).pop() : "";
-    const imgShort = c.image.split("/").pop() || c.image;
+    const dir = c.localFolder ? basename(c.localFolder) : "";
+    const imgShort = basename(c.image) || c.image;
     info.innerHTML = `<span class="resource-name">${esc(c.name)}</span><span class="resource-meta">${c.status}, ${esc(imgShort)}${dir ? ", " + esc(dir) : ""}</span>`;
     info.title = `Image: ${c.image}\nFolder: ${c.localFolder}`;
 
@@ -264,7 +264,9 @@ function renderContainers(containers) {
     const actions = el("div", "resource-actions");
     if (c.status !== "running") {
       const startBtn = el("button", "btn small");
-      startBtn.textContent = "Start";
+      startBtn.title = "Start";
+      const startIcon = el("span", "codicon codicon-play-circle");
+      startBtn.appendChild(startIcon);
       startBtn.dataset.action = "containerAction";
       startBtn.dataset.containerAction = "start";
       startBtn.dataset.containerId = c.id;
@@ -272,7 +274,9 @@ function renderContainers(containers) {
       actions.appendChild(startBtn);
     } else {
       const stopBtn = el("button", "btn small");
-      stopBtn.textContent = "Stop";
+      stopBtn.title = "Stop";
+      const stopIcon = el("span", "codicon codicon-stop-circle");
+      stopBtn.appendChild(stopIcon);
       stopBtn.dataset.action = "containerAction";
       stopBtn.dataset.containerAction = "stop";
       stopBtn.dataset.containerId = c.id;
@@ -280,7 +284,9 @@ function renderContainers(containers) {
       actions.appendChild(stopBtn);
     }
     const removeBtn = el("button", "btn small danger");
-    removeBtn.textContent = "Remove";
+    removeBtn.title = "Remove";
+    const removeIcon = el("span", "codicon codicon-trash");
+    removeBtn.appendChild(removeIcon);
     removeBtn.dataset.action = "containerAction";
     removeBtn.dataset.containerAction = "remove";
     removeBtn.dataset.containerId = c.id;
@@ -288,7 +294,9 @@ function renderContainers(containers) {
     actions.appendChild(removeBtn);
 
     const inspectBtn = el("button", "btn small");
-    inspectBtn.textContent = "Inspect";
+    inspectBtn.title = "Inspect";
+    const inspectIcon = el("span", "codicon codicon-zoom-in");
+    inspectBtn.appendChild(inspectIcon);
     inspectBtn.dataset.action = "containerAction";
     inspectBtn.dataset.containerAction = "inspect";
     inspectBtn.dataset.containerId = c.id;
@@ -297,7 +305,9 @@ function renderContainers(containers) {
 
     if (c.status === "running") {
       const connBtn = el("button", "btn small");
-      connBtn.textContent = "Connect";
+      connBtn.title = "Connect";
+      const connIcon = el("span", "codicon codicon-terminal");
+      connBtn.appendChild(connIcon);
       connBtn.dataset.action = "containerAction";
       connBtn.dataset.containerAction = c.localFolder
         ? "connectCurrentWindow"
@@ -355,19 +365,42 @@ function renderSoftware(features) {
   if (!list) return;
   list.innerHTML = "";
   (features || []).forEach((f) => {
-    const row = el("div", "list-row");
-    const cb = el("input");
+    const row = el("div", "toggle-row");
+    const title = el("div", "toggle-title");
+    const cb = el("input", "toggle-checkbox");
     cb.type = "checkbox";
     cb.checked = f.enabled;
     cb.dataset.action = "toggleSoftware";
     cb.dataset.featureRef = f.ref;
     cb.dataset.enabled = f.enabled;
-    const text = el("span");
-    text.textContent = f.label || f.ref;
-    row.appendChild(cb);
-    row.appendChild(text);
+    const label = el("span", "toggle-label");
+    label.textContent = f.label || f.ref;
+    title.appendChild(cb);
+    title.appendChild(label);
+    row.appendChild(title);
     list.appendChild(row);
   });
+}
+
+// Icon for a specific command id.
+// Missing entries default to no icon.
+const ICON_MAP = {
+  "artizo.reopenInContainer": "codicon-issue-reopened",
+  "artizo.reopenInContainerNewWindow": "codicon-issue-reopened",
+  "artizo.rebuildContainer": "codicon-tools",
+  "artizo.rebuildContainerNoCache": "codicon-tools",
+  "artizo.rebuildAndReopenInContainer": "codicon-tools",
+  "artizo.openFolderInContainer": "codicon-folder-opened",
+  "artizo.openFolderInContainerNewWindow": "codicon-folder-opened",
+  "artizo.cleanUpContainers": "codicon-trash",
+  "artizo.revealOutputLog": "codicon-output",
+  "artizo.reopenInHost": "codicon-home",
+  "artizo.closeRemoteConnection": "codicon-debug-disconnect",
+  "workbench.action.remote.showMenu": "codicon-menu",
+};
+
+function cmdIcon(id) {
+  return ICON_MAP[id] || "";
 }
 
 function renderCommands(cmdList) {
@@ -378,47 +411,46 @@ function renderCommands(cmdList) {
 
   (state.commands || []).forEach((c) => {
     if (c.children) {
-      const parent = el("div", "list-row command-parent");
-      const label = el("span");
+      // Render as a standard accordion, same as Containers/Volumes
+      const group = el("div", "accordion-group");
+      const header = el("div", "accordion-header open");
+      const chev = el("span", "chevron codicon codicon-chevron-down");
+      const label = el("span", "label");
       label.textContent = c.label;
-      const chev = el("button", "btn small chevron-btn");
-      chev.textContent = "▶";
-      parent.appendChild(label);
-      parent.appendChild(chev);
+      header.appendChild(chev);
+      header.appendChild(label);
 
-      const children = el("div", "command-children hidden");
+      const body = el("div", "accordion-body");
       c.children.forEach((child) => {
-        const row = el("div", "list-row command-child");
-        const clabel = el("span");
+        const row = el("div", "command-row");
+        row.dataset.action = "runCommand";
+        row.dataset.command = child.id;
+        const iconClass = cmdIcon(child.id);
+        if (iconClass) {
+          const icon = el("span", `codicon ${iconClass} cmd-icon`);
+          row.appendChild(icon);
+        }
+        const clabel = el("span", "cmd-label");
         clabel.textContent = child.label;
-        const btn = el("button", "btn small");
-        btn.textContent = "Go";
-        btn.dataset.action = "runCommand";
-        btn.dataset.command = child.id;
         row.appendChild(clabel);
-        row.appendChild(btn);
-        children.appendChild(row);
+        body.appendChild(row);
       });
 
-      parent.addEventListener("click", () => {
-        children.classList.toggle("hidden");
-        chev.textContent = children.classList.contains("hidden") ? "▶" : "▼";
-      });
-
-      const group = el("div", "command-group");
-      group.appendChild(parent);
-      group.appendChild(children);
+      group.appendChild(header);
+      group.appendChild(body);
       list.appendChild(group);
     } else {
-      const row = el("div", "list-row");
-      const label = el("span");
+      const row = el("div", "command-row");
+      row.dataset.action = "runCommand";
+      row.dataset.command = c.id;
+      const iconClass = cmdIcon(c.id);
+      if (iconClass) {
+        const icon = el("span", `codicon ${iconClass} cmd-icon`);
+        row.appendChild(icon);
+      }
+      const label = el("span", "cmd-label");
       label.textContent = c.label;
-      const btn = el("button", "btn small");
-      btn.textContent = "Go";
-      btn.dataset.action = "runCommand";
-      btn.dataset.command = c.id;
       row.appendChild(label);
-      row.appendChild(btn);
       list.appendChild(row);
     }
   });
@@ -440,10 +472,19 @@ function esc(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-// Event delegation
-// Top-level accordion toggles (Containers, Volumes, Config, Wizard)
-document.querySelectorAll(".accordion-header").forEach((header) => {
-  header.addEventListener("click", (e) => {
+/** Get the last segment of a path, handling both / and \ separators. */
+function basename(p) {
+  if (!p) return "";
+  const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  return i >= 0 ? p.slice(i + 1) : p;
+}
+
+// Event delegation — all accordion toggles
+// Handles both static (Containers, Volumes, Wizard, Config, sub-accordions)
+// and dynamic (command groups rendered by renderCommands)
+document.addEventListener("click", (e) => {
+  const header = e.target.closest(".accordion-header");
+  if (header) {
     if (e.target.closest(".refresh-btn")) return;
     const wasOpen = header.classList.contains("open");
     header.classList.toggle("open");
@@ -452,13 +493,18 @@ document.querySelectorAll(".accordion-header").forEach((header) => {
       if (section === "containers" || section === "volumes") {
         post({ type: "refreshSection", section });
       }
-      // Open devcontainer.json in the editor when the config accordion
-      // expands, if it's not already the active tab.
       if (section === "config") {
         post({ type: "openConfigFile" });
       }
     }
-  });
+    return;
+  }
+
+  const subHeader = e.target.closest(".sub-accordion-header");
+  if (subHeader) {
+    subHeader.classList.toggle("open");
+    return;
+  }
 });
 
 document.addEventListener("click", (e) => {
@@ -473,6 +519,22 @@ document.addEventListener("change", (e) => {
   if (!target) return;
   const action = target.dataset.action;
   changeHandlers[action]?.(target, e);
+});
+
+// Toggle row click → checkbox
+// Clicking anywhere on a .toggle-row flips its checkbox (which fires
+// the change event and posts the toggleOption message).
+document.addEventListener("click", (e) => {
+  const row = e.target.closest(".toggle-row");
+  if (!row) return;
+  // If the click was directly on the checkbox, let native behavior
+  // handle it and stopPropagation below to avoid double-toggle.
+  if (e.target.classList.contains("toggle-checkbox")) return;
+  const cb = row.querySelector(".toggle-checkbox");
+  if (cb) {
+    cb.checked = !cb.checked;
+    cb.dispatchEvent(new Event("change", { bubbles: true }));
+  }
 });
 
 document.addEventListener("keydown", (e) => {
@@ -495,26 +557,6 @@ document.addEventListener("keydown", (e) => {
 
 // Click handlers
 const handlers = {
-  toggleAccordion(target) {
-    const row = target;
-    const children = row?.nextElementSibling;
-    const chev = row?.querySelector(".chevron-btn");
-    if (children) {
-      children.classList.toggle("hidden");
-      if (chev)
-        chev.textContent = children.classList.contains("hidden") ? "▶" : "▼";
-    }
-  },
-
-  toggleCommandGroup(target) {
-    const group = target.closest(".command-group");
-    const children = group?.querySelector(".command-children");
-    if (children) {
-      children.classList.toggle("hidden");
-      target.textContent = children.classList.contains("hidden") ? "▶" : "▼";
-    }
-  },
-
   runCommand(target) {
     post({ type: "runCommand", command: target.dataset.command });
   },
@@ -591,6 +633,14 @@ const handlers = {
     });
   },
 
+  cloneInVolume() {
+    post({ type: "cloneInVolume" });
+  },
+
+  createVolume() {
+    post({ type: "createVolume" });
+  },
+
   volumeAction(target) {
     post({
       type: "volumeAction",
@@ -599,38 +649,16 @@ const handlers = {
     });
   },
 
-  toggleOption(target) {
-    if (target.type === "checkbox") return;
-    const feature = target.dataset.feature;
-    const enabled = target.checked;
-    post({ type: "toggleOption", feature, enabled });
-  },
-
-  toggleExtension(target) {
-    if (target.type === "checkbox") return;
-    post({
-      type: "toggleExtension",
-      extensionId: target.dataset.extensionId,
-      enabled: target.checked,
-    });
-  },
-
-  toggleSoftware(target) {
-    if (target.type === "checkbox") return;
-    post({
-      type: "toggleSoftware",
-      featureRef: target.dataset.featureRef,
-      enabled: target.checked,
-    });
-  },
-
   tabSwitch(target) {
     const tabId = target.dataset.tab;
-    const parent = target.closest(".wizard-tabs");
+    const parent = target.closest(".tab-bar");
+    if (!parent) return;
     parent
       .querySelectorAll(".tab-btn")
       .forEach((b) => b.classList.remove("active"));
-    parent
+    // Deactivate all tab-panels within the same parent container
+    const container = parent.parentElement;
+    container
       .querySelectorAll(".tab-panel")
       .forEach((p) => p.classList.remove("active"));
     target.classList.add("active");
@@ -678,20 +706,15 @@ function gateAiContent(available) {
     });
   };
 
-  if (available) {
-    // Show AI content, hide no-AI fallbacks
-    show(".config-tabs", true);
-    show("#config-no-ai", false);
-    show(".wizard-tabs", true);
-    show("#wizard-section", false);
-  } else {
-    // Show tab containers but hide AI tab buttons, select manual tab
-    show(".config-tabs", true);
-    show(".wizard-tabs", true);
-    show("#config-no-ai", false);
-    show("#wizard-section", false);
+  // Tab containers are always visible; no-AI fallback is always hidden
+  // (manual tab covers the no-AI case).
+  show(".config-tabs", true);
+  show(".tab-bar", true);
+  show("#config-no-ai", false);
+  show("#wizard-section", false);
 
-    // Hide AI tab buttons and simplify labels
+  if (!available) {
+    // Hide AI tab buttons
     document
       .querySelectorAll(
         ".tab-btn[data-tab='ai'], .tab-btn[data-tab='config-ai']",

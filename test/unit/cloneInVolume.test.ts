@@ -23,7 +23,7 @@ vi.mock("vscode", () => ({
   ProgressLocation: { Notification: 15 },
   ExtensionKind: { UI: 1, Workspace: 2 },
   env: { remoteAuthority: undefined, remoteName: undefined },
-  workspace: { workspaceFolders: [] },
+  workspace: { workspaceFolders: [], getConfiguration: vi.fn().mockReturnValue({ get: vi.fn(() => undefined) }) },
   Uri: { parse: (s: string) => ({ toString: () => s }) },
 }));
 
@@ -66,6 +66,7 @@ vi.mock("../../src/devcontainer/api", async () => {
     launch,
     launchProvision,
     withDefaults: vi.fn().mockImplementation((o: Record<string, unknown>) => o),
+    dotfilesFromConfig: vi.fn().mockReturnValue({}),
     ContainerError: class extends Error {
       description = "mock error";
     },

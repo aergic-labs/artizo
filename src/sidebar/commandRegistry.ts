@@ -63,14 +63,14 @@ export function computeCommands(
     {
       id: "artizo.openFolderInContainer",
       label: hasWorkspace
-        ? "Open Different Folder in Container"
+        ? "Open a Folder in Container"
         : "Open Folder in Container",
       when: !managed,
     },
     {
       id: "artizo.openFolderInContainerNewWindow",
       label: hasWorkspace
-        ? "Open Different Folder in Container (New Window)"
+        ? "Open a Folder in Container (New Window)"
         : "Open Folder in Container (New Window)",
       when: !managed,
     },

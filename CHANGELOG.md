@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.8.0
+
+### Added
+
+- Dotfiles support: `artizo.dotfiles.*` settings (repo, target, install command) wired into `withDefaults` via `dotfilesFromConfig()`. Clones and installs on container create/reopen/rebuild/clone-in-volume.
+- `artizo.createVolume` command and sidebar button — creates an empty managed volume with name prompt.
+
+### Changed
+
+- Sidebar icons switched from emoji/unicode to codicons throughout (container/volume/command rows, chevrons, tab icons, refresh buttons). Codicon CSS+TTF are static files in `resources/sidebar/`.
+- Sidebar accordion open/close now animated via `grid-template-rows` transition (0.15s ease). Containers, volumes, config, and command groups use a unified `.accordion-group` wrapper.
+- `renderCommands` accordions default to open.
+- "Open Different Folder in Container" → "Open a Folder in Container" (and New Window variant).
+- Removed `artizo.explorer.cloneInVolume` command (duplicate of `artizo.cloneInVolume`).
+- AI assist prompt (`generate.md`) gives generic host-OS-aware guidance for display forwarding (Linux native, WSL/WSLg, XQuartz) and detects GUI toolkits (Qt, GTK, wxWidgets, Tkinter, PyQt, Electron) and GPU/CUDA, instead of emitting specific mount syntax.
+
+### Removed
+
+- X11 and Wayland display socket toggles. They only worked in narrow host-OS cases; the AI assist prompt now guides users generically.
+
+### Fixed
+
+- Sidebar horizontal jitter when the scrollbar appears/disappears. `.panel` now uses `flex: 1; min-height: 0`.
+
 ## 0.7.1
 
 ### Fixed
