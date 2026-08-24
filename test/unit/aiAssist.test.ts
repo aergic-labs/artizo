@@ -32,52 +32,56 @@ describe("KiroAiAssist", () => {
     expect(await ai.isAvailable()).toBe(true);
   });
 
-  it("submits prompt via kiroAgent.agent.askAgent", async () => {
+  it("submits via create -> sendPrompt -> viewSession with files inlined", async () => {
+    executeCommand.mockReset();
+    executeCommand.mockResolvedValueOnce({ sessionId: "s1" });
     const ai = new KiroAiAssist();
     await ai.submit("create a devcontainer", {
       files: ["Makefile"],
       title: "Set up Dev Container",
     });
-    expect(executeCommand).toHaveBeenCalledWith("kiroAgent.agent.askAgent", {
-      prompt: "create a devcontainer",
-      files: ["Makefile"],
-      title: "Set up Dev Container",
-    });
+    expect(executeCommand).toHaveBeenNthCalledWith(
+      1,
+      "kiroAgent.sessions.create",
+    );
+    expect(executeCommand).toHaveBeenNthCalledWith(
+      2,
+      "kiroAgent.sessions.sendPrompt",
+      "s1",
+      "create a devcontainer\n\nFiles: Makefile",
+    );
+    expect(executeCommand).toHaveBeenNthCalledWith(
+      3,
+      "kiroAgent.viewSession",
+      "s1",
+      "Set up Dev Container",
+    );
   });
 
-  it("submits with empty files when not provided", async () => {
+  it("submits prompt without files suffix when none provided", async () => {
+    executeCommand.mockReset();
+    executeCommand.mockResolvedValueOnce({ sessionId: "s2" });
     const ai = new KiroAiAssist();
     await ai.submit("hello");
-    expect(executeCommand).toHaveBeenCalledWith("kiroAgent.agent.askAgent", {
-      prompt: "hello",
-      files: [],
-      title: undefined,
-    });
+    expect(executeCommand).toHaveBeenNthCalledWith(
+      2,
+      "kiroAgent.sessions.sendPrompt",
+      "s2",
+      "hello",
+    );
+    expect(executeCommand).toHaveBeenNthCalledWith(
+      3,
+      "kiroAgent.viewSession",
+      "s2",
+      undefined,
+    );
   });
 
-  it("polls pending questions", async () => {
-    executeCommand.mockResolvedValueOnce([
-      { id: "q1" },
-      { id: "q2" },
-      { id: "q3" },
-    ]);
+  it("throws when session creation returns no sessionId", async () => {
+    executeCommand.mockReset();
+    executeCommand.mockResolvedValueOnce({});
     const ai = new KiroAiAssist();
-    const count = await ai.pollPendingQuestions!();
-    expect(count).toBe(3);
-  });
-
-  it("returns 0 when no questions pending", async () => {
-    executeCommand.mockResolvedValueOnce([]);
-    const ai = new KiroAiAssist();
-    const count = await ai.pollPendingQuestions!();
-    expect(count).toBe(0);
-  });
-
-  it("returns 0 when result is not an array", async () => {
-    executeCommand.mockResolvedValueOnce("not an array");
-    const ai = new KiroAiAssist();
-    const count = await ai.pollPendingQuestions!();
-    expect(count).toBe(0);
+    await expect(ai.submit("hello")).rejects.toThrow(/no session id/);
   });
 });
 

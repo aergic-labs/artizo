@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1
+
+### Fixed
+
+- Kiro AI assist updated to match changes in Kiro's agent API.
+
 ## 0.8.0
 
 ### Added

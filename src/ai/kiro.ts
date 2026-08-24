@@ -7,10 +7,15 @@ import * as vscode from "vscode";
 import type { AiAssist, AiSubmitOptions } from "./types";
 
 /**
- * Kiro AI assist. Uses the native agent command, which accepts a structured
- * prompt and renders an interactive agent session. Because the agent can ask
- * clarifying questions and report progress, this implementation also exposes
- * pollPendingQuestions().
+ * Kiro AI assist. Uses Kiro's native (undocumented) agent command API, which
+ * has changed before: `kiroAgent.agent.askAgent` was removed and replaced
+ * with a two-step create -> sendPrompt -> viewSession flow. Each step can
+ * throw if Kiro renames or removes commands again; the caller catches and
+ * surfaces the error in the UI.
+ *
+ * The new API takes a plain prompt string (no `files` field); file paths are
+ * inlined into the prompt text, matching GenericAiAssist. `title` is passed
+ * to viewSession for the panel label.
  */
 export class KiroAiAssist implements AiAssist {
   async isAvailable(): Promise<boolean> {
@@ -18,17 +23,31 @@ export class KiroAiAssist implements AiAssist {
   }
 
   async submit(prompt: string, opts: AiSubmitOptions = {}): Promise<void> {
-    await vscode.commands.executeCommand("kiroAgent.agent.askAgent", {
-      prompt,
-      files: opts.files ?? [],
-      title: opts.title,
-    });
-  }
+    const text = opts.files?.length
+      ? `${prompt}\n\nFiles: ${opts.files.join(", ")}`
+      : prompt;
 
-  async pollPendingQuestions(): Promise<number> {
-    const questions = (await vscode.commands.executeCommand(
-      "kiroAgent.executions.getPendingQuestions",
-    )) as unknown[];
-    return Array.isArray(questions) ? questions.length : 0;
+    const session = (await vscode.commands.executeCommand(
+      "kiroAgent.sessions.create",
+    )) as { sessionId?: string } | undefined;
+
+    const sessionId = session?.sessionId;
+    if (!sessionId) {
+      throw new Error(
+        "Kiro AI session creation returned no session id (API may have changed).",
+      );
+    }
+
+    await vscode.commands.executeCommand(
+      "kiroAgent.sessions.sendPrompt",
+      sessionId,
+      text,
+    );
+
+    await vscode.commands.executeCommand(
+      "kiroAgent.viewSession",
+      sessionId,
+      opts.title,
+    );
   }
 }

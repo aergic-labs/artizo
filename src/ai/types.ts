@@ -42,8 +42,9 @@ export interface AiAssist {
    * pending agent questions after submitting (interactive agents only).
    * Returns the number of questions awaiting a user response.
    *
-   * Implemented only by platforms with an observable agent (Kiro). Its absence
-   * is the signal that progress cannot be tracked - no capability boolean needed.
+   * No adapter currently implements this: Kiro's `getPendingQuestions` command
+   * was removed (questions now surface in the chat session UI directly). Kept
+   * on the interface for future adapters that expose an observable agent.
    */
   pollPendingQuestions?(): Promise<number>;
 }
