@@ -254,13 +254,13 @@ describe("extensionInstaller", () => {
 
         // Mock docker exec / spawn calls:
         // 1. mkdir -p extensions dir (dockerExec -> execFile)
-        // 2. resolveContainerTar probe (dockerExec -> execFile)
+        // 2. mkdir -p destination ext folder (dockerExec -> execFile)
         // 3. stream tar -xC (spawn)
         // 4. cat extensions.json - not found (dockerExec -> execFile)
         // 5. stream cat > extensions.json (spawn)
         setupExecFileResponses([
           { stdout: "" }, // mkdir -p extensions dir (dockerExec)
-          { stdout: "" }, // resolveContainerTar probe (dockerExec)
+          { stdout: "" }, // mkdir -p destination ext folder (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
         ]);
 
@@ -278,6 +278,98 @@ describe("extensionInstaller", () => {
         expect(results).toEqual([]);
       });
 
+      it("replaces a stale registration when the installed version differs (version drift)", async () => {
+        mockHttpGet.mockResolvedValue(
+          JSON.stringify({
+            version: "2.0.0",
+            files: { download: "https://example.com/ext.vsix" },
+          }),
+        );
+        mockHttpDownload.mockResolvedValue(undefined);
+
+        // Existing extensions.json: same id, older version folder.
+        const existing = [
+          {
+            identifier: { id: "pub.ext" },
+            version: "1.0.0",
+            location: {
+              $mid: 1,
+              path: "/tmp/test-extensions/pub.ext-1.0.0",
+              scheme: "file",
+            },
+            relativeLocation: "pub.ext-1.0.0",
+            metadata: {},
+          },
+        ];
+        setupExecFileResponses([
+          { stdout: "" }, // mkdir -p extensions dir (dockerExec)
+          { stdout: "" }, // mkdir -p destination ext folder (dockerExec)
+          { stdout: JSON.stringify(existing) }, // cat extensions.json -> existing
+        ]);
+
+        // Capture what each spawn writes to stdin, in spawn-call order
+        // ('data' fires synchronously on write; 'finish' timing is not
+        // reliable in the mock). The extensions.json write is the capture
+        // that parses as a JSON array.
+        const captures: string[] = [];
+        mockSpawn.mockImplementation(() => {
+          const child = createMockSpawnChild({});
+          captures.push("");
+          const idx = captures.length - 1;
+          child.stdin.on("data", (c: Buffer) => {
+            captures[idx] += c.toString();
+          });
+          return child;
+        });
+
+        const results = await installer.installExtensions("container1", [
+          "pub.ext",
+        ]);
+
+        expect(results[0].success).toBe(true);
+        // Spawn call order is deterministic: [0] = tar copy, [1] = the
+        // extensions.json write.
+        const written = JSON.parse(captures[1]);
+        expect(written).toHaveLength(1);
+        expect(written[0].relativeLocation).toBe("pub.ext-2.0.0");
+        expect(written[0].version).toBe("2.0.0");
+      });
+
+      it("sends install lines to the progress sink (dual-write)", async () => {
+        mockHttpGet.mockResolvedValue(
+          JSON.stringify({
+            version: "1.0.0",
+            files: { download: "https://example.com/download.vsix" },
+          }),
+        );
+        mockHttpDownload.mockResolvedValue(undefined);
+
+        setupExecFileResponses([
+          { stdout: "" }, // mkdir -p extensions dir (dockerExec)
+          { stdout: "" }, // mkdir -p destination ext folder (dockerExec)
+          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
+        ]);
+
+        const onLog = vi.fn();
+        const results = await installer.installExtensions(
+          "container1",
+          ["pub.ext"],
+          undefined,
+          onLog,
+        );
+
+        expect(results[0].success).toBe(true);
+        const lines = onLog.mock.calls.map((c: unknown[]) => c[0] as string);
+        expect(lines).toEqual([
+          "[extensions] extensions dir: /tmp/test-extensions",
+          "[extensions] installing 1 extensions: pub.ext",
+          "[extensions] pub.ext: downloading VSIX (version 1.0.0)",
+          expect.stringContaining(
+            "[extensions] pub.ext: installed (downloaded v1.0.0 to",
+          ),
+        ]);
+      });
+
       it("installs a single extension successfully", async () => {
         mockHttpGet.mockResolvedValue(
           JSON.stringify({
@@ -289,7 +381,7 @@ describe("extensionInstaller", () => {
 
         setupExecFileResponses([
           { stdout: "" }, // mkdir -p extensions dir (dockerExec)
-          { stdout: "" }, // resolveContainerTar probe (dockerExec)
+          { stdout: "" }, // mkdir -p destination ext folder (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
         ]);
 
@@ -333,7 +425,7 @@ describe("extensionInstaller", () => {
         ]);
         setupExecFileResponses([
           { stdout: "" }, // mkdir -p extensions dir (dockerExec)
-          { stdout: "" }, // resolveContainerTar probe (dockerExec)
+          { stdout: "" }, // mkdir -p destination ext folder (dockerExec)
         ]);
 
         const results = await installer.installExtensions("container1", [
@@ -367,7 +459,7 @@ describe("extensionInstaller", () => {
 
         setupExecFileResponses([
           { stdout: "" }, // mkdir -p extensions dir (dockerExec)
-          { stdout: "" }, // resolveContainerTar probe (dockerExec, first copy only)
+          { stdout: "" }, // mkdir -p destination ext folder, good.ext (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
         ]);
 
@@ -433,10 +525,11 @@ describe("extensionInstaller", () => {
         mockHttpDownload.mockResolvedValue(undefined);
 
         setupExecFileResponses([
-          { stdout: "" }, // mkdir (dockerExec)
-          { stdout: "" }, // resolveContainerTar probe (dockerExec, first copy only)
-          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec) child
-          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec) parent
+          { stdout: "" }, // mkdir -p extensions dir (dockerExec)
+          { stdout: "" }, // mkdir -p dest, pub.child (dockerExec)
+          { stdout: "", exitCode: 1 }, // cat extensions.json - child
+          { stdout: "" }, // mkdir -p dest, pub.parent (dockerExec)
+          { stdout: "", exitCode: 1 }, // cat extensions.json - parent
         ]);
 
         const results = await installer.installExtensions("container1", [
@@ -467,10 +560,11 @@ describe("extensionInstaller", () => {
         mockHttpDownload.mockResolvedValue(undefined);
 
         setupExecFileResponses([
-          { stdout: "" }, // mkdir (dockerExec)
-          { stdout: "" }, // resolveContainerTar probe (dockerExec, first copy only)
-          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec) bundled
-          { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec) pack
+          { stdout: "" }, // mkdir -p extensions dir (dockerExec)
+          { stdout: "" }, // mkdir -p dest, pub.bundled (dockerExec)
+          { stdout: "", exitCode: 1 }, // cat extensions.json - bundled
+          { stdout: "" }, // mkdir -p dest, pub.pack (dockerExec)
+          { stdout: "", exitCode: 1 }, // cat extensions.json - pack
         ]);
 
         const results = await installer.installExtensions("container1", [
@@ -504,10 +598,12 @@ describe("extensionInstaller", () => {
         mockHttpDownload.mockResolvedValue(undefined);
 
         setupExecFileResponses([
-          { stdout: "" }, // mkdir (dockerExec)
-          { stdout: "" }, // resolveContainerTar probe (dockerExec, first copy only)
+          { stdout: "" }, // mkdir -p extensions dir (dockerExec)
+          { stdout: "" }, // mkdir -p dest, pub.shared (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json - shared
+          { stdout: "" }, // mkdir -p dest, pub.a (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json - a
+          { stdout: "" }, // mkdir -p dest, pub.b (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json - b
         ]);
 
@@ -539,9 +635,10 @@ describe("extensionInstaller", () => {
         mockHttpDownload.mockResolvedValue(undefined);
 
         setupExecFileResponses([
-          { stdout: "" }, // mkdir (dockerExec)
-          { stdout: "" }, // resolveContainerTar probe (dockerExec, first copy only)
+          { stdout: "" }, // mkdir -p extensions dir (dockerExec)
+          { stdout: "" }, // mkdir -p dest, pub.x (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json - x
+          { stdout: "" }, // mkdir -p dest, pub.y (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json - y
         ]);
 
@@ -578,7 +675,7 @@ describe("extensionInstaller", () => {
 
         setupExecFileResponses([
           { stdout: "" }, // mkdir -p extensions dir (dockerExec)
-          { stdout: "" }, // resolveContainerTar probe (dockerExec)
+          { stdout: "" }, // mkdir -p destination ext folder (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
         ]);
 
@@ -615,8 +712,8 @@ describe("extensionInstaller", () => {
         });
 
         setupExecFileResponses([
-          { stdout: "" }, // mkdir (dockerExec)
-          { stdout: "" }, // resolveContainerTar probe (dockerExec)
+          { stdout: "" }, // mkdir -p extensions dir (dockerExec)
+          { stdout: "" }, // mkdir -p destination ext folder (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json - not found (dockerExec)
         ]);
 
@@ -655,8 +752,8 @@ describe("extensionInstaller", () => {
         (localInstaller as any).resolveTargetPlatform = inspectSpy;
 
         setupExecFileResponses([
-          { stdout: "" }, // mkdir (dockerExec)
-          { stdout: "" }, // resolveContainerTar probe (dockerExec)
+          { stdout: "" }, // mkdir -p extensions dir (dockerExec)
+          { stdout: "" }, // mkdir -p destination ext folder (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json (dockerExec)
         ]);
 
@@ -695,8 +792,8 @@ describe("extensionInstaller", () => {
           .mockResolvedValue("linux-x64");
 
         setupExecFileResponses([
-          { stdout: "" }, // mkdir (dockerExec)
-          { stdout: "" }, // resolveContainerTar probe (dockerExec)
+          { stdout: "" }, // mkdir -p extensions dir (dockerExec)
+          { stdout: "" }, // mkdir -p destination ext folder (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json (dockerExec)
         ]);
 
@@ -721,8 +818,8 @@ describe("extensionInstaller", () => {
         mockHttpDownload.mockResolvedValue(undefined);
 
         setupExecFileResponses([
-          { stdout: "" }, // mkdir (dockerExec)
-          { stdout: "" }, // resolveContainerTar probe (dockerExec)
+          { stdout: "" }, // mkdir -p extensions dir (dockerExec)
+          { stdout: "" }, // mkdir -p destination ext folder (dockerExec)
           { stdout: "", exitCode: 1 }, // cat extensions.json - not found
         ]);
 
@@ -759,8 +856,8 @@ describe("extensionInstaller", () => {
         mockHttpDownload.mockResolvedValue(undefined);
 
         setupExecFileResponses([
-          { stdout: "" }, // mkdir
-          { stdout: "" }, // resolveContainerTar probe
+          { stdout: "" }, // mkdir -p extensions dir
+          { stdout: "" }, // mkdir -p destination ext folder
           { stdout: "", exitCode: 1 }, // cat extensions.json - not found
         ]);
 

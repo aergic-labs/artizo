@@ -76,11 +76,18 @@ export function tarDirectory(dirPath: string): Buffer {
       const fullPath = join(dir, item);
       const stat = lstatSync(fullPath);
       const relPath = relative(dirPath, fullPath).split(sep).join("/");
+      // Modes are forced by entry type, not taken from host stat: the
+      // apex filesystem's modes are wrong for the container (Windows stat
+      // gives directories 666 - no execute bit - which makes extracted
+      // dirs non-traversable; see issue #11). VSIX publishers' own modes
+      // carry no signal either (all regular files, no execute bits).
+      // createTar callers that build entries by hand (bootstrap.ts)
+      // still specify explicit modes.
       if (stat.isSymbolicLink()) {
         entries.push({
           name: relPath,
           hostPath: fullPath,
-          mode: stat.mode & 0o777,
+          mode: 0o777,
           type: "symlink",
           linkTarget: readlinkSync(fullPath),
         });
@@ -88,7 +95,7 @@ export function tarDirectory(dirPath: string): Buffer {
         entries.push({
           name: relPath + "/",
           hostPath: fullPath,
-          mode: stat.mode & 0o777,
+          mode: 0o755,
           type: "dir",
         });
         walk(fullPath);
@@ -96,7 +103,7 @@ export function tarDirectory(dirPath: string): Buffer {
         entries.push({
           name: relPath,
           hostPath: fullPath,
-          mode: stat.mode & 0o777,
+          mode: 0o644,
           type: "file",
         });
       }

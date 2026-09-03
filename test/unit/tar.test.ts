@@ -53,6 +53,22 @@ describe("tar", () => {
   });
 
   describe("tarDirectory", () => {
+    it("forces deterministic modes by entry type, not host stat (issue #11)", () => {
+      const src = mkdtempSync(join(tmpdir(), "artizo-tar-modes-"));
+      mkdirSync(join(src, "sub"));
+      writeFileSync(join(src, "sub", "f.txt"), "abc");
+      const buf = tarDirectory(src);
+      // Parse the two headers: sub/ (dir) and sub/f.txt (file).
+      // Mode field is bytes 100-107, octal, space/NUL terminated.
+      const readMode = (off: number) =>
+        parseInt(
+          buf.toString("utf-8", off + 100, off + 108).replace(/[\0 ]/g, ""),
+          8,
+        );
+      expect(readMode(0)).toBe(0o755); // sub/
+      expect(readMode(512)).toBe(0o644); // sub/f.txt
+      rmSync(src, { recursive: true, force: true });
+    });
     it.skipIf(!canTar)(
       "round-trips through `tar -x` preserving paths, modes, and symlinks",
       () => {

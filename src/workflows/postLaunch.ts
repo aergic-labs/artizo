@@ -87,10 +87,15 @@ export async function connectToContainer(
     if (config) {
       throwIfCancelled(token);
       report("Installing extensions...");
+      // Dual-write: install lines go to the build log (where the user is
+      // watching the launch) in addition to the diagnostic log file.
+      const onLog = (text: string) =>
+        ui.showBuildLog(`${BRAND_PREFIX} ${text}`);
       const results = await extensionInstaller.installFromConfig(
         containerId,
         config,
         resolvedUser,
+        onLog,
       );
       const failed = results.filter((r) => !r.success);
       if (failed.length > 0) {
@@ -98,10 +103,24 @@ export async function connectToContainer(
           `[extensions] ${failed.length} extension(s) failed to install: ` +
             failed.map((r) => r.id).join(", "),
         );
+        ui.showBuildLog(
+          `${BRAND_PREFIX} [extensions] ${failed.length} extension(s) failed to install: ` +
+            failed.map((r) => r.id).join(", "),
+        );
         for (const f of failed) {
           getLogger().warn(`[extensions]   ${f.id}: ${f.error ?? "unknown error"}`);
+          ui.showBuildLog(
+            `${BRAND_PREFIX} [extensions]   ${f.id}: ${f.error ?? "unknown error"}`,
+          );
         }
       }
+    } else {
+      getLogger().info(
+        "[extensions] no devcontainer config passed to connect; skipping extension install",
+      );
+      ui.showBuildLog(
+        `${BRAND_PREFIX} [extensions] no devcontainer config passed to connect; skipping extension install`,
+      );
     }
 
     throwIfCancelled(token);

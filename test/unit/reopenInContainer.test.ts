@@ -79,6 +79,19 @@ vi.mock("../../src/devcontainer/api", async () => {
 
 vi.mock("../../src/utils/dockerUtils.js", () => ({
   execFilePromise: vi.fn().mockResolvedValue({ stdout: "", stderr: "" }),
+  dockerInspect: vi
+    .fn()
+    .mockResolvedValue({ name: "/abc123", config: {}, state: { status: "running" } }),
+}));
+
+// Config drift check on reconnect: anything but "rebuild" proceeds.
+vi.mock("../../src/remote/configCheck.js", () => ({
+  checkContainerConfig: vi.fn().mockResolvedValue("ok"),
+}));
+
+// Substitution helper (issue #12): mocked per-test.
+vi.mock("../../src/devcontainer/readResolvedConfig", () => ({
+  readResolvedConfig: vi.fn(),
 }));
 
 // Mock containerProxy so the State 4 path doesn't spawn a real relay daemon.
@@ -221,6 +234,95 @@ describe("reopenInContainer", () => {
     expect(deps.serverManager.ensureInstalled).toHaveBeenCalledWith("abc123", "vscode");
     expect(deps.serverManager.start).toHaveBeenCalledWith("abc123", undefined);
     expect(ui.openWindow).toHaveBeenCalled();
+  });
+
+  it("passes customizations.vscode.extensions through to installFromConfig (issue #11)", async () => {
+    const devcontainerConfig = {
+      image: "mcr.microsoft.com/devcontainers/go:2-1.26-bookworm",
+      customizations: {
+        vscode: {
+          extensions: [
+            "golang.go",
+            "eamodio.gitlens",
+            "streetsidesoftware.code-spell-checker",
+          ],
+        },
+      },
+    };
+    deps.configManager = createMockConfigManager({
+      readConfig: vi.fn().mockResolvedValue({
+        config: devcontainerConfig,
+        configPath: "/workspace/.devcontainer/devcontainer.json",
+        parseErrors: [],
+      }),
+    });
+
+    await reopenInContainer(deps, ui, {
+      workspaceFolder: "/workspace",
+      workspaceUri: vscode.Uri.file("/workspace"),
+    });
+
+    expect(deps.extensionInstaller.installFromConfig).toHaveBeenCalledTimes(1);
+    const passedConfig = (deps.extensionInstaller.installFromConfig as ReturnType<
+      typeof vi.fn
+    >).mock.calls[0][1] as Record<string, any>;
+    const passedIds = ((
+      passedConfig.customizations as Record<string, any>
+    )?.vscode as Record<string, any>)?.extensions;
+    expect(passedIds).toEqual([
+      "golang.go",
+      "eamodio.gitlens",
+      "streetsidesoftware.code-spell-checker",
+    ]);
+  });
+
+  it("manual-start fallback substitutes ${localEnv:USER} in workspaceFolder before opening the window (issue #12)", async () => {
+    const { readResolvedConfig } = await import("../../src/devcontainer/readResolvedConfig");
+    vi.mocked(readResolvedConfig).mockResolvedValue({
+      config: {},
+      workspaceFolder: "/home/artizo-test-user/ws",
+    });
+
+    // `docker ps` finds an existing container; `docker start` succeeds.
+    const { dockerExecPolicy } = await import("../../src/docker/execPolicy.js");
+    vi.mocked(dockerExecPolicy).mockImplementation(
+      async (args: string[]) => {
+        if (args[0] === "ps") {
+          return { stdout: "abc123\n", stderr: "", exitCode: 0 };
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    );
+
+    // CLI cannot find the container by labels -> manual-start fallback.
+    (launch as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("expected container does not exist"),
+    );
+
+    deps.configManager = createMockConfigManager({
+      readConfig: vi.fn().mockResolvedValue({
+        config: {
+          image: "node:18",
+          workspaceFolder: "/home/${localEnv:USER}/ws",
+        },
+        configPath: "/workspace/.devcontainer/devcontainer.json",
+        parseErrors: [],
+      }),
+    });
+
+    await reopenInContainer(deps, ui, {
+      workspaceFolder: "/workspace",
+      workspaceUri: vscode.Uri.file("/workspace"),
+    });
+
+    expect(readResolvedConfig).toHaveBeenCalledWith(
+      "/workspace",
+      "/workspace/.devcontainer/devcontainer.json",
+    );
+    const url = (ui.openWindow as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as string;
+    expect(url).toContain("/home/artizo-test-user/ws");
+    expect(url).not.toContain("${localEnv");
   });
 
   it("aborts silently when cancelled during the progress task", async () => {

@@ -26,6 +26,10 @@ export default defineConfig({
       reporter: ["text", "lcov", "html"],
       include: ["src/**/*.ts"],
       exclude: [
+        // Vendored devcontainers CLI: loaded in-process by readResolvedConfig
+        // tests, but not our code to test. Excluded so the overall number
+        // reflects artizo src only.
+        "vendor/**",
         "src/**/*.test.ts",
         "src/**/*.property.test.ts",
         "src/cli/devcontainerCli.ts",

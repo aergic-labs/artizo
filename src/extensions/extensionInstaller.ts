@@ -33,7 +33,6 @@ import { extractExtensionIds } from "./extensionClassifier";
 import {
   buildExtensionEntry,
   extensionFolderName,
-  isExtensionInEntries,
   type TargetPlatform,
 } from "./extensionRegistry";
 import { extractVsix } from "./vsixExtract";
@@ -74,6 +73,13 @@ export interface ExtensionInstallResult {
  * Used for the copy-from-apex fast path.
  */
 export type LocalExtensionProvider = (extId: string) => string | undefined;
+
+/**
+ * Progress sink for extension installation. Receives the same
+ * "[extensions] ..." lines as the diagnostic logger, so callers can surface
+ * them where the user is looking (e.g. the build log terminal).
+ */
+export type ExtensionInstallProgress = (text: string) => void;
 
 /**
  * Options for the extension installer.
@@ -208,14 +214,54 @@ export class ExtensionInstaller {
    * @param config - The parsed devcontainer.json object
    * @returns Array of results for each extension installation attempt
    */
-  async installFromConfig(
-    containerId: string,
-    config: Record<string, unknown>,
-    remoteUser?: string,
-  ): Promise<ExtensionInstallResult[]> {
-    const extensionIds = extractExtensionIds(config);
-    return this.installExtensions(containerId, extensionIds, remoteUser);
-  }
+    async installFromConfig(
+      containerId: string,
+      config: Record<string, unknown>,
+      remoteUser?: string,
+      onLog?: ExtensionInstallProgress,
+    ): Promise<ExtensionInstallResult[]> {
+      const extensionIds = extractExtensionIds(config);
+      if (extensionIds.length === 0) {
+        // Diagnose why nothing was extracted: which config keys the
+        // installer actually saw (issue #11).
+        const customizations = config.customizations as
+          | Record<string, unknown>
+          | undefined;
+        const vscode = customizations?.vscode as
+          | Record<string, unknown>
+          | undefined;
+        this.emit(
+          onLog,
+          `no extension ids in config ` +
+            `(customizations: ${!!customizations}, ` +
+            `customizations.vscode: ${!!vscode}, ` +
+            `customizations.vscode.extensions: ${Array.isArray(vscode?.extensions)}, ` +
+            `legacy extensions: ${Array.isArray(config.extensions)})`,
+        );
+      } else {
+        this.emit(
+          onLog,
+          `found ${extensionIds.length} extension(s) in config: ` +
+            extensionIds.join(", "),
+        );
+      }
+      return this.installExtensions(
+        containerId,
+        extensionIds,
+        remoteUser,
+        onLog,
+      );
+    }
+
+    /** Emit an install-progress line to the diagnostic logger and, when
+     * provided, the caller's progress sink (e.g. the build log). */
+    private emit(
+      onLog: ExtensionInstallProgress | undefined,
+      text: string,
+    ): void {
+      getLogger().info(`[extensions] ${text}`);
+      onLog?.(`[extensions] ${text}`);
+    }
 
   /**
    * Install a list of extensions by ID into the container.
@@ -231,13 +277,16 @@ export class ExtensionInstaller {
     containerId: string,
     extensionIds: string[],
     remoteUser?: string,
+    onLog?: ExtensionInstallProgress,
   ): Promise<ExtensionInstallResult[]> {
     if (extensionIds.length === 0) {
+      this.emit(onLog, "no extensions to install");
       return [];
     }
 
     const log = getLogger();
     const extensionsDir = await this.resolveExtensionsDir(containerId);
+    this.emit(onLog, `extensions dir: ${extensionsDir}`);
 
     // Resolve the full dependency tree, dedup, topo-sort so deps come first.
     // Target platform is resolved lazily: only fetched from docker inspect
@@ -281,14 +330,16 @@ export class ExtensionInstaller {
     if (ordered.length > extensionIds.length) {
       const orderedIds = ordered.map((m) => `${m.namespace}.${m.name}`);
       const extra = orderedIds.filter((id) => !extensionIds.includes(id));
-      log.info(
-        `[extensions] resolved ${ordered.length} extensions to install ` +
+      this.emit(
+        onLog,
+        `resolved ${ordered.length} extensions to install ` +
           `(${extensionIds.length} requested + ${extra.length} dependencies): ` +
           extra.join(", "),
       );
     } else {
-      log.info(
-        `[extensions] installing ${ordered.length} extensions: ` +
+      this.emit(
+        onLog,
+        `installing ${ordered.length} extensions: ` +
           ordered.map((m) => `${m.namespace}.${m.name}`).join(", "),
       );
     }
@@ -305,6 +356,7 @@ export class ExtensionInstaller {
         extensionsDir,
         targetPlatform,
         remoteUser,
+        onLog,
       );
       results.push(result);
     }
@@ -439,6 +491,7 @@ export class ExtensionInstaller {
     extensionsDir: string,
     targetPlatform: TargetPlatform | undefined,
     remoteUser?: string,
+    onLog?: ExtensionInstallProgress,
   ): Promise<ExtensionInstallResult> {
     const tmpDir = os.tmpdir();
     const id = `${meta.namespace}.${meta.name}`;
@@ -460,6 +513,7 @@ export class ExtensionInstaller {
         if (localPath) {
           // Copy the already-installed extension folder directly.
           // No download, no extraction needed.
+          this.emit(onLog, `${id}: copying from apex install (${localPath})`);
           const folderName = extensionFolderName(
             id,
             meta.version,
@@ -480,12 +534,22 @@ export class ExtensionInstaller {
             remoteUser,
           );
           copiedFromLocal = true;
+          this.emit(
+            onLog,
+            `${id}: installed (copied from apex to ${containerExtDir})`,
+          );
           return { id, success: true };
         }
       }
 
       // Download path: fetch the right VSIX for the target platform.
       // Uses pre-fetched metadata (already resolved with target platform).
+      this.emit(
+        onLog,
+        `${id}: downloading VSIX ` +
+          `(version ${meta.version}` +
+          `${meta.targetPlatform ? `, platform ${meta.targetPlatform}` : ""})`,
+      );
       if (!meta.downloadUrl) {
         throw new Error(
           meta.fetchError ??
@@ -521,6 +585,11 @@ export class ExtensionInstaller {
         id,
         meta,
         remoteUser,
+      );
+
+      this.emit(
+        onLog,
+        `${id}: installed (downloaded v${meta.version} to ${containerExtDir})`,
       );
 
       return { id, success: true };
@@ -566,24 +635,14 @@ export class ExtensionInstaller {
     }
   }
 
-  private containerTarCache = new Map<string, string>();
-
   /**
-   * Resolve a `tar` binary inside the container. Probes via `command -v`,
-   * caches per container, and falls back to the artizo-bootstrapped busybox
-   * tar at `/tmp/.artizo/bin/tar`.
+   * The tar binary to use inside containers: the artizo-bootstrapped
+   * busybox tar, always. It is installed on purpose (and its install
+   * fails hard when it fails), so container tar availability and flag
+   * quirks are never a dependency.
    */
-  private async resolveContainerTar(containerId: string): Promise<string> {
-    const cached = this.containerTarCache.get(containerId);
-    if (cached) return cached;
-    const result = await this.host.dockerExec(containerId, [
-      "sh",
-      "-c",
-      "command -v tar || echo /tmp/.artizo/bin/tar",
-    ]);
-    const tarBin = result.stdout.trim() || "/tmp/.artizo/bin/tar";
-    this.containerTarCache.set(containerId, tarBin);
-    return tarBin;
+  private async resolveContainerTar(_containerId: string): Promise<string> {
+    return "/tmp/.artizo/bin/tar";
   }
 
   private async copyToContainer(
@@ -592,6 +651,19 @@ export class ExtensionInstaller {
     containerPath: string,
     remoteUser?: string,
   ): Promise<void> {
+    // tar -C requires the destination directory to exist. The per-extension
+    // subfolder is created here (as remoteUser, not root) before streaming.
+    const mkdir = await this.host.dockerExec(
+      containerId,
+      ["mkdir", "-p", containerPath],
+      remoteUser ? { user: remoteUser } : undefined,
+    );
+    if (mkdir.exitCode !== 0) {
+      throw new Error(
+        `Failed to create extension destination ${containerPath} (exit ${mkdir.exitCode}): ${mkdir.stderr}`,
+      );
+    }
+
     // Stream a tar of the host tree into `docker exec -i tar -xC <dir>`.
     // Files land owned by whatever user the exec runs as (remoteUser when
     // set, otherwise the container's default — usually root). This replaces
@@ -668,13 +740,6 @@ export class ExtensionInstaller {
       entries = [];
     }
 
-    if (isExtensionInEntries(entries, extId, folderName)) {
-      getLogger().info(
-        `[extensions] ${extId} already in extensions.json; not re-adding`,
-      );
-      return;
-    }
-
     const folderPath = `${extensionsDir}/${folderName}`;
     const entry = buildExtensionEntry({
       extId,
@@ -683,17 +748,58 @@ export class ExtensionInstaller {
       publisherDisplayName: meta.publisherDisplayName ?? meta.namespace,
       targetPlatform: meta.targetPlatform,
     });
-    entries.push(entry);
+
+    // Already registered at this exact folder -> nothing to do. This covers
+    // the same-version case. Folder-only check: an id match with a different
+    // folder means version drift, handled by the replace below.
+    const alreadyAtFolder = entries.some(
+      (e) =>
+        typeof e === "object" &&
+        e !== null &&
+        (e as { relativeLocation?: string }).relativeLocation === folderName,
+    );
+    if (alreadyAtFolder) {
+      getLogger().info(
+        `[extensions] ${extId} already in extensions.json; not re-adding`,
+      );
+      return;
+    }
+
+    // Registered under the same id but a different folder (version drift,
+    // e.g. GUI installed an older version) -> replace the stale entry so
+    // the newly extracted folder is the one that loads. Without this the
+    // new folder would be orphaned and the old version would keep loading.
+    const idLower = extId.toLowerCase();
+    const existingIdx = entries.findIndex(
+      (e) =>
+        typeof e === "object" &&
+        e !== null &&
+        (e as { identifier?: { id?: string } }).identifier?.id
+          ?.toLowerCase() === idLower,
+    );
+    if (existingIdx >= 0) {
+      const existing = entries[existingIdx] as { relativeLocation?: string };
+      getLogger().info(
+        `[extensions] ${extId}: replacing stale registration ` +
+          `${existing.relativeLocation ?? "<unknown>"} with ${folderName}`,
+      );
+      entries[existingIdx] = entry;
+    } else {
+      entries.push(entry);
+    }
 
     // Write back by streaming the JSON to `docker exec -i sh -c "cat > path"`.
     // Runs as remoteUser so extensions.json is owned by the container user
     // (not root). jsonPath is artizo-controlled and derived from
     // extensionsDir (validated above) + the fixed filename `extensions.json`,
-    // so no shell metacharacter injection is possible here.
+    // so no shell metacharacter injection is possible here; the path is
+    // single-quoted anyway so a future extensions dir containing spaces
+    // still works.
     const jsonContent = JSON.stringify(entries, null, 2);
+    const quotedPath = `'${jsonPath.replace(/'/g, "'\\''")}'`;
     const writeArgs = ["exec", "-i"];
     if (remoteUser) writeArgs.push("-u", remoteUser);
-    writeArgs.push(containerId, "sh", "-c", `cat > ${jsonPath}`);
+    writeArgs.push(containerId, "sh", "-c", `cat > ${quotedPath}`);
     const child = dockerSpawn(this.dockerPath, writeArgs);
     const pipes = childPipes(child);
     let stderr = "";

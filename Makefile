@@ -8,6 +8,7 @@
 # Always prefer npm scripts directly during development:
 #   npm test              Fast feedback (unit + property, no Docker)
 #   npm run test:coverage Coverage report (unit + property)
+#   make coverage         Coverage + saved report + overall summary line
 #   npm run test:all      Everything (unit + property + integration)
 #   npm run lint          Type-check + dead-code detection
 #   npm run build         esbuild bundle only (no VSIX)
@@ -37,7 +38,7 @@
 #   OVSX_PAT environment variable (Personal Access Token from open-vsx.org)
 #   Publisher namespace claimed on Open VSX (one-time setup)
 
-.PHONY: setup check lint typecheck test test-all test-coverage build package package-kiro package-trae package-devin package-vscodium release publish clean distclean sync-shared docs vscodium-versions
+.PHONY: setup check lint typecheck test test-all test-coverage coverage build package package-kiro package-trae package-devin package-vscodium release publish clean distclean sync-shared docs vscodium-versions
 
 # ── Sentinel files ─────────────────────────────────────────────
 
@@ -131,6 +132,17 @@ test-all:
 
 test-coverage:
 	npm run test:coverage
+
+# Coverage, one run, answer at the end: full text report saved to
+# coverage-run.log (project root; the reporter wipes coverage/ mid-run,
+# so the log lives outside it), HTML in coverage/index.html, and the
+# overall src-only summary (vendor excluded via vitest.config.ts)
+# printed last so you don't have to scroll.
+coverage:
+	npm run test:coverage 2>&1 | tee coverage-run.log
+	@echo ""
+	@echo "=== Overall (artizo src only; vendored CLI excluded) ==="
+	@grep -E "^All files" coverage-run.log
 
 # ── Build ──────────────────────────────────────────────────────
 

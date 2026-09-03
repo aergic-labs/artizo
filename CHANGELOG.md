@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.2
+
+### Fixed
+
+- Extensions from `customizations.vscode.extensions` never installed (#11): missing destination mkdir before tar extraction, Windows-apex tar modes producing non-traversable dirs, and PATH-probed tar instead of the bootstrapped busybox.
+- "Workspace does not exist" on reopen (#12): devcontainer variables in `workspaceFolder` are now resolved before building the remote window URI.
+
 ## 0.8.1
 
 ### Fixed
