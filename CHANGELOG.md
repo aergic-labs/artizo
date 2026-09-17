@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.3
+
+### Fixed
+
+- Save/restore busybox PATH so it does not leak busybox coreutils into the vscodium server. (Parallel of zygos #5)
+- Dev-dep advisories: `vitest`/`@vitest/mocker` (GHSA-82fw-gwwq-j7x9) and `js-yaml` (GHSA-2883-xcg3-v3hh) via vitest 4→5 bump and transitive update.
+- Fixes for various lint warnings from the dep updates.
+
 ## 0.8.2
 
 ### Fixed

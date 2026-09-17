@@ -136,7 +136,7 @@ test-coverage:
 # Coverage, one run, answer at the end: full text report saved to
 # coverage-run.log (project root; the reporter wipes coverage/ mid-run,
 # so the log lives outside it), HTML in coverage/index.html, and the
-# overall src-only summary (vendor excluded via vitest.config.ts)
+# overall src-only summary (vendor excluded via vitest.config.mts)
 # printed last so you don't have to scroll.
 coverage:
 	npm run test:coverage 2>&1 | tee coverage-run.log

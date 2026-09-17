@@ -2,7 +2,7 @@
   "name": "artizo",
   "displayName": "Artizo Dev Containers",
   "description": "Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "publisher": "aergic",
   "productName": "Artizo",
   "license": "AGPL-3.0-only",
@@ -557,9 +557,9 @@
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.85.0",
     "@types/yauzl": "^3.4.0",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/coverage-v8": "^5.0.1",
     "@vscode/vsce": "^3.9.2",
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.2",
     "eslint": "^10.8.0",
     "fast-check": "^3.23.0",
     "knip": "^6.15.0",
@@ -567,6 +567,7 @@
     "typescript": "^5.8.0",
     "typescript-eslint": "^8.0.0",
     "upng-js": "^2.1.0",
-    "vitest": "^4.1.8"
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
   }
 }

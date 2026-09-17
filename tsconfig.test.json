@@ -6,7 +6,9 @@
     "moduleResolution": "bundler",
     "module": "ES2022",
     "strict": false,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "declaration": false,
+    "declarationMap": false
   },
   "include": ["src/**/*", "test/**/*"],
   "exclude": ["node_modules", "dist", "spike"]

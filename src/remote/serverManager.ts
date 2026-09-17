@@ -132,9 +132,21 @@ export function buildStartCommand(params: {
   return [
     "sh",
     "-c",
-    `mkdir -m 700 -p "${installPath}" "${serverDataDir}"; ` +
-      `export PATH=/tmp/.artizo/bin:$PATH; ` +
-      `nohup "${installPath}/bin/${binaryName}" ` +
+    // PATH scoping: prepend /tmp/.artizo/bin only for the mkdir step that
+    // needs our busybox on a stripped image. Restore the original PATH
+    // before launching the server so the long-lived process (and the
+    // integrated terminals, tasks, and debug adapters it parents) inherits
+    // the user's real PATH, not our polyfill. Otherwise busybox applets
+    // shadow system coreutils in the terminal (parallel of zygos issue #5:
+    // BusyBox `readlink` lacks `-e` and clobbers coreutils `readlink -e`).
+    //
+    // `nohup` is invoked by absolute path from our busybox dir so it still
+    // resolves on hosts that lack it; nohup does not modify PATH, so the
+    // server still inherits the restored (user) PATH.
+    `__az_path=$PATH; export PATH=/tmp/.artizo/bin:$PATH; ` +
+      `mkdir -m 700 -p "${installPath}" "${serverDataDir}"; ` +
+      `export PATH=$__az_path; unset __az_path; ` +
+      `/tmp/.artizo/bin/nohup "${installPath}/bin/${binaryName}" ` +
       `--host 127.0.0.1 ` +
       `--port 0 ` +
       `--connection-token-file "${tokenFilePath}" ` +

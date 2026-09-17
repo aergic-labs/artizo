@@ -115,7 +115,7 @@ describe("devcontainer/api", () => {
 
   describe("dotfilesFromConfig", () => {
     const makeConfig = (entries: Record<string, unknown>) => ({
-      get: (key: string) => entries[key],
+      get: <T>(section: string): T | undefined => entries[section] as T | undefined,
     });
 
     it("returns empty when no repository set", () => {

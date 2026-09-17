@@ -31,6 +31,7 @@ export default tseslint.config(
       globals: {
         document: "readonly",
         window: "readonly",
+        Event: "readonly",
         acquireVsCodeApi: "readonly",
       },
     },
@@ -96,7 +97,7 @@ export default tseslint.config(
   // Vendored CLI wrapper: the devcontainers-cli module has no type
   // declarations, so its launch()/wrapper functions are inherently `any`.
   {
-    files: ["src/devcontainer/api.ts", "src/host/commands.ts"],
+    files: ["src/devcontainer/api.ts", "src/devcontainer/readResolvedConfig.ts", "src/host/commands.ts"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
     },
