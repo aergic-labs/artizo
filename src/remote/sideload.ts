@@ -26,6 +26,7 @@ import * as vscode from "vscode";
 import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { getLogger } from "../utils/logger";
 import type { DetectedTier } from "../host/state";
@@ -301,19 +302,39 @@ async function resolveRemoteHome(
 }
 
 /**
- * Probe the remote `$HOME` via a one-shot `ssh <host> 'echo $HOME'`.
+ * Probe the remote `$HOME` via a one-shot ssh exec.
  * Uses the same ssh binary + authority decoding as the tar stream and
  * platform detection paths. Returns the trimmed path or undefined.
+ *
+ * Output protocol: a per-invocation nonce marker line, then the home
+ * path on the next line. The parser anchors on the exact nonce, so
+ * shell-init output (e.g. zsh .zshenv echo lines) can't corrupt the
+ * path. A nonce generated milliseconds ago can't appear in rc noise.
  */
 async function probeRemoteHome(
   log: ReturnType<typeof getLogger>,
   exec: RemoteExec,
 ): Promise<string | undefined> {
   log.info("sideload: probing remote $HOME");
+  const marker = `ARTPROBE-${randomBytes(8).toString("hex")}`;
   try {
-    const result = await exec.run("echo $HOME", { timeout: 10_000 });
-    if (result.code === 0 && result.stdout.trim()) {
-      return result.stdout.trim();
+    const result = await exec.run(
+      `printf '%s\\n' '${marker}'; printf '%s\\n' "$HOME"`,
+      { timeout: 10_000 },
+    );
+    if (result.code === 0) {
+      const lines = result.stdout.split("\n").map((l) => l.replace(/\r$/, ""));
+      const idx = lines.indexOf(marker);
+      if (idx !== -1) {
+        const home = lines[idx + 1]?.trim() ?? "";
+        if (home) return home;
+        log.warn("sideload: home probe returned empty HOME");
+        return undefined;
+      }
+      log.warn(
+        `sideload: home probe marker not found (rc noise?): ${result.stdout.slice(0, 100)}`,
+      );
+      return undefined;
     }
     log.warn(
       `sideload: home probe failed (exit=${result.code}) stderr: ${result.stderr}`,

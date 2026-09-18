@@ -285,10 +285,42 @@ describe("probeRemoteHome", () => {
     debug: vi.fn(),
   } as any;
 
+  /** Mock exec.run that echoes the ARTPROBE nonce from the command, then the given home. */
+  function mockProbeHome(home: string, rcNoise = "") {
+    return (cmd: string) => {
+      const m = cmd.match(/ARTPROBE-[0-9a-f]+/);
+      return Promise.resolve({
+        stdout: `${rcNoise}${m?.[0] ?? "ARTPROBE-unknown"}\n${home}\n`,
+        stderr: "",
+        code: 0,
+      });
+    };
+  }
+
   it("returns trimmed HOME on exit 0", async () => {
     const exec = makeMockExec();
-    exec.run.mockResolvedValue({ stdout: "/home/u\n", stderr: "", code: 0 });
+    exec.run.mockImplementation(mockProbeHome("/home/u"));
     expect(await __test.probeRemoteHome(log, exec)).toBe("/home/u");
+  });
+
+  it("ignores shell-init noise before the marker", async () => {
+    const exec = makeMockExec();
+    exec.run.mockImplementation(
+      mockProbeHome("/home/u", '-ne "\\033]0;$(hostname)\\007"\n'),
+    );
+    expect(await __test.probeRemoteHome(log, exec)).toBe("/home/u");
+  });
+
+  it("returns undefined when the marker is missing", async () => {
+    const exec = makeMockExec();
+    exec.run.mockResolvedValue({ stdout: "garbage\n", stderr: "", code: 0 });
+    expect(await __test.probeRemoteHome(log, exec)).toBeUndefined();
+  });
+
+  it("returns undefined on empty HOME", async () => {
+    const exec = makeMockExec();
+    exec.run.mockImplementation(mockProbeHome(""));
+    expect(await __test.probeRemoteHome(log, exec)).toBeUndefined();
   });
 
   it("returns undefined on non-zero exit", async () => {
@@ -339,7 +371,14 @@ describe("resolveRemoteHome", () => {
 
   it("falls back to ssh probe", async () => {
     const exec = makeMockExec();
-    exec.run.mockResolvedValue({ stdout: "/probed/home\n", stderr: "", code: 0 });
+    exec.run.mockImplementation((cmd: string) => {
+      const m = cmd.match(/ARTPROBE-[0-9a-f]+/);
+      return Promise.resolve({
+        stdout: `${m?.[0] ?? "ARTPROBE-unknown"}\n/probed/home\n`,
+        stderr: "",
+        code: 0,
+      });
+    });
     expect(
       await __test.resolveRemoteHome(AUTHORITY, undefined, ctx, log, exec),
     ).toBe("/probed/home");

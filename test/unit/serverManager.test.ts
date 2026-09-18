@@ -70,6 +70,7 @@ vi.mock("../../src/platform", () => ({
 
 vi.mock("node:crypto", () => ({
   randomUUID: () => "test-uuid-1234-5678-abcd-ef0123456789",
+  randomBytes: () => Buffer.from("0123456789abcdef", "hex"),
 }));
 
 import {
@@ -107,15 +108,22 @@ let mockHost = createMockHost();
 /**
  * Helper to set up sequential mock responses for host.dockerExec.
  * Each call to dockerExec will consume the next response in the array.
+ * A response with `probeFields` emits the probeContainer nonce-marker
+ * format: the nonce is extracted from the command's ARTPROBE marker.
  */
 function setupExecFileResponses(
-  responses: Array<{ stdout: string; stderr?: string; exitCode?: number }>,
+  responses: Array<{
+    stdout?: string;
+    stderr?: string;
+    exitCode?: number;
+    probeFields?: [string, string, string];
+  }>,
 ) {
   mockHost.dockerExec.mockReset();
   let callIndex = 0;
 
   mockHost.dockerExec.mockImplementation(
-    (_containerId: string, _command: string[], _options?: any) => {
+    (_containerId: string, command: string[], _options?: any) => {
       const response = responses[callIndex] ?? {
         stdout: "",
         stderr: "",
@@ -123,12 +131,17 @@ function setupExecFileResponses(
       };
       callIndex++;
 
-      const { stdout, stderr = "", exitCode = 0 } = response;
+      let stdout = response.stdout ?? "";
+      if (response.probeFields) {
+        const m = command.join(" ").match(/ARTPROBE-[0-9a-f]+/);
+        stdout = `${m?.[0] ?? "ARTPROBE-unknown"}\n${response.probeFields.join("\n")}\n`;
+      }
+      const { stderr = "", exitCode = 0 } = response;
 
       if (exitCode !== 0) {
-        return Promise.resolve({ exitCode, stdout: stdout ?? "", stderr });
+        return Promise.resolve({ exitCode, stdout, stderr });
       }
-      return Promise.resolve({ exitCode: 0, stdout: stdout ?? "", stderr });
+      return Promise.resolve({ exitCode: 0, stdout, stderr });
     },
   );
 }
@@ -372,8 +385,8 @@ describe("serverManager", () => {
     describe("ensureInstalled", () => {
       it("skips installation when binary is already present", async () => {
         setupExecFileResponses([
-          // probeContainer: arch:::commit:::present
-          { stdout: `x86_64:::${TEST_PRODUCT_INFO.commit}:::yes` },
+          // probeContainer: arch, commit, present
+          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "yes"] },
         ]);
 
         const info = await manager.ensureInstalled("container1");
@@ -389,8 +402,8 @@ describe("serverManager", () => {
 
       it("installs when binary is not present", async () => {
         setupExecFileResponses([
-          // probeContainer: arch:::commit:::not-present
-          { stdout: `x86_64:::${TEST_PRODUCT_INFO.commit}:::no` },
+          // probeContainer: arch, commit, not-present
+          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "no"] },
           // installServer: finalize (patch+move)
           { stdout: "" },
         ]);
@@ -419,7 +432,7 @@ describe("serverManager", () => {
         ]);
 
         setupExecFileResponses([
-          { stdout: `x86_64:::${TEST_PRODUCT_INFO.commit}:::no` },
+          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "no"] },
           // installServer: finalize
           { stdout: "" },
         ]);
@@ -438,7 +451,7 @@ describe("serverManager", () => {
 
       it("installs on arm64 when binary is not present", async () => {
         setupExecFileResponses([
-          { stdout: `aarch64:::${TEST_PRODUCT_INFO.commit}:::no` },
+          { probeFields: ["aarch64", TEST_PRODUCT_INFO.commit, "no"] },
           // installServer: finalize
           { stdout: "" },
         ]);
@@ -457,7 +470,7 @@ describe("serverManager", () => {
 
       it("throws when bootstrap busybox fails", async () => {
         setupExecFileResponses([
-          { stdout: `x86_64:::${TEST_PRODUCT_INFO.commit}:::no` },
+          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "no"] },
         ]);
 
         mockBootstrapBusybox.mockRejectedValue(new Error("readFile ENOENT"));
@@ -471,7 +484,7 @@ describe("serverManager", () => {
 
       it("throws when setup script fails", async () => {
         setupExecFileResponses([
-          { stdout: `x86_64:::${TEST_PRODUCT_INFO.commit}:::no` },
+          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "no"] },
         ]);
 
         mockRunSetup.mockRejectedValue(
@@ -1036,8 +1049,8 @@ describe("serverManager", () => {
     describe("download URL construction", () => {
       it("passes server download URL to bootstrap runSetup", async () => {
         setupExecFileResponses([
-          // probeContainer: arch:::commit:::not-present
-          { stdout: `x86_64:::${TEST_PRODUCT_INFO.commit}:::no` },
+          // probeContainer: arch, commit, not-present
+          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "no"] },
           // installServer: finalize (patch+move)
           { stdout: "" },
         ]);

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.4
+
+### Fixed
+
+- Probe output (container probe, ssh home probe) now anchors on a per-invocation nonce marker, so shell-init output can't corrupt the parsed fields.
+
 ## 0.8.3
 
 ### Fixed

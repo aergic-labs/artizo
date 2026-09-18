@@ -26,7 +26,7 @@
  * may have a different commit).
  */
 
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { posix as pathPosix } from "node:path";
 import type { Host } from "../host/host";
 import { type ProductInfo, buildServerDownloadUrl } from "./productInfo";
@@ -401,8 +401,13 @@ export class ServerManager implements IServerManager {
    * Single-call probe: container arch, REH commit from an existing
    * install's product.json, and whether the server binary is present.
    * Replaces the prior 3-call sequence (detectArch + resolveServerCommit
-   * + isServerBinaryPresent). Output is `:::`-delimited to avoid JSON
-   * escaping issues with paths.
+   * + isServerBinaryPresent).
+   *
+   * Output protocol: a per-invocation nonce marker line, then one field
+   * per line (arch, commit, present). The parser anchors on the exact
+   * nonce and ignores anything before it, so shell-init output can't
+   * corrupt the fields. A nonce generated milliseconds ago on the client
+   * can't appear in rc noise.
    */
   private async probeContainer(containerId: string): Promise<{
     arch: string;
@@ -413,13 +418,15 @@ export class ServerManager implements IServerManager {
     const serverDataDir = this.getServerDataDir(installRoot);
     const glob = pathPosix.join(serverDataDir, "bin", "*", "product.json");
     const binaryName = this.productInfo.serverApplicationName;
+    const marker = `ARTPROBE-${randomBytes(8).toString("hex")}`;
 
     const cmd =
       `a=$(uname -m); ` +
       `c=$(for f in ${glob}; do [ -f "$f" ] && { sed -n 's/.*"commit": "\\([0-9a-f]*\\)".*/\\1/p' "$f"; break; }; done); ` +
       `[ -n "$c" ] || c="${this.productInfo.commit}"; ` +
       `p=no; [ -f "${serverDataDir}/bin/$c/bin/${binaryName}" ] && p=yes; ` +
-      `printf '%s:::%s:::%s\\n' "$a" "$c" "$p"`;
+      `printf '%s\\n' '${marker}'; ` +
+      `printf '%s\\n' "$a" "$c" "$p"`;
 
     getLogger().debug(`[install] probeContainer: ${cmd}`);
     const result = await this.host.dockerExec(containerId, [
@@ -433,16 +440,23 @@ export class ServerManager implements IServerManager {
       );
     }
 
-    const parts = result.stdout.trim().split(":::");
-    if (parts.length < 3) {
+    const lines = result.stdout.split("\n").map((l) => l.replace(/\r$/, ""));
+    const markerIdx = lines.indexOf(marker);
+    if (markerIdx === -1) {
       throw new Error(
-        `Container probe: malformed output (expected 3 fields, got ${parts.length}): ${result.stdout.slice(0, 200)}`,
+        `Container probe: marker not found in output: ${result.stdout.slice(0, 200)}`,
+      );
+    }
+    const fields = lines.slice(markerIdx + 1, markerIdx + 4);
+    if (fields.length < 3) {
+      throw new Error(
+        `Container probe: expected 3 fields after marker, got ${fields.length}: ${result.stdout.slice(0, 200)}`,
       );
     }
 
-    const arch = validateArch(parts[0].trim());
-    const commit = parts[1].trim() || this.productInfo.commit;
-    const binaryPresent = parts[2].trim() === "yes";
+    const arch = validateArch(fields[0].trim());
+    const commit = fields[1].trim() || this.productInfo.commit;
+    const binaryPresent = fields[2].trim() === "yes";
 
     // Cache for subsequent resolveServerCommit / detectArch calls.
     this.resolvedArch = arch;
