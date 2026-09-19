@@ -201,7 +201,7 @@ describe("cloneInVolume", () => {
     expect(result!.containerId).toBe("abc123");
     expect(launch).toHaveBeenCalled();
     expect(deps.serverManager.ensureInstalled).toHaveBeenCalledWith("abc123", "vscode");
-    expect(deps.serverManager.start).toHaveBeenCalledWith("abc123", undefined);
+    expect(deps.serverManager.start).toHaveBeenCalledWith("abc123", undefined, undefined);
     expect(ui.openWindow).toHaveBeenCalled();
   });
 

@@ -32,6 +32,11 @@ import type { Host } from "../host/host";
 import { type ProductInfo, buildServerDownloadUrl } from "./productInfo";
 import { getPlatformAdapter } from "../platform";
 import { getLogger } from "../utils/logger";
+import {
+  parseShellFromGetent,
+  probeUserEnv,
+  type UserEnvProbe,
+} from "./userEnvProbe";
 
 import { ContainerBootstrap } from "./bootstrap";
 
@@ -70,7 +75,7 @@ export interface ServerInfo {
 
 export interface IServerManager {
   ensureInstalled(containerId: string, remoteUser?: string): Promise<ServerInfo>;
-  start(containerId: string, remoteUser?: string): Promise<ServerInfo>;
+  start(containerId: string, remoteUser?: string, config?: Record<string, unknown>): Promise<ServerInfo>;
   stop(containerId: string): Promise<void>;
   getStatus(containerId: string): Promise<ServerInfo | null>;
   getCompatibleVersion(): string;
@@ -136,13 +141,17 @@ export function buildStartCommand(params: {
     // needs our busybox on a stripped image. Restore the original PATH
     // before launching the server so the long-lived process (and the
     // integrated terminals, tasks, and debug adapters it parents) inherits
-    // the user's real PATH, not our polyfill. Otherwise busybox applets
+    // the user's real PATH, not our polyfill. Otherwise busybox tools
     // shadow system coreutils in the terminal (parallel of zygos issue #5:
     // BusyBox `readlink` lacks `-e` and clobbers coreutils `readlink -e`).
     //
     // `nohup` is invoked by absolute path from our busybox dir so it still
     // resolves on hosts that lack it; nohup does not modify PATH, so the
     // server still inherits the restored (user) PATH.
+    //
+    // --force-disable-user-env: the server's own env detection is disabled;
+    // the probed login-shell env is injected via `docker exec --env`
+    // (see ServerManager.start). This matches MS Remote-Containers.
     `__az_path=$PATH; export PATH=/tmp/.artizo/bin:$PATH; ` +
       `mkdir -m 700 -p "${installPath}" "${serverDataDir}"; ` +
       `export PATH=$__az_path; unset __az_path; ` +
@@ -153,6 +162,7 @@ export function buildStartCommand(params: {
       `--server-data-dir "${serverDataDir}" ` +
       `--telemetry-level ${telemetryLevel} ` +
       `--accept-server-license-terms ` +
+      `--force-disable-user-env ` +
       `--start-server ` +
       `> "${logFile}" 2>&1 & echo $! > "${pidFile}"`,
   ];
@@ -225,8 +235,16 @@ export class ServerManager implements IServerManager {
   private resolvedCommit: string | undefined;
   /** Cached container arch. Avoids re-running `uname -m` on every start. */
   private resolvedArch: string | undefined;
-  /** Cached remoteUser preflight result per container: { user, exists }. */
-  private remoteUserChecked = new Map<string, { user: string; exists: boolean }>();
+  /**
+   * Cached remoteUser preflight result per container: { user, exists, shell }.
+   * `shell` is parsed from `getent passwd` field 7 — no extra round-trip.
+   */
+  private remoteUserChecked = new Map<
+    string,
+    { user: string; exists: boolean; shell?: string }
+  >();
+  /** Container PATH captured by `probeContainer` (4th field). For `mergePaths`. */
+  private probedContainerPath: string | undefined;
 
   constructor(options: ServerManagerOptions) {
     this.dockerPath = options?.dockerPath ?? "docker";
@@ -399,15 +417,15 @@ export class ServerManager implements IServerManager {
 
   /**
    * Single-call probe: container arch, REH commit from an existing
-   * install's product.json, and whether the server binary is present.
-   * Replaces the prior 3-call sequence (detectArch + resolveServerCommit
-   * + isServerBinaryPresent).
+   * install's product.json, whether the server binary is present, and
+   * the container's current PATH. Replaces the prior 3-call sequence
+   * (detectArch + resolveServerCommit + isServerBinaryPresent).
    *
    * Output protocol: a per-invocation nonce marker line, then one field
-   * per line (arch, commit, present). The parser anchors on the exact
-   * nonce and ignores anything before it, so shell-init output can't
-   * corrupt the fields. A nonce generated milliseconds ago on the client
-   * can't appear in rc noise.
+   * per line (arch, commit, present, PATH). The parser anchors on the
+   * exact nonce and ignores anything before it, so shell-init output
+   * can't corrupt the fields. A nonce generated milliseconds ago on the
+   * client can't appear in rc noise.
    */
   private async probeContainer(containerId: string): Promise<{
     arch: string;
@@ -426,7 +444,7 @@ export class ServerManager implements IServerManager {
       `[ -n "$c" ] || c="${this.productInfo.commit}"; ` +
       `p=no; [ -f "${serverDataDir}/bin/$c/bin/${binaryName}" ] && p=yes; ` +
       `printf '%s\\n' '${marker}'; ` +
-      `printf '%s\\n' "$a" "$c" "$p"`;
+      `printf '%s\\n' "$a" "$c" "$p" "$PATH"`;
 
     getLogger().debug(`[install] probeContainer: ${cmd}`);
     const result = await this.host.dockerExec(containerId, [
@@ -447,16 +465,17 @@ export class ServerManager implements IServerManager {
         `Container probe: marker not found in output: ${result.stdout.slice(0, 200)}`,
       );
     }
-    const fields = lines.slice(markerIdx + 1, markerIdx + 4);
-    if (fields.length < 3) {
+    const fields = lines.slice(markerIdx + 1, markerIdx + 5);
+    if (fields.length < 4) {
       throw new Error(
-        `Container probe: expected 3 fields after marker, got ${fields.length}: ${result.stdout.slice(0, 200)}`,
+        `Container probe: expected 4 fields after marker, got ${fields.length}: ${result.stdout.slice(0, 200)}`,
       );
     }
 
     const arch = validateArch(fields[0].trim());
     const commit = fields[1].trim() || this.productInfo.commit;
     const binaryPresent = fields[2].trim() === "yes";
+    this.probedContainerPath = fields[3].trim() || undefined;
 
     // Cache for subsequent resolveServerCommit / detectArch calls.
     this.resolvedArch = arch;
@@ -482,9 +501,13 @@ export class ServerManager implements IServerManager {
       );
       return undefined;
     }
-    // Numeric (uid or uid:gid) — Docker accepts these, no need to check existence
+    // Numeric (uid or uid:gid) — Docker accepts these, no need to check existence.
+    // No shell from getent for numeric users; probe falls back to /bin/sh.
     if (/^\d+(:\d+)?$/.test(remoteUser)) {
-      this.remoteUserChecked.set(containerId, { user: remoteUser, exists: true });
+      this.remoteUserChecked.set(containerId, {
+        user: remoteUser,
+        exists: true,
+      });
       return remoteUser;
     }
     // Check cache — if same user already preflighted, return cached result
@@ -492,7 +515,9 @@ export class ServerManager implements IServerManager {
     if (cached?.user === remoteUser) {
       return cached.exists ? cached.user : undefined;
     }
-    // Run preflight: getent passwd <remoteUser> as containerUser (no -u)
+    // Run preflight: getent passwd <remoteUser> as containerUser (no -u).
+    // Field 7 of the output is the login shell — parse it here so the env
+    // probe doesn't need a separate round-trip to resolve the shell.
     const result = await this.host.dockerExec(containerId, ["getent", "passwd", remoteUser]);
     const exists = result.exitCode === 0 && result.stdout.trim().length > 0;
     if (!exists) {
@@ -502,8 +527,20 @@ export class ServerManager implements IServerManager {
           `(Dockerfile RUN useradd) or set containerUser to a user that exists.`,
       );
     }
-    this.remoteUserChecked.set(containerId, { user: remoteUser, exists });
+    const shell = exists ? parseShellFromGetent(result.stdout) : undefined;
+    this.remoteUserChecked.set(containerId, { user: remoteUser, exists, shell });
     return exists ? remoteUser : undefined;
+  }
+
+  /**
+   * Get the cached login shell for a container's resolved user.
+   * Returns `/bin/sh` if the user wasn't preflighted, was numeric (no
+   * getent), or has no shell field. No round-trip — reads from the
+   * `preflightRemoteUser` cache.
+   */
+  private getResolvedShell(containerId: string): string {
+    const cached = this.remoteUserChecked.get(containerId);
+    return cached?.shell || "/bin/sh";
   }
 
   async ensureInstalled(containerId: string, remoteUser?: string): Promise<ServerInfo> {
@@ -753,7 +790,11 @@ export class ServerManager implements IServerManager {
    * redirecting stdout to a log file. Then polls the log file until the
    * server announces its listening port.
    */
-  async start(containerId: string, remoteUser?: string): Promise<ServerInfo> {
+  async start(
+    containerId: string,
+    remoteUser?: string,
+    config?: Record<string, unknown>,
+  ): Promise<ServerInfo> {
     const arch = await this.detectArch(containerId);
     const installRoot = await this.getServerInstallRoot(containerId);
     const commit = await this.resolveServerCommit(containerId);
@@ -789,6 +830,43 @@ export class ServerManager implements IServerManager {
     );
     await this.stop(containerId);
 
+    // Probe the user's login-shell env so the server (and the integrated
+    // terminals, tasks, and debug adapters it parents) inherits a proper
+    // env instead of the bare image env. Mirrors MS Remote-Containers'
+    // userEnvProbe pattern. The shell comes from the preflightRemoteUser
+    // getent call (no new round-trip); the container PATH comes from
+    // probeContainer (no new round-trip). Only runs on cold start — the
+    // reuse path above returns before reaching here.
+    const userEnvProbe =
+      (config?.userEnvProbe as UserEnvProbe) ?? "loginInteractiveShell";
+    const shell = this.getResolvedShell(containerId);
+    const probedEnv = await probeUserEnv({
+      host: this.host,
+      containerId,
+      user: resolvedUser,
+      shell,
+      probe: userEnvProbe,
+      containerPath: this.probedContainerPath,
+    });
+    log.debug(
+      `[userEnvProbe] probed ${Object.keys(probedEnv).length} vars, ` +
+        `shell=${shell}, containerPath=${this.probedContainerPath ?? "(none)"}`,
+    );
+
+    // SHELL tells the server which shell to use for integrated terminals.
+    // remoteEnv from devcontainer.json overrides probed values.
+    const remoteEnv =
+      (config?.remoteEnv as Record<string, string>) ?? {};
+    const injectEnv: Record<string, string> = {
+      SHELL: shell,
+      ...probedEnv,
+      ...remoteEnv,
+    };
+    log.debug(
+      `[userEnvProbe] injecting ${Object.keys(injectEnv).length} env vars ` +
+        `(SHELL=${injectEnv.SHELL}, PATH=${injectEnv.PATH?.slice(0, 80) ?? "(none)"})`,
+    );
+
     const startCmd = buildStartCommand({
       installPath,
       binaryName,
@@ -799,7 +877,11 @@ export class ServerManager implements IServerManager {
       pidFile,
     });
 
-    const startResult = await this.host.dockerExec(containerId, startCmd, resolvedUser ? { user: resolvedUser } : undefined);
+    const startResult = await this.host.dockerExec(
+      containerId,
+      startCmd,
+      resolvedUser ? { user: resolvedUser, env: injectEnv } : { env: injectEnv },
+    );
 
     if (startResult.exitCode !== 0) {
       throw new Error(
@@ -923,30 +1005,20 @@ export class ServerManager implements IServerManager {
     const binaryName = this.productInfo.serverApplicationName;
     const pidFile = pathPosix.join(installPath, "server.pid");
 
-    const pidResult = await this.host.dockerExec(containerId, ["cat", pidFile]);
+    // Single sh -c: if a pidFile exists, kill that pid and remove the
+    // file; otherwise fall back to pgrep for orphaned servers with no
+    // pidFile. Combines the prior 2-call sequence (cat + kill + rm, then
+    // pgrep + kill) into one round-trip.
+    const script =
+      `pid=$(cat "${pidFile}" 2>/dev/null); ` +
+      `if [ -n "$pid" ]; then ` +
+      `kill -TERM "$pid" 2>/dev/null; rm -f "${pidFile}"; ` +
+      `else ` +
+      `pids=$(pgrep -f '${binaryName}.*--connection-token-file' 2>/dev/null); ` +
+      `[ -n "$pids" ] && kill -TERM $pids 2>/dev/null; ` +
+      `fi`;
 
-    if (pidResult.exitCode === 0 && pidResult.stdout.trim()) {
-      const pid = pidResult.stdout.trim();
-      await this.host.dockerExec(containerId, ["kill", "-TERM", pid]);
-      await this.host.dockerExec(containerId, ["rm", "-f", pidFile]);
-      return;
-    }
-
-    const findResult = await this.host.dockerExec(containerId, [
-      "pgrep",
-      "-f",
-      `${binaryName}.*--connection-token-file`,
-    ]);
-
-    if (findResult.exitCode !== 0 || !findResult.stdout.trim()) {
-      return;
-    }
-
-    const pids = findResult.stdout.trim().split("\n").filter(Boolean);
-
-    for (const pid of pids) {
-      await this.host.dockerExec(containerId, ["kill", "-TERM", pid]);
-    }
+    await this.host.dockerExec(containerId, ["sh", "-c", script]);
   }
 
   async getStatus(containerId: string): Promise<ServerInfo | null> {

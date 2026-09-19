@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.5
+
+### Added
+
+- `userEnvProbe` (default `loginInteractiveShell`): probe the remote user's login-shell env on cold start and inject it into the server so integrated terminals, tasks, and debug adapters inherit the full env instead of the bare image env. Shell comes from the existing getent call and PATH from probeContainer, so no new round-trips.
+
+### Fixed
+
+- `${localEnv:...}` and friends now resolved across the whole config — `remoteEnv`, `workspaceFolder`, etc. — before reaching the server. Previously only `workspaceFolder` was substituted (#12).
+
 ## 0.8.4
 
 ### Fixed

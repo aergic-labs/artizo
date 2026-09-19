@@ -19,6 +19,7 @@ import {
   throwIfCancelled,
   CancelledError,
 } from "./postLaunch";
+import { resolveConfigVars } from "../devcontainer/readResolvedConfig";
 import type { ReadConfigResult } from "../config/configManager";
 
 export interface RebuildContainerParams {
@@ -57,6 +58,16 @@ export async function rebuildContainer(
     perContainerDisable = !!(
       configResult.config as Record<string, unknown> | undefined
     )?.["disableCopyGitConfig"];
+
+    // Resolve ${localEnv:...} and friends across the full config in one
+    // place — workspaceFolder, remoteEnv, etc. — so the resolved config
+    // flows to connectToContainer → start() without leaking literal
+    // ${localEnv:...} strings into the server env (issue #12).
+    const resolvedConfig = await resolveConfigVars(
+      workspaceFolder,
+      configResult.configPath,
+      configResult.config as Record<string, unknown> | undefined,
+    );
 
     // Phase 2: Build
     let result:
@@ -214,7 +225,7 @@ export async function rebuildContainer(
       ui,
       containerId,
       perContainerDisable,
-      configResult!.config as Record<string, unknown> | undefined,
+      resolvedConfig,
       remoteUser,
     );
 

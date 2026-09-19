@@ -89,9 +89,17 @@ vi.mock("../../src/remote/configCheck.js", () => ({
   checkContainerConfig: vi.fn().mockResolvedValue("ok"),
 }));
 
-// Substitution helper (issue #12): mocked per-test.
+// Substitution helper (issue #12): mocked per-test. Default is a
+// passthrough so the raw config flows to connectToContainer unchanged
+// (matching the fallback behaviour of the real resolveConfigVars when
+// readResolvedConfig throws).
 vi.mock("../../src/devcontainer/readResolvedConfig", () => ({
   readResolvedConfig: vi.fn(),
+  resolveConfigVars: vi.fn(async (
+    _workspaceFolder: string,
+    _configPath: string | null | undefined,
+    rawConfig: Record<string, unknown> | undefined,
+  ) => rawConfig),
 }));
 
 // Mock containerProxy so the State 4 path doesn't spawn a real relay daemon.
@@ -232,7 +240,7 @@ describe("reopenInContainer", () => {
 
     expect(launch).toHaveBeenCalled();
     expect(deps.serverManager.ensureInstalled).toHaveBeenCalledWith("abc123", "vscode");
-    expect(deps.serverManager.start).toHaveBeenCalledWith("abc123", undefined);
+    expect(deps.serverManager.start).toHaveBeenCalledWith("abc123", undefined, { image: "node:18" });
     expect(ui.openWindow).toHaveBeenCalled();
   });
 
@@ -277,9 +285,8 @@ describe("reopenInContainer", () => {
   });
 
   it("manual-start fallback substitutes ${localEnv:USER} in workspaceFolder before opening the window (issue #12)", async () => {
-    const { readResolvedConfig } = await import("../../src/devcontainer/readResolvedConfig");
-    vi.mocked(readResolvedConfig).mockResolvedValue({
-      config: {},
+    const { resolveConfigVars } = await import("../../src/devcontainer/readResolvedConfig");
+    vi.mocked(resolveConfigVars).mockResolvedValue({
       workspaceFolder: "/home/artizo-test-user/ws",
     });
 
@@ -315,9 +322,12 @@ describe("reopenInContainer", () => {
       workspaceUri: vscode.Uri.file("/workspace"),
     });
 
-    expect(readResolvedConfig).toHaveBeenCalledWith(
+    expect(resolveConfigVars).toHaveBeenCalledWith(
       "/workspace",
       "/workspace/.devcontainer/devcontainer.json",
+      expect.objectContaining({
+        workspaceFolder: "/home/${localEnv:USER}/ws",
+      }),
     );
     const url = (ui.openWindow as ReturnType<typeof vi.fn>).mock
       .calls[0][0] as string;

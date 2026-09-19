@@ -179,7 +179,7 @@ describe("openFolderInContainer", () => {
     });
     expect(launch).toHaveBeenCalled();
     expect(deps.serverManager.ensureInstalled).toHaveBeenCalledWith("abc123", "vscode");
-    expect(deps.serverManager.start).toHaveBeenCalledWith("abc123", undefined);
+    expect(deps.serverManager.start).toHaveBeenCalledWith("abc123", undefined, { image: "node:18" });
     expect(ui.openWindow).toHaveBeenCalled();
   });
 

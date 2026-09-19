@@ -33,6 +33,7 @@ import {
   withDefaults,
   dotfilesFromConfig,
 } from "../devcontainer/api";
+import { resolveConfigVars } from "../devcontainer/readResolvedConfig";
 import { URI } from "vscode-uri";
 import { buildIdentityLabels } from "../workflows/postLaunch";
 import { getPlatformAdapter } from "../platform";
@@ -612,12 +613,38 @@ export class RemoteAuthorityResolver {
             : undefined;
         const user = remoteUser || containerUser;
 
+        // Read the devcontainer.json from the config-file label so the
+        // env probe gets `userEnvProbe` and `remoteEnv`. If the file is
+        // gone or unreadable (e.g. cloned into a volume and since
+        // deleted), pass undefined — the probe uses the default
+        // loginInteractiveShell and remoteEnv is skipped.
+        const configFilePath =
+          containerInfo.config.labels["artizo.config_file"] ||
+          containerInfo.config.labels["devcontainer.config_file"];
+        const workspaceFolderLabel =
+          containerInfo.config.labels["artizo.local_folder"] ||
+          containerInfo.config.labels["devcontainer.local_folder"];
+        let reattachConfig: Record<string, unknown> | undefined;
+        if (configFilePath && workspaceFolderLabel) {
+          reattachConfig = await resolveConfigVars(
+            workspaceFolderLabel,
+            configFilePath,
+            undefined,
+          );
+          if (!reattachConfig) {
+            logToFile(
+              `[Resolver] devcontainer.json not readable at ${configFilePath}; using probe defaults`,
+            );
+          }
+        }
+
         logToFile(`[Resolver] Ensuring server is installed...`);
         await this.serverManager.ensureInstalled(containerId, user);
         logToFile(`[Resolver] Starting server...`);
         const serverInfo = await this.serverManager.start(
           containerId,
           user,
+          reattachConfig,
         );
         logToFile(
           `[Resolver] Server started on container port ${serverInfo.port}`,

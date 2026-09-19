@@ -8,7 +8,7 @@ import { URI } from "vscode-uri";
 import { BRAND, BRAND_PREFIX } from "../utils/constants";
 import type { BuildResult, WorkflowDependencies, WorkflowUI } from "./types";
 import { launchProvision, withDefaults } from "../devcontainer/api";
-import { readResolvedConfig } from "../devcontainer/readResolvedConfig";
+import { resolveConfigVars } from "../devcontainer/readResolvedConfig";
 import { ProvisionFailedError } from "../devcontainer/provisionError";
 import { getPlatformAdapter } from "../platform";
 import { getLogger } from "../utils/logger";
@@ -70,6 +70,17 @@ export async function reopenInContainer(
       perContainerDisable = !!(
         configResult.config as Record<string, unknown> | undefined
       )?.["disableCopyGitConfig"];
+
+      // Resolve ${localEnv:...} and friends across the full config in one
+      // place — workspaceFolder, remoteEnv, etc. — so the resolved config
+      // flows to connectToContainer → start() without leaking literal
+      // ${localEnv:...} strings into the server env (issue #12) or into the
+      // remote window URI.
+      const resolvedConfig = await resolveConfigVars(
+        workspaceFolder,
+        configResult.configPath,
+        configResult.config as Record<string, unknown> | undefined,
+      );
 
       // Phase 2: Build (skip if existing container found)
       progress.report({ message: "Checking for existing container..." });
@@ -205,24 +216,11 @@ export async function reopenInContainer(
                 `Failed to start existing container ${existingContainerId.slice(0, 12)}: ${startResult.stderr}`,
               );
             }
-            const cfg = configResult.config as Record<string, unknown>;
+            const cfg = resolvedConfig as Record<string, unknown>;
             const basename =
               workspaceFolder.split(/[\\/]/).filter(Boolean).pop() ?? "";
-            // Resolve ${localEnv:...} and friends in workspaceFolder via the
-            // CLI's own substitution before it reaches the remote window URI;
-            // the raw config value would leak the literal variable into a
-            // path that doesn't exist in the container (issue #12).
-            let resolvedWorkspaceFolder: string | undefined;
-            try {
-              resolvedWorkspaceFolder = (
-                await readResolvedConfig(
-                  workspaceFolder,
-                  configResult.configPath!,
-                )
-              ).workspaceFolder;
-            } catch {
-              // best effort: fall through to the raw/default value below
-            }
+            // resolvedConfig was already substituted above (resolveConfigVars).
+            // No second call needed here.
             buildResult = {
               containerId: existingContainerId,
               remoteUser:
@@ -232,10 +230,9 @@ export async function reopenInContainer(
                     ? cfg.containerUser
                     : "",
               remoteWorkspaceFolder:
-                resolvedWorkspaceFolder ??
-                (typeof cfg.workspaceFolder === "string"
+                typeof cfg.workspaceFolder === "string"
                   ? cfg.workspaceFolder
-                  : `/workspaces/${basename}`),
+                  : `/workspaces/${basename}`,
             };
           } else {
             throw err;
@@ -320,7 +317,7 @@ export async function reopenInContainer(
         ui,
         buildResult.containerId,
         perContainerDisable,
-        configResult!.config as Record<string, unknown> | undefined,
+        resolvedConfig,
         buildResult.remoteUser,
         progress,
         token,

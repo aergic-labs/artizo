@@ -90,7 +90,11 @@ export class Host {
   async dockerExec(
     containerId: string,
     command: string[],
-    options?: { user?: string; workdir?: string },
+    options?: {
+      user?: string;
+      workdir?: string;
+      env?: Record<string, string>;
+    },
   ): Promise<ExecResult> {
     const args = ["exec"];
     if (options?.user) {
@@ -98,6 +102,11 @@ export class Host {
     }
     if (options?.workdir) {
       args.push("-w", options.workdir);
+    }
+    if (options?.env) {
+      for (const [k, v] of Object.entries(options.env)) {
+        args.push("--env", `${k}=${v}`);
+      }
     }
     args.push(containerId, ...command);
 

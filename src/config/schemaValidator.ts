@@ -75,6 +75,10 @@ const devcontainerSchema = {
     containerUser: { type: "string" },
     remoteEnv: { type: "object", additionalProperties: { type: "string" } },
     containerEnv: { type: "object", additionalProperties: { type: "string" } },
+    userEnvProbe: {
+      type: "string",
+      enum: ["none", "loginInteractiveShell", "interactiveShell", "loginShell"],
+    },
     features: { type: "object" },
     customizations: {
       type: "object",

@@ -125,3 +125,38 @@ export async function readResolvedConfig(
     workspaceFolder: configs.workspaceConfig.workspaceFolder as string,
   };
 }
+
+/**
+ * Resolve devcontainer variable substitutions (${localEnv:...},
+ * ${localWorkspaceFolder...}, ${containerWorkspaceFolder...}) in a config.
+ *
+ * This is the single entry point for variable resolution across all
+ * paths — the three workflow functions (reopenInContainer, openFolder,
+ * rebuildContainer) pass the config they just parsed via configManager, and
+ * the re-attach path (resolveContainerById) passes `undefined` for
+ * `rawConfig` to re-read the file fresh from the config-file label. In both
+ * cases the fully-substituted config is returned so `remoteEnv`,
+ * `workspaceFolder`, and any other field with `${...}` references gets the
+ * same treatment in one place.
+ *
+ * - If `configPath` is absent, substitution is impossible: return `rawConfig`
+ *   unchanged.
+ * - Otherwise attempt `readResolvedConfig` and return its substituted
+ *   `config`.
+ * - On error (file gone, unreadable, parse failure), fall back to `rawConfig`
+ *   — which is `undefined` for the re-attach path, signalling the caller to
+ *   use probe defaults. Variable substitution is best-effort, not a hard
+ *   requirement for server start.
+ */
+export async function resolveConfigVars(
+  workspaceFolder: string,
+  configPath: string | null | undefined,
+  rawConfig: Record<string, unknown> | undefined,
+): Promise<Record<string, unknown> | undefined> {
+  if (!configPath) return rawConfig;
+  try {
+    return (await readResolvedConfig(workspaceFolder, configPath)).config;
+  } catch {
+    return rawConfig;
+  }
+}

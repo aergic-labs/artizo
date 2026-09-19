@@ -125,7 +125,7 @@ export async function connectToContainer(
 
     throwIfCancelled(token);
     report(`Starting ${serverName}...`);
-    const startedServer = await serverManager.start(containerId, resolvedUser);
+    const startedServer = await serverManager.start(containerId, resolvedUser, config);
 
     throwIfCancelled(token);
     report("Copying Git config...");
