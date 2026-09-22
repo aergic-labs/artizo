@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.7
+
+### Fixed
+
+- `~` is now expanded in `artizo.sshPath` (e.g. `~/bin/ssh`).
+
 ## 0.8.6
 
 ### Fixed

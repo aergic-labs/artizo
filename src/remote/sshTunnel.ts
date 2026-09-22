@@ -103,7 +103,8 @@ export function resolveSshBinary(): string {
       .getConfiguration("artizo")
       .get<string>("sshPath");
     if (configured && configured.trim()) {
-      return configured.trim();
+      const v = configured.trim();
+      return v.startsWith("~/") ? path.join(os.homedir(), v.slice(2)) : v;
     }
   } catch {
     /* config unavailable; fall through to auto-detection */
