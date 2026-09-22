@@ -81,6 +81,7 @@ describe("extensionRegistry", () => {
       expect(entry.metadata.pinned).toBe(false);
       expect(entry.metadata.isPreReleaseVersion).toBe(false);
       expect(entry.metadata.hasPreReleaseVersion).toBe(false);
+      expect(entry.metadata.isApplicationScoped).toBe(true);
       expect(entry.metadata.id).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );

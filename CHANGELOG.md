@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.6
+
+### Fixed
+
+- Extensions from `customizations.vscode.extensions` now install as application-scoped so they appear in every profile, not just the Default (#13).
+
 ## 0.8.5
 
 ### Added

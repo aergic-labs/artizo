@@ -333,6 +333,7 @@ describe("extensionInstaller", () => {
         expect(written).toHaveLength(1);
         expect(written[0].relativeLocation).toBe("pub.ext-2.0.0");
         expect(written[0].version).toBe("2.0.0");
+        expect(written[0].metadata.isApplicationScoped).toBe(true);
       });
 
       it("sends install lines to the progress sink (dual-write)", async () => {

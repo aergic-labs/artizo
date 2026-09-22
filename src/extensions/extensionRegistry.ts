@@ -57,6 +57,9 @@ export interface ExtensionEntry {
     private: boolean;
     isPreReleaseVersion: boolean;
     hasPreReleaseVersion: boolean;
+    // Must be true: server's profile scan pulls app-scoped entries
+    // from the default profile into every non-default profile (#13).
+    isApplicationScoped: boolean;
   };
 }
 
@@ -166,6 +169,7 @@ export function buildExtensionEntry(
       private: false,
       isPreReleaseVersion: false,
       hasPreReleaseVersion: false,
+      isApplicationScoped: true,
     },
   };
 }
