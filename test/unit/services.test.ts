@@ -208,8 +208,8 @@ import {
   createServices,
   createBuildLogTerminal,
   ensureResolversAvailable,
-  validatePlatformRuntime,
   getArgvExtensionId,
+  _setExtensionIdForTest,
   type ExtensionSettings,
 } from "../../src/host/services";
 import { patchArgvContent } from "../../src/host/argvPatch";
@@ -462,18 +462,17 @@ describe("services", () => {
   });
 
   describe("getArgvExtensionId", () => {
-    it("returns the vscodium extension ID when all adapter flags are false", () => {
-      // test/setup.ts sets all HAS_*_ADAPTER flags to false
-      expect(getArgvExtensionId()).toBe("aergic.artizo-vscodium");
+    afterEach(() => _setExtensionIdForTest(undefined));
+
+    it("returns the test-injected extension ID", () => {
+      _setExtensionIdForTest("aergic.artizo-kiro");
+      expect(getArgvExtensionId()).toBe("aergic.artizo-kiro");
     });
 
-    it("returns the Kiro extension ID when HAS_KIRO_ADAPTER is set", () => {
-      (globalThis as any).HAS_KIRO_ADAPTER = true;
-      try {
-        expect(getArgvExtensionId()).toBe("aergic.artizo-kiro");
-      } finally {
-        (globalThis as any).HAS_KIRO_ADAPTER = false;
-      }
+    it("caches the ID across calls", () => {
+      _setExtensionIdForTest("aergic.artizo-vscodium");
+      expect(getArgvExtensionId()).toBe("aergic.artizo-vscodium");
+      expect(getArgvExtensionId()).toBe("aergic.artizo-vscodium");
     });
   });
 
@@ -650,40 +649,6 @@ describe("services", () => {
       const result = await ensureResolversAvailable();
 
       expect(result).toBe(false);
-    });
-  });
-
-  describe("validatePlatformRuntime", () => {
-    it("returns true when runtime is valid", async () => {
-      vi.mocked(getPlatformAdapter).mockReturnValue({
-        name: "Kiro",
-        isValidRuntime: () => true,
-      } as any);
-
-      const context = { subscriptions: [] } as any;
-      const result = await validatePlatformRuntime(context);
-
-      expect(result).toBe(true);
-    });
-
-    it("returns false, shows error, and registers sidebar when invalid", async () => {
-      vi.mocked(getPlatformAdapter).mockReturnValue({
-        name: "Kiro",
-        isValidRuntime: () => false,
-      } as any);
-
-      const context = { subscriptions: [] } as any;
-      const result = await validatePlatformRuntime(context);
-
-      expect(result).toBe(false);
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.stringContaining("built for Kiro"),
-      );
-      expect(vscode.window.showErrorMessage).toHaveBeenCalled();
-      expect(vscode.window.registerWebviewViewProvider).toHaveBeenCalledWith(
-        "artizo.sidebar",
-        expect.any(Object),
-      );
     });
   });
 });

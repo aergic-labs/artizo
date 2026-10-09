@@ -5,31 +5,6 @@
 
 import { vi } from "vitest";
 
-// esbuild define flags - tests use the default (Kiro) path
-declare global {
-   
-  var HAS_KIRO_ADAPTER: boolean;
-   
-  var HAS_TRAE_ADAPTER: boolean;
-   
-  var HAS_DEVIN_ADAPTER: boolean;
-   
-  var HAS_VSCODIUM_ADAPTER: boolean;
-   
-  var HAS_SECCOMP_UNCONFINED: boolean;
-   
-  var HAS_HOME_SYMLINK: boolean;
-   
-  var HAS_ARGV_PATCH: boolean;
-   
-  var ARTIZO_SPIKE: boolean;
-}
-
-globalThis.HAS_KIRO_ADAPTER = false;
-globalThis.HAS_TRAE_ADAPTER = false;
-globalThis.HAS_DEVIN_ADAPTER = false;
-globalThis.HAS_VSCODIUM_ADAPTER = false;
-globalThis.HAS_SECCOMP_UNCONFINED = false;
-globalThis.HAS_HOME_SYMLINK = false;
-globalThis.HAS_ARGV_PATCH = true;
-globalThis.ARTIZO_SPIKE = false;
+// No build-time flags — platform/AI factories do runtime detection via
+// product.json. Tests that need a specific platform mock detectPlatformName
+// or the adapter directly.

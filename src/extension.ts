@@ -16,7 +16,6 @@ import { getLogger, initLogger, LogLevel } from "./utils/logger";
 import { BRAND } from "./utils/constants";
 import { Host } from "./host/host";
 import {
-  validatePlatformRuntime,
   ensureResolversAvailable,
   readSettings,
   registerResolverEarly,
@@ -159,8 +158,6 @@ export async function activate(
   // side-load ourselves there (tar stream via ssh + extensions.json
   // mutation + reloadWindow). After reload, we activate workspace-side
   // on the SSH host with `owner === "workspace"` and skip this branch.
-  // Must run before validatePlatformRuntime - we're about to reload into
-  // the right context, and platform validation would bail on the UI side.
   // See plans/remaining-work.md (State 4 side-load).
   if (detected.tier === ExecutionTier.RemoteSSH && detected.owner === "none") {
     const status = vscode.window.createStatusBarItem(
@@ -220,13 +217,7 @@ export async function activate(
     return;
   }
 
-  // 1. Validate platform first - before any commands are registered, so a
-  //    mismatch can bail cleanly without duplicate-command collisions.
-  if (!(await validatePlatformRuntime(context))) {
-    return;
-  }
-
-  // 1b. Set context key for package.json when clauses (host vs managed).
+  // 1. Set context key for package.json when clauses (host vs managed).
   // Deferred to activateInternal after reading productInfo.
 
   // 2. Init build terminal/pty handle (logger is already up from activate).

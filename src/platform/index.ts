@@ -6,29 +6,61 @@
 /**
  * Platform adapter factory.
  *
- * Selects the correct IPlatformAdapter at build time via dynamic imports
- * gated by HAS_*_ADAPTER flags. Each fork has its own adapter module that
- * carries fork-specific configuration (data folder, server application name,
- * argv-patch needs, docker run args, etc.); esbuild keeps only the selected
- * branch and discards the others.
+ * Selects the correct IPlatformAdapter at runtime by reading `product.json`
+ * `applicationName`. All four adapter modules are bundled in every VSIX;
+ * the factory picks one at first call and caches it. Detection order is
+ * most-specific first, with VSCodium as the catch-all fallback so the
+ * extension always works on unrecognized IDEs (best-effort defaults).
  */
 
+import * as vscode from "vscode";
+import * as path from "node:path";
+import { readFileSync } from "node:fs";
 import type { IPlatformAdapter } from "./types";
 
 let _adapter: IPlatformAdapter | undefined;
 
-// Kiro is the default (else) branch, so its flag isn't referenced here.
-declare const HAS_TRAE_ADAPTER: boolean;
-declare const HAS_DEVIN_ADAPTER: boolean;
-declare const HAS_VSCODIUM_ADAPTER: boolean;
+/** @internal Test-only reset of the cached adapter. */
+export function _resetForTest(): void {
+  _adapter = undefined;
+}
+
+/** IDE names returned by detectPlatformName(). */
+export type PlatformName = "Devin" | "Trae" | "Kiro" | "VSCodium";
 
 /**
- * Returns the platform adapter for the current build target.
- * Cached after first call.
+ * Read `product.json` `applicationName` from the running IDE and match
+ * it against known fork identifiers. Returns VSCodium for unrecognized
+ * IDEs (the catch-all fallback per the runtime detection plan).
+ */
+export function detectPlatformName(): PlatformName {
+  try {
+    const productPath = path.join(vscode.env.appRoot, "product.json");
+    const product = JSON.parse(readFileSync(productPath, "utf-8"));
+    const appName: string = (product?.applicationName ?? "").toLowerCase();
+    if (appName.includes("devin") || appName.includes("windsurf")) {
+      return "Devin";
+    }
+    if (appName.includes("trae") || appName.includes("byte")) {
+      return "Trae";
+    }
+    if (appName.includes("kiro")) {
+      return "Kiro";
+    }
+  } catch {
+    // product.json unreadable — fall through to VSCodium.
+  }
+  return "VSCodium";
+}
+
+/**
+ * Returns the platform adapter for the running IDE. Detected at runtime
+ * via `product.json`; cached after first call.
  */
 export async function getPlatformAdapter(): Promise<IPlatformAdapter> {
   if (!_adapter) {
-    if (HAS_TRAE_ADAPTER) {
+    const platform = detectPlatformName();
+    if (platform === "Trae") {
       const { TraeAdapter } = await import("./trae.js");
       _adapter = new TraeAdapter({
         name: "Trae",
@@ -37,7 +69,7 @@ export async function getPlatformAdapter(): Promise<IPlatformAdapter> {
         needsArgvPatch: false,
         additionalDockerRunArgs: ["--security-opt", "seccomp=unconfined"],
       });
-    } else if (HAS_DEVIN_ADAPTER) {
+    } else if (platform === "Devin") {
       const { DevinAdapter } = await import("./devin.js");
       _adapter = new DevinAdapter({
         name: "Devin",
@@ -49,7 +81,16 @@ export async function getPlatformAdapter(): Promise<IPlatformAdapter> {
         needsHomeSymlink: true,
         hostDataFolderName: ".devin",
       });
-    } else if (HAS_VSCODIUM_ADAPTER) {
+    } else if (platform === "Kiro") {
+      const { KiroAdapter } = await import("./kiro.js");
+      _adapter = new KiroAdapter({
+        name: "Kiro",
+        dataFolderName: ".kiro",
+        serverApplicationName: "kiro-server",
+        needsArgvPatch: true,
+        additionalDockerRunArgs: [],
+      });
+    } else {
       const { VSCodiumAdapter } = await import("./vscodium.js");
       _adapter = new VSCodiumAdapter({
         name: "VSCodium",
@@ -59,15 +100,6 @@ export async function getPlatformAdapter(): Promise<IPlatformAdapter> {
         additionalDockerRunArgs: [],
         serverInstallRoot: "/tmp",
         needsHomeSymlink: false,
-      });
-    } else {
-      const { KiroAdapter } = await import("./kiro.js");
-      _adapter = new KiroAdapter({
-        name: "Kiro",
-        dataFolderName: ".kiro",
-        serverApplicationName: "kiro-server",
-        needsArgvPatch: true,
-        additionalDockerRunArgs: [],
       });
     }
   }

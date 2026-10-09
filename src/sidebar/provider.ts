@@ -27,8 +27,7 @@ import { ConfigEditService } from "./configEditService";
 import { AiAssistController } from "./aiAssistController";
 import { getHostWorkspaceFolder } from "../utils/uriUtils";
 import type { Host } from "../host/host";
-
-declare const HAS_KIRO_ADAPTER: boolean;
+import { detectPlatformName } from "../platform/index.js";
 
 /**
  * Allowlist of commands the sidebar webview may invoke via action/runCommand
@@ -433,7 +432,7 @@ export class SidebarProvider
     html = html.replace(/\$\{AI_ASSIST:(start|end)\}\n?/g, "");
 
     // Platform-specific UI adjustments (AI-native tab layout)
-    if (HAS_KIRO_ADAPTER) {
+    if (detectPlatformName() === "Kiro") {
       html = html.replace(
         '<div id="config-manual-content">',
         '<div id="config-manual-content" class="hidden">',

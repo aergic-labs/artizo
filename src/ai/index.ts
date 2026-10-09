@@ -6,49 +6,44 @@
 /**
  * AI assist factory.
  *
- * Selects the correct AiAssist implementation at build time via dynamic imports
- * gated by HAS_*_ADAPTER flags. Each fork's chat module ships only with that
- * fork's VSIX; esbuild keeps only the selected branch. This mirrors
- * platform/index.ts; keep the same dynamic-import pattern.
+ * Selects the correct AiAssist implementation at runtime by reading
+ * `product.json` `applicationName`. All four modules are bundled in every
+ * VSIX; the factory picks one at first call and caches it. Mirrors
+ * platform/index.ts — same detection order, same VSCodium fallback.
  */
 
+import { detectPlatformName } from "../platform/index.js";
 import type { AiAssist } from "./types";
 
 let _ai: AiAssist | undefined;
 
-declare const HAS_KIRO_ADAPTER: boolean;
-declare const HAS_TRAE_ADAPTER: boolean;
-declare const HAS_DEVIN_ADAPTER: boolean;
-declare const HAS_VSCODIUM_ADAPTER: boolean;
+/** @internal Test-only reset of the cached AI assist. */
+export function _resetForTest(): void {
+  _ai = undefined;
+}
 
 /**
- * Returns the AI assist implementation for the current build target.
- * Cached after first call.
+ * Returns the AI assist implementation for the running IDE. Detected at
+ * runtime via `product.json`; cached after first call. GenericAiAssist
+ * is the VSCodium/fallback for unrecognized IDEs.
  */
 export async function getAiAssist(): Promise<AiAssist> {
   if (!_ai) {
-    if (HAS_KIRO_ADAPTER) {
+    const platform = detectPlatformName();
+    if (platform === "Kiro") {
       const { KiroAiAssist } = await import("./kiro.js");
       _ai = new KiroAiAssist();
-    } else if (HAS_TRAE_ADAPTER) {
+    } else if (platform === "Trae") {
       const { TraeAiAssist } = await import("./trae.js");
       _ai = new TraeAiAssist();
-    } else if (HAS_DEVIN_ADAPTER) {
+    } else if (platform === "Devin") {
       const { DevinAiAssist } = await import("./devin.js");
       _ai = new DevinAiAssist();
-    } else if (HAS_VSCODIUM_ADAPTER) {
+    } else {
+      // VSCodium and unrecognized IDEs — generic assist probes for
+      // Cline/Roo Code/Zoo Code extensions at runtime.
       const { GenericAiAssist } = await import("./generic.js");
       _ai = new GenericAiAssist();
-    } else {
-      // No known AI chat for this build target.
-      _ai = {
-        async isAvailable() {
-          return false;
-        },
-        async submit() {
-          throw new Error("AI assist is not available on this platform.");
-        },
-      };
     }
   }
   return _ai!;

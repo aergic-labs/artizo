@@ -3,19 +3,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const isWatch = process.argv.includes("--watch");
-const target = process.env.TARGET || "kiro";
-
-// Per-vendor feature flags; vendor names never ship in VSIX
-const isTraeFamily = target === "trae";
-const flags = {
-  HAS_SECCOMP_UNCONFINED: isTraeFamily,
-  HAS_HOME_SYMLINK: target === "devin",
-  HAS_ARGV_PATCH: !isTraeFamily,
-  HAS_KIRO_ADAPTER: target === "kiro",
-  HAS_TRAE_ADAPTER: isTraeFamily,
-  HAS_DEVIN_ADAPTER: target === "devin",
-  HAS_VSCODIUM_ADAPTER: target === "vscodium",
-};
 
 /** @type {esbuild.BuildOptions} */
 const buildOptions = {
@@ -33,16 +20,7 @@ const buildOptions = {
   metafile: true,
   mainFields: ["module", "main"],
   banner: {
-    js: `/*
- * Copyright (c) 2026 Aergic Labs, LLC
- * SPDX-License-Identifier: AGPL-3.0-only
- */`,
-  },
-  define: {
-    __TARGET__: JSON.stringify(target),
-    ...Object.fromEntries(
-      Object.entries(flags).map(([k, v]) => [k, JSON.stringify(v)]),
-    ),
+    js: `/*\n * Copyright (c) 2026 Aergic Labs, LLC\n * SPDX-License-Identifier: AGPL-3.0-only\n */`,
   },
   // Resolve vscode-uri from local node_modules (not vendored CLI's)
   alias: {

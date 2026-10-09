@@ -7,9 +7,9 @@
  * Vendor-agnostic AI chat abstraction.
  *
  * Each supported IDE provides an implementation in its own module
- * (ai/<vendor>.ts), selected at build time by ai/index.ts via dynamic import
- * gated by HAS_*_ADAPTER. esbuild keeps only the selected branch so each
- * fork's VSIX ships its own chat module.
+ * (ai/<vendor>.ts), selected at runtime by ai/index.ts via product.json
+ * detection. All modules are bundled in every VSIX; the factory picks
+ * one at first call and caches it.
  *
  * The interface is intentionally generic ("submit a prompt") and carries no
  * devcontainer-specific concepts, so any feature can reuse it. Prompt-building

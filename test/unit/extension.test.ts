@@ -7,7 +7,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const {
   mockCreateBuildLogTerminal,
-  mockValidatePlatformRuntime,
   mockEnsureResolversAvailable,
   mockReadSettings,
   mockRegisterResolverEarly,
@@ -19,7 +18,6 @@ const {
   mockGetPlatformAdapter,
 } = vi.hoisted(() => ({
   mockCreateBuildLogTerminal: vi.fn(),
-  mockValidatePlatformRuntime: vi.fn(),
   mockEnsureResolversAvailable: vi.fn(),
   mockReadSettings: vi.fn(),
   mockRegisterResolverEarly: vi.fn(),
@@ -73,7 +71,6 @@ vi.mock("vscode", () => ({
 
 vi.mock("../../src/host/services", () => ({
   createBuildLogTerminal: mockCreateBuildLogTerminal,
-  validatePlatformRuntime: mockValidatePlatformRuntime,
   ensureResolversAvailable: mockEnsureResolversAvailable,
   readSettings: mockReadSettings,
   registerResolverEarly: mockRegisterResolverEarly,
@@ -148,7 +145,6 @@ describe("extension activation", () => {
       buildLogPty: { writeLine: vi.fn(), dispose: vi.fn() },
       buildLogTerminal: { show: vi.fn(), dispose: vi.fn() },
     });
-    mockValidatePlatformRuntime.mockReturnValue(true);
     mockEnsureResolversAvailable.mockResolvedValue(false);
     mockReadSettings.mockReturnValue({ dockerPath: "docker" });
     mockRegisterResolverEarly.mockReturnValue({ setServerManager: vi.fn() });
@@ -178,9 +174,8 @@ describe("extension activation", () => {
     const context = createMockContext();
     await activate(context);
 
-    // Core wiring: logger -> platform check -> settings -> resolvers -> services -> commands
+    // Core wiring: logger -> settings -> resolvers -> services -> commands
     expect(mockCreateBuildLogTerminal).toHaveBeenCalledWith(context);
-    expect(mockValidatePlatformRuntime).toHaveBeenCalledWith(context);
     expect(mockReadSettings).toHaveBeenCalled();
     expect(mockHostCreate).toHaveBeenCalledWith(
       expect.objectContaining({ dockerPath: "docker" }),
@@ -191,18 +186,6 @@ describe("extension activation", () => {
     expect(mockCreateServices).toHaveBeenCalled();
     expect(mockRegisterCoreCommands).toHaveBeenCalled();
     expect(mockAutoDetectDevcontainer).toHaveBeenCalled();
-  });
-
-  it("aborts when platform validation fails", async () => {
-    mockValidatePlatformRuntime.mockReturnValue(false);
-
-    const context = createMockContext();
-    await activate(context);
-
-    // Should stop after platform check; no resolver, no services, no commands
-    expect(mockRegisterResolverEarly).not.toHaveBeenCalled();
-    expect(mockCreateServices).not.toHaveBeenCalled();
-    expect(mockRegisterCoreCommands).not.toHaveBeenCalled();
   });
 
   it("aborts when resolvers need restart", async () => {

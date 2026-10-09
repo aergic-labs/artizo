@@ -8,7 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { readFileSync } from "node:fs";
 import type { IPlatformAdapter, PlatformConfig } from "./types";
-import { resolveNearestVsCodiumVersion } from "../remote/vscodiumFeed";
+import { resolveNearestVsCodiumVersion, getNewestBundledVersion } from "../remote/vscodiumFeed";
 
 const VSCodium_REH_BASE =
   "https://github.com/VSCodium/vscodium/releases/download";
@@ -43,14 +43,14 @@ export class VSCodiumAdapter implements IPlatformAdapter {
   }
 
   private vscodiumDownloadUrl(arch: string): string {
-    const version = this.readVersion() || "0.0.0";
+    const version = this.readVersion() || getNewestBundledVersion() || "0.0.0";
     return `${VSCodium_REH_BASE}/${version}/vscodium-reh-linux-${arch}-${version}.tar.gz`;
   }
 
   private async vscodeOssDownloadUrl(arch: string): Promise<string> {
-    const localVersion = this.readVersion() || "0.0.0";
+    const localVersion = this.readVersion() || getNewestBundledVersion() || "0.0.0";
     const nearest = await resolveNearestVsCodiumVersion(localVersion);
-    const v = nearest || "0.0.0";
+    const v = nearest || getNewestBundledVersion() || "0.0.0";
     return `${VSCodium_REH_BASE}/${v}/vscodium-reh-linux-${arch}-${v}.tar.gz`;
   }
 

@@ -89,7 +89,7 @@ export function initLogger(channel: vscode.LogOutputChannel): Logger {
 export function getLogger(): Logger {
   if (!globalLogger) {
     // Return a no-op logger before initLogger() is called - useful for
-    // early-activation checks like validatePlatformRuntime that run first.
+    // early-activation code paths that run before the logger is up.
     return {
       info() {},
       warn() {},

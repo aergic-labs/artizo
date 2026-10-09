@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.8
+
+### Changed
+
+- Platform and AI adapter selection now reads `product.json` at runtime instead of compile-time flags, so any VSIX works in any IDE. `validatePlatformRuntime` removed.
+
+### Fixed
+
+- Dev-dep advisories (6 high): `@vscode/vsce` bumped to 4.0.0 with `overrides` forcing ovsx's nested vsce to 4.0.0, pruning the secretlint/braces chain.
+
 ## 0.8.7
 
 ### Fixed
