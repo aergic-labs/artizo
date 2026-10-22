@@ -116,7 +116,7 @@ function setupExecFileResponses(
     stdout?: string;
     stderr?: string;
     exitCode?: number;
-    probeFields?: [string, string, string, string];
+    probeFields?: [string, string, string, string, string];
     /** Marks the response consumed by `probeUserEnv` (cat /proc/self/environ). */
     userEnvProbe?: boolean;
   }>,
@@ -399,8 +399,8 @@ describe("serverManager", () => {
     describe("ensureInstalled", () => {
       it("skips installation when binary is already present", async () => {
         setupExecFileResponses([
-          // probeContainer: arch, commit, present, PATH
-          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "yes", "/usr/bin:/bin"] },
+          // probeContainer: arch, commit, present, nohup, PATH
+          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "yes", "yes", "/usr/bin:/bin"] },
         ]);
 
         const info = await manager.ensureInstalled("container1");
@@ -412,12 +412,13 @@ describe("serverManager", () => {
         );
         // Only 1 call: the combined probe.
         expect(mockHost.dockerExec).toHaveBeenCalledTimes(1);
+        expect(mockBootstrapBusybox).not.toHaveBeenCalled();
       });
 
       it("installs when binary is not present", async () => {
         setupExecFileResponses([
-          // probeContainer: arch, commit, not-present, PATH
-          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "no", "/usr/bin:/bin"] },
+          // probeContainer: arch, commit, not-present, nohup, PATH
+          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "no", "no", "/usr/bin:/bin"] },
           // installServer: finalize (patch+move)
           { stdout: "" },
         ]);
@@ -440,13 +441,31 @@ describe("serverManager", () => {
         );
       });
 
+      it("re-bootstraps on fast path when nohup is missing", async () => {
+        setupExecFileResponses([
+          // probeContainer: arch, commit, present, nohup-missing, PATH
+          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "yes", "no", "/usr/bin:/bin"] },
+        ]);
+
+        const info = await manager.ensureInstalled("container1");
+
+        expect(info.commit).toBe(TEST_PRODUCT_INFO.commit);
+        expect(info.arch).toBe("x64");
+        // Only 1 dockerExec: the probe. Re-bootstrap goes through mocks.
+        expect(mockHost.dockerExec).toHaveBeenCalledTimes(1);
+        expect(mockBootstrapBusybox).toHaveBeenCalledWith("container1", "x64", undefined);
+        expect(mockDeployTools).toHaveBeenCalledWith("container1", undefined);
+        // installServer did not run.
+        expect(mockRunSetup).not.toHaveBeenCalled();
+      });
+
       it("passes kiro auth files to runSetup when adapter provides them", async () => {
         mockReadKiroToken.mockReturnValue([
           { path: ".aws/sso/cache/kiro-auth-token.json", content: '{"token":"mock"}' },
         ]);
 
         setupExecFileResponses([
-          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "no", "/usr/bin:/bin"] },
+          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "no", "no", "/usr/bin:/bin"] },
           // installServer: finalize
           { stdout: "" },
         ]);
@@ -465,7 +484,7 @@ describe("serverManager", () => {
 
       it("installs on arm64 when binary is not present", async () => {
         setupExecFileResponses([
-          { probeFields: ["aarch64", TEST_PRODUCT_INFO.commit, "no", "/usr/bin:/bin"] },
+          { probeFields: ["aarch64", TEST_PRODUCT_INFO.commit, "no", "no", "/usr/bin:/bin"] },
           // installServer: finalize
           { stdout: "" },
         ]);
@@ -484,7 +503,7 @@ describe("serverManager", () => {
 
       it("throws when bootstrap busybox fails", async () => {
         setupExecFileResponses([
-          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "no", "/usr/bin:/bin"] },
+          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "no", "no", "/usr/bin:/bin"] },
         ]);
 
         mockBootstrapBusybox.mockRejectedValue(new Error("readFile ENOENT"));
@@ -498,7 +517,7 @@ describe("serverManager", () => {
 
       it("throws when setup script fails", async () => {
         setupExecFileResponses([
-          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "no", "/usr/bin:/bin"] },
+          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "no", "no", "/usr/bin:/bin"] },
         ]);
 
         mockRunSetup.mockRejectedValue(
@@ -510,6 +529,18 @@ describe("serverManager", () => {
         );
 
         mockRunSetup.mockResolvedValue({ home: "/root" });
+      });
+
+      it("probe uses ide commit directly, not a glob", async () => {
+        setupExecFileResponses([
+          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "yes", "yes", "/usr/bin:/bin"] },
+        ]);
+
+        await manager.ensureInstalled("container1");
+
+        const probeCmd = mockHost.dockerExec.mock.calls[0][1][2] as string;
+        expect(probeCmd).toContain(`c="${TEST_PRODUCT_INFO.commit}"`);
+        expect(probeCmd).not.toContain("for f in");
       });
     });
 
@@ -590,6 +621,8 @@ describe("serverManager", () => {
           { stdout: "" },
           // waitForPort: cat logFile
           { stdout: "Extension host agent listening on 54321\n" },
+          // pruneSupersededInstalls
+          { stdout: "" },
         ]);
 
         const info = await manager.start("container1");
@@ -618,6 +651,8 @@ describe("serverManager", () => {
           { stdout: "" },
           // waitForPort: cat logFile
           { stdout: "Extension host agent listening on 8080\n" },
+          // pruneSupersededInstalls
+          { stdout: "" },
         ]);
 
         await manager.start("container1");
@@ -656,6 +691,8 @@ describe("serverManager", () => {
           { stdout: "" },
           // waitForPort: cat logFile
           { stdout: "Extension host agent listening on 9000\n" },
+          // pruneSupersededInstalls
+          { stdout: "" },
         ]);
 
         await manager.start("container1");
@@ -686,6 +723,8 @@ describe("serverManager", () => {
           { stdout: "" },
           // waitForPort: cat logFile
           { stdout: "Extension host agent listening on 3000\n" },
+          // pruneSupersededInstalls
+          { stdout: "" },
         ]);
 
         const info = await manager.start("container1");
@@ -734,6 +773,8 @@ describe("serverManager", () => {
           { stdout: "" },
           // waitForPort: cat logFile
           { stdout: "Extension host agent listening on 5000\n" },
+          // pruneSupersededInstalls
+          { stdout: "" },
         ]);
 
         await manager.start("container1");
@@ -741,7 +782,7 @@ describe("serverManager", () => {
         const startCallArgs = mockHost.dockerExec.mock.calls[6];
         const args = startCallArgs[1] as string[];
         const shCmdIndex = args.indexOf("-c");
-        const shellCmd = args[shCmdIndex + 1];
+ const shellCmd = args[shCmdIndex + 1];
         expect(shellCmd).toContain("--telemetry-level off");
       });
 
@@ -809,6 +850,8 @@ describe("serverManager", () => {
           { stdout: "" },
           // waitForPort: cat logFile
           { stdout: "Extension host agent listening on 6000\n" },
+          // pruneSupersededInstalls
+          { stdout: "" },
         ]);
 
         const info = await manager.start("container1");
@@ -833,10 +876,44 @@ describe("serverManager", () => {
           { stdout: "" },
           // waitForPort: cat logFile
           { stdout: "Extension host agent listening on 7000\n" },
+          // pruneSupersededInstalls
+          { stdout: "" },
         ]);
 
         const info = await manager.start("container1");
         expect(info.port).toBe(7000);
+      });
+
+      it("prune keeps active commit and removes superseded siblings", async () => {
+        setupExecFileResponses([
+          // detectArch
+          { stdout: "x86_64\n" },
+          // resolveServerCommit
+          { stdout: JSON.stringify({ commit: TEST_PRODUCT_INFO.commit }) },
+          // ensureConnectionToken
+          { stdout: "my-token\n" },
+          // probe: no pidFile
+          { stdout: "NONE\n" },
+          // stop
+          { stdout: "" },
+          // userEnvProbe
+          { userEnvProbe: true },
+          // nohup start command
+          { stdout: "" },
+          // waitForPort: cat logFile
+          { stdout: "Extension host agent listening on 4000\n" },
+          // pruneSupersededInstalls: one removed
+          { stdout: "removed:0123456789abcdef\n" },
+        ]);
+
+        await manager.start("container1");
+
+        const pruneCall = mockHost.dockerExec.mock.calls[8];
+        const pruneArgs = pruneCall[1] as string[];
+        const pruneScript = pruneArgs[pruneArgs.indexOf("-c") + 1] as string;
+        expect(pruneScript).toContain(TEST_PRODUCT_INFO.commit);
+        expect(pruneScript).toContain("product.json");
+        expect(pruneScript).toContain("-mmin");
       });
     });
 
@@ -1027,8 +1104,8 @@ describe("serverManager", () => {
     describe("download URL construction", () => {
       it("passes server download URL to bootstrap runSetup", async () => {
         setupExecFileResponses([
-          // probeContainer: arch, commit, not-present, PATH
-          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "no", "/usr/bin:/bin"] },
+          // probeContainer: arch, commit, not-present, nohup, PATH
+          { probeFields: ["x86_64", TEST_PRODUCT_INFO.commit, "no", "no", "/usr/bin:/bin"] },
           // installServer: finalize (patch+move)
           { stdout: "" },
         ]);
@@ -1067,6 +1144,8 @@ describe("serverManager", () => {
           { stdout: "" },
           // waitForPort: cat logFile
           { stdout: "Extension host agent listening on 5000\n" },
+          // pruneSupersededInstalls
+          { stdout: "" },
         ]);
 
         await customManager.start("container1");

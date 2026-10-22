@@ -309,11 +309,9 @@ export function compareConfigHashes(
 }
 
 /** Serialize hashes for storage in a docker label. */
+// Stable for identical config: the CLI's id-label lookup AND-matches this.
 export function serializeConfigHashes(hashes: ConfigHashes): string {
-  return JSON.stringify({
-    files: hashes,
-    writtenAt: new Date().toISOString(),
-  });
+  return JSON.stringify({ files: hashes });
 }
 
 /** Parse hashes from a docker label value. Returns undefined if missing or

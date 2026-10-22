@@ -807,6 +807,7 @@ export class RemoteAuthorityResolver {
       ]) {
         const result = await execFilePromise(this.dockerPath, [
           "ps",
+          "-a",
           "-q",
           "--no-trunc",
           "--filter",

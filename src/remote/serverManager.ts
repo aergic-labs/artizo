@@ -115,6 +115,10 @@ const SERVER_START_TIMEOUT_MS = 30_000;
 /** Polling interval (ms) when waiting for the server port announcement. */
 const PORT_POLL_INTERVAL_MS = 250;
 
+/** Min age (minutes) before a superseded install dir is pruned. Keeps a
+ * concurrent window's fresh install from being removed by a later start(). */
+const PRUNE_MIN_AGE_MIN = 24 * 60;
+
 export function buildStartCommand(params: {
   installPath: string;
   binaryName: string;
@@ -243,7 +247,7 @@ export class ServerManager implements IServerManager {
     string,
     { user: string; exists: boolean; shell?: string }
   >();
-  /** Container PATH captured by `probeContainer` (4th field). For `mergePaths`. */
+  /** Container PATH captured by `probeContainer` (5th field). For `mergePaths`. */
   private probedContainerPath: string | undefined;
 
   constructor(options: ServerManagerOptions) {
@@ -335,28 +339,30 @@ export class ServerManager implements IServerManager {
   }
 
   /**
-   * Resolve the actual REH commit from the extracted tarball.
+   * Resolve the actual REH commit.
    *
-   * Returns the cached value if already resolved (from a prior install
-   * or glob). Otherwise globs for product.json under bin/ in the
-   * server data dir and reads the commit field. If no install exists
-   * or the product.json lacks a commit, falls back to the IDE's commit.
+   * Returns the cached value if already set. Otherwise, when the IDE
+   * commit is known, reads bin/<ide-commit>/product.json directly so a
+   * stale install from a previous IDE version is never adopted. Falls
+   * back to globbing only when the commit is unknown.
    */
   private async resolveServerCommit(containerId: string): Promise<string> {
     if (this.resolvedCommit) return this.resolvedCommit;
 
-    // Look for an existing install at bin/<ide-commit>/product.json.
-    // The dir is named after the IDE commit (matching the official
-    // extension), and the product.json commit is patched to match.
     const installRoot = await this.getServerInstallRoot(containerId);
     const serverDataDir = this.getServerDataDir(installRoot);
-    const glob = pathPosix.join(serverDataDir, "bin", "*", "product.json");
+    const ideCommit = this.productInfo.commit;
+    const knownCommit = /^[0-9a-f]+$/.test(ideCommit);
 
-    getLogger().debug(`[install] resolveServerCommit: glob ${glob}`);
+    const catCmd = knownCommit
+      ? `cat "${pathPosix.join(serverDataDir, "bin", ideCommit, "product.json")}" 2>/dev/null`
+      : `for f in ${pathPosix.join(serverDataDir, "bin", "*", "product.json")}; do [ -f "$f" ] && { cat "$f"; break; }; done`;
+
+    getLogger().debug(`[install] resolveServerCommit: ${catCmd}`);
     const result = await this.host.dockerExec(containerId, [
       "sh",
       "-c",
-      `for f in ${glob}; do [ -f "$f" ] && { cat "$f"; break; }; done`,
+      catCmd,
     ]);
 
     if (result.exitCode === 0 && result.stdout.trim()) {
@@ -396,8 +402,8 @@ export class ServerManager implements IServerManager {
     return this.resolvedArch;
   }
 
-  // No version comparison: if the binary is present, use it.
-  // When the IDE updates, the container will be rebuilt anyway.
+  // resolveServerCommit gates on the IDE commit, so a stale install
+  // from a previous IDE version is never adopted.
   async isServerBinaryPresent(containerId: string): Promise<boolean> {
     const installRoot = await this.getServerInstallRoot(containerId);
     const commit = await this.resolveServerCommit(containerId);
@@ -416,35 +422,47 @@ export class ServerManager implements IServerManager {
   }
 
   /**
-   * Single-call probe: container arch, REH commit from an existing
-   * install's product.json, whether the server binary is present, and
-   * the container's current PATH. Replaces the prior 3-call sequence
-   * (detectArch + resolveServerCommit + isServerBinaryPresent).
+   * Single-call probe: container arch, REH commit, whether the server
+   * binary is present, whether our bootstrap nohup is present, and the
+   * container's current PATH.
+   *
+   * When the IDE commit is known, look at bin/<ide-commit>/ directly so
+   * a stale install from a previous IDE version is never adopted. Only
+   * glob as a fallback when the commit is unknown.
    *
    * Output protocol: a per-invocation nonce marker line, then one field
-   * per line (arch, commit, present, PATH). The parser anchors on the
-   * exact nonce and ignores anything before it, so shell-init output
-   * can't corrupt the fields. A nonce generated milliseconds ago on the
-   * client can't appear in rc noise.
+   * per line (arch, commit, present, nohup, PATH).
    */
   private async probeContainer(containerId: string): Promise<{
     arch: string;
     commit: string;
     binaryPresent: boolean;
+    nohupPresent: boolean;
   }> {
     const installRoot = await this.getServerInstallRoot(containerId);
     const serverDataDir = this.getServerDataDir(installRoot);
-    const glob = pathPosix.join(serverDataDir, "bin", "*", "product.json");
     const binaryName = this.productInfo.serverApplicationName;
     const marker = `ARTPROBE-${randomBytes(8).toString("hex")}`;
+    const ideCommit = this.productInfo.commit;
+    const knownCommit = /^[0-9a-f]+$/.test(ideCommit);
+
+    const commitResolution = knownCommit
+      ? `c="${ideCommit}"; `
+      : (() => {
+          const glob = pathPosix.join(serverDataDir, "bin", "*", "product.json");
+          return (
+            `c=$(for f in ${glob}; do [ -f "$f" ] && { sed -n 's/.*"commit": "\\([0-9a-f]*\\)".*/\\1/p' "$f"; break; }; done); ` +
+            `[ -n "$c" ] || c="${ideCommit}"; `
+          );
+        })();
 
     const cmd =
       `a=$(uname -m); ` +
-      `c=$(for f in ${glob}; do [ -f "$f" ] && { sed -n 's/.*"commit": "\\([0-9a-f]*\\)".*/\\1/p' "$f"; break; }; done); ` +
-      `[ -n "$c" ] || c="${this.productInfo.commit}"; ` +
+      commitResolution +
       `p=no; [ -f "${serverDataDir}/bin/$c/bin/${binaryName}" ] && p=yes; ` +
+      `n=no; [ -x /tmp/.artizo/bin/nohup ] && n=yes; ` +
       `printf '%s\\n' '${marker}'; ` +
-      `printf '%s\\n' "$a" "$c" "$p" "$PATH"`;
+      `printf '%s\\n' "$a" "$c" "$p" "$n" "$PATH"`;
 
     getLogger().debug(`[install] probeContainer: ${cmd}`);
     const result = await this.host.dockerExec(containerId, [
@@ -465,23 +483,24 @@ export class ServerManager implements IServerManager {
         `Container probe: marker not found in output: ${result.stdout.slice(0, 200)}`,
       );
     }
-    const fields = lines.slice(markerIdx + 1, markerIdx + 5);
-    if (fields.length < 4) {
+    const fields = lines.slice(markerIdx + 1, markerIdx + 6);
+    if (fields.length < 5) {
       throw new Error(
-        `Container probe: expected 4 fields after marker, got ${fields.length}: ${result.stdout.slice(0, 200)}`,
+        `Container probe: expected 5 fields after marker, got ${fields.length}: ${result.stdout.slice(0, 200)}`,
       );
     }
 
     const arch = validateArch(fields[0].trim());
     const commit = fields[1].trim() || this.productInfo.commit;
     const binaryPresent = fields[2].trim() === "yes";
-    this.probedContainerPath = fields[3].trim() || undefined;
+    const nohupPresent = fields[3].trim() === "yes";
+    this.probedContainerPath = fields[4].trim() || undefined;
 
     // Cache for subsequent resolveServerCommit / detectArch calls.
     this.resolvedArch = arch;
     this.resolvedCommit = commit;
 
-    return { arch, commit, binaryPresent };
+    return { arch, commit, binaryPresent, nohupPresent };
   }
 
   async preflightRemoteUser(containerId: string, remoteUser?: string): Promise<string | undefined> {
@@ -551,16 +570,24 @@ export class ServerManager implements IServerManager {
       ? await this.preflightRemoteUser(containerId, remoteUser)
       : undefined;
     getLogger().info(`[install] probing container...`);
-    const { arch, commit, binaryPresent } =
+    const { arch, commit, binaryPresent, nohupPresent } =
       await this.probeContainer(containerId);
     getLogger().info(
-      `[install] arch=${arch} commit=${commit} installed=${binaryPresent}`,
+      `[install] arch=${arch} commit=${commit} installed=${binaryPresent} nohup=${nohupPresent}`,
     );
 
     if (!binaryPresent) {
       await this.installServer(containerId, arch, resolvedUser);
     } else {
       getLogger().info(`[install] already installed, skipping download`);
+      // Fast path skips installServer, which is also what bootstraps
+      // /tmp/.artizo/bin. That dir is ephemeral; on a persistent install
+      // root (bind mount) it can be gone while the server binary survives,
+      // and start() fails on the missing nohup. Re-bootstrap only then.
+      if (!nohupPresent) {
+        getLogger().info(`[install] nohup missing, re-bootstrapping`);
+        await this.bootstrapBusyboxAndDeployTools(containerId, arch, resolvedUser);
+      }
     }
 
     const installRoot = await this.getServerInstallRoot(containerId);
@@ -572,6 +599,22 @@ export class ServerManager implements IServerManager {
       installPath,
       port: 0,
     };
+  }
+
+  private async bootstrapBusyboxAndDeployTools(
+    containerId: string,
+    arch: string,
+    user?: string,
+  ): Promise<void> {
+    if (!this.bootstrap) {
+      throw new Error(
+        "ServerManager has no bootstrap, extensionPath not provided",
+      );
+    }
+    getLogger().info(`[install] bootstrapping busybox...`);
+    await this.bootstrap.bootstrapBusybox(containerId, arch, user);
+    getLogger().info(`[install] deploying tools...`);
+    await this.bootstrap.deployTools(containerId, user);
   }
 
   private async installServer(
@@ -602,11 +645,7 @@ export class ServerManager implements IServerManager {
     // No `rm -rf stagingDir` here: the dir name includes a fresh UUID, so
     // it cannot pre-exist. setup.sh mkdir's it.
 
-    getLogger().info(`[install] bootstrapping busybox...`);
-    await this.bootstrap.bootstrapBusybox(containerId, arch, user);
-
-    getLogger().info(`[install] deploying tools...`);
-    await this.bootstrap.deployTools(containerId, user);
+    await this.bootstrapBusyboxAndDeployTools(containerId, arch, user);
 
     const adapter = await getPlatformAdapter();
     const authFiles = adapter.readAuthFiles?.() ?? [];
@@ -902,6 +941,10 @@ export class ServerManager implements IServerManager {
       );
     }
 
+    // Server is up from the current commit dir. Drop sibling dirs left
+    // by older IDE versions so a persistent install root doesn't bloat.
+    await this.pruneSupersededInstalls(containerId, commit, resolvedUser);
+
     return {
       commit,
       arch,
@@ -909,6 +952,60 @@ export class ServerManager implements IServerManager {
       port,
       connectionToken,
     };
+  }
+
+  /**
+   * Drop sibling install dirs under bin/ that aren't the running commit.
+   *
+   * Runs after start() confirms a listening port, so the active dir is
+   * verifiably live before anything is touched. Only dirs containing a
+   * product.json are removed (the install marker); the active commit is
+   * always kept. A dir younger than PRUNE_MIN_AGE_MIN is also skipped, so
+   * a concurrent window's fresh install is never removed by a later
+   * start(). Failures are logged, never thrown: bloat is not a connect
+   * error.
+   */
+  private async pruneSupersededInstalls(
+    containerId: string,
+    activeCommit: string,
+    user?: string,
+  ): Promise<void> {
+    if (!/^[0-9a-f]+$/.test(activeCommit)) return;
+    const installRoot = await this.getServerInstallRoot(containerId);
+    const binDir = pathPosix.join(this.getServerDataDir(installRoot), "bin");
+
+    const script =
+      `[ -d "${binDir}" ] || exit 0; ` +
+      `for d in "${binDir}"/*/; do ` +
+      `[ -d "$d" ] || continue; ` +
+      `name=${'${d%/}'}; name=${'${name##*/}'}; ` +
+      `[ "$name" = "${activeCommit}" ] && continue; ` +
+      `[ -f "$d/product.json" ] || continue; ` +
+      `[ -n "$(find "$d" -maxdepth 0 -mmin +${PRUNE_MIN_AGE_MIN} 2>/dev/null)" ] || continue; ` +
+      `rm -rf -- "$d" && echo "removed:$name"; ` +
+      `done; ` +
+      `exit 0`;
+
+    try {
+      const result = await this.host.dockerExec(
+        containerId,
+        ["sh", "-c", script],
+        user ? { user } : undefined,
+      );
+      if (result.exitCode !== 0) {
+        getLogger().warn(
+          `[install] prune superseded installs failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
+        );
+      } else if (result.stdout.trim()) {
+        getLogger().info(
+          `[install] pruned superseded installs: ${result.stdout.trim().split("\n").join(", ")}`,
+        );
+      }
+    } catch (err) {
+      getLogger().warn(
+        `[install] prune superseded installs error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /**

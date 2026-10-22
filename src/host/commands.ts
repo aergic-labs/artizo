@@ -127,8 +127,17 @@ export async function rebuildAndReopenInContainerHandler(
   ctx: CommandContext,
   workspaceFolder?: string,
 ): Promise<void> {
+  const folder =
+    workspaceFolder ??
+    (isInDevContainerWindow()
+      ? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath
+      : getHostWorkspaceFolder());
+  if (!folder) {
+    vscode.window.showErrorMessage("No workspace folder open.");
+    return;
+  }
   await rebuildContainer(ctx.deps, ctx.ui, {
-    workspaceFolder: workspaceFolder!,
+    workspaceFolder: folder,
     workspaceUri: vscode.workspace.workspaceFolders![0].uri,
     noCache: false,
     reconnect: true,

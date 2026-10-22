@@ -1,6 +1,16 @@
 # Changelog
 
-## [Unreleased]
+## 0.8.10
+
+### Fixed
+
+- `config_hash` label is now stable, so rebuild finds the old container instead of creating a duplicate (#17).
+- Drift dialogs now reopen the window after rebuild instead of stranding it (#17).
+- Recents lookup sees stopped containers (`docker ps -a`), so reopening a stopped devcontainer no longer reports it missing (#17).
+- `buildAuthorityAndOpen` now logs when `openWindow` returns; a silent abandon shows as a returned open with no matching `resolve()` (#17).
+- Server fast-path re-bootstraps `/tmp/.artizo/bin` when nohup is gone, so a persistent install root on an ephemeral `/tmp` no longer strands the start (#17).
+- Server install adoption now gates on the IDE commit: a stale install from a previous IDE version is never adopted (#17).
+- Server start prunes superseded `bin/<old-commit>/` dirs (24h age gate) after confirming the new server is up, so a persistent install root doesn't bloat across IDE upgrades without risking a concurrent window's fresh install (#17).
 
 ## 0.8.9
 

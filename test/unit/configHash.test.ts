@@ -324,7 +324,7 @@ describe("serialize / deserialize", () => {
     const serialized = serializeConfigHashes(hashes);
     const parsed = JSON.parse(serialized);
     expect(parsed.files).toEqual(hashes);
-    expect(typeof parsed.writtenAt).toBe("string");
+    expect(parsed.writtenAt).toBeUndefined();
     expect(deserializeConfigHashes(serialized)).toEqual(hashes);
   });
 
@@ -339,5 +339,25 @@ describe("serialize / deserialize", () => {
 
   it("deserialize returns undefined if files key is missing", () => {
     expect(deserializeConfigHashes(JSON.stringify({ writtenAt: "x" }))).toBeUndefined();
+  });
+
+  it("label is version-free (no IDE/extension version or build timestamp)", () => {
+    const parsed = JSON.parse(
+      serializeConfigHashes({ "devcontainer.json": "0123456789abcdef" }),
+    );
+    expect(Object.keys(parsed).sort()).toEqual(["files"]);
+  });
+});
+
+describe("container reuse across IDE/extension upgrades", () => {
+  it("same config files before and after an upgrade produce identical hashes (no drift)", async () => {
+    const config = { image: "localhost/devcontainer/axon-mcp:latest" };
+    const configPath = path.join(tmpDir, "devcontainer.json");
+
+    const before = await computeConfigHashes(config, tmpDir, configPath);
+    const after = await computeConfigHashes(config, tmpDir, configPath);
+
+    expect(after).toEqual(before);
+    expect(compareConfigHashes(before, after).changed).toBe(false);
   });
 });

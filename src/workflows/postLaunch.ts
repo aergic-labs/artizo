@@ -287,6 +287,7 @@ export async function buildAuthorityAndOpen(params: {
   } else {
     await params.ui.openWindow(url);
   }
+  getLogger().info(`[postLaunch] openWindow returned: ${url}`);
 
   // Capture the folder we just opened for the Recent Folders list. Skip
   // State 4 (tier RemoteSSH + owner "workspace"): the authority built
