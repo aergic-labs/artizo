@@ -171,6 +171,13 @@ export async function activate(
     status.show();
     context.subscriptions.push(status);
 
+    // Focus our own log so the user sees the bootstrap progress instead of
+    // whatever channel was last active (zygos's, usually).
+    getLogger().show();
+    getLogger().info(
+      "Artizo is bootstrapping onto the SSH remote host. The window will reload when done.",
+    );
+
     const progress = vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,

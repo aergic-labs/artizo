@@ -6,9 +6,9 @@
 /**
  * VSIX (ZIP) extraction using yauzl.
  *
- * Shared by the devcontainer extension installer (extracts to temp,
- * then `docker cp` into the container) and the SSH side-load (extracts
- * to temp, then `workspace.fs.copy` to the remote).
+ * Preserves the exec bit from each entry's unix mode: chmods the file and
+ * returns its rel path in `executableRelPaths` so a later tar step can mark
+ * it 0o755 even on a Windows apex, where stat shows no exec bit (issue #16).
  */
 
 import * as fs from "node:fs";
@@ -39,6 +39,28 @@ export function safeExtractPath(
 }
 
 /**
+ * Read st_mode from a ZIP entry. For unix-authored zips (VSIX included)
+ * the upper 16 bits of `externalFileAttributes` hold it; 0 otherwise. Only
+ * the exec bits matter: bundled binaries (JRE bin/java) ship 0o755 and must
+ * stay executable in the container (issue #16).
+ */
+export function unixModeFromEntry(entry: {
+  externalFileAttributes: number;
+}): number {
+  return (entry.externalFileAttributes >>> 16) & 0o7777;
+}
+
+export interface ExtractVsixResult {
+  /** The directory the VSIX was extracted into (same as `targetDir`). */
+  dir: string;
+  /**
+   * Rel paths with an exec bit in the ZIP. tarDirectory marks them 0o755
+   * even on a Windows apex where stat shows no exec bit (issue #16).
+   */
+  executableRelPaths: Set<string>;
+}
+
+/**
  * Extract a VSIX (ZIP) file to a target directory using yauzl.
  *
  * VSIX files are ZIP archives whose layout is:
@@ -56,11 +78,12 @@ export function safeExtractPath(
 export async function extractVsix(
   vsixPath: string,
   targetDir: string,
-): Promise<string> {
+): Promise<ExtractVsixResult> {
   const yauzl = await import("yauzl");
 
-  return new Promise<string>((resolve, reject) => {
+  return new Promise<ExtractVsixResult>((resolve, reject) => {
     fs.mkdirSync(targetDir, { recursive: true });
+    const executableRelPaths = new Set<string>();
 
     yauzl.open(
       vsixPath,
@@ -81,7 +104,7 @@ export async function extractVsix(
         const finish = () => {
           if (!done && pending === 0) {
             done = true;
-            resolve(targetDir);
+            resolve({ dir: targetDir, executableRelPaths });
           }
         };
 
@@ -118,6 +141,12 @@ export async function extractVsix(
           }
           fs.mkdirSync(path.dirname(destPath), { recursive: true });
 
+          // Preserve the exec bit (issue #16). chmod covers a Unix apex; on
+          // Windows the bit doesn't round-trip through stat, so the rel path
+          // is also added to executableRelPaths for the tar step.
+          const unixMode = unixModeFromEntry(entry);
+          const hasExecBit = (unixMode & 0o111) !== 0;
+
           zipfile.openReadStream(entry, (readErr, readStream) => {
             if (readErr) {
               reject(
@@ -130,6 +159,16 @@ export async function extractVsix(
             const writeStream = fs.createWriteStream(destPath);
             pending++;
             writeStream.on("close", () => {
+              if (hasExecBit) {
+                if (unixMode !== 0) {
+                  try {
+                    fs.chmodSync(destPath, unixMode);
+                  } catch {
+                    // NTFS ignores chmod; executableRelPaths carries it.
+                  }
+                }
+                executableRelPaths.add(relPath);
+              }
               pending--;
               finish();
             });

@@ -512,6 +512,11 @@ describe("reopenInContainer", () => {
       expect(json.relayPort).toBe(9888);
       expect(json.connectionToken).toBe("token-xyz");
       expect(json.workspacePath).toBe("/workspaces/test-project");
+      // State 4 payload carries container identity so the apex can re-spawn
+      // the relay if the cached port is unreachable on reload.
+      expect(json.containerId).toBe("abc123");
+      expect(json.containerPort).toBe(38517);
+      expect(json.installPath).toBe("/tmp/.trae-server");
     } finally {
       // Reset tier back to local for subsequent tests.
       (vscode.env as any).remoteName = undefined;

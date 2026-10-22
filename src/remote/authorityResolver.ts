@@ -368,17 +368,60 @@ export class RemoteAuthorityResolver {
           message: "Container configuration changed; rebuild requested.",
         };
       }
-      logToFile(`[Resolver] using ExecServer bridge for relayPort=${proxy.relayPort}`);
+
+      // Self-heal: if the relay daemon on the SSH host died (laptop slept
+      // past the 30-min idle timeout, ssh-host reboot, crash), the cached
+      // relayPort points at nothing. Probe it; on failure re-spawn the relay
+      // through the ExecServer. Only possible when the payload carries the
+      // container identity (newer payloads); older payloads skip the heal
+      // and fall through to the bridge attempt (today's behavior).
+      let relayPort = proxy.relayPort;
+      if (proxy.containerId && proxy.containerPort && proxy.installPath) {
+        const { probeRelayPort, healRelay } = await import("./relayHeal.js");
+        const alive = await probeRelayPort(execServer, relayPort, (m) =>
+          logToFile(m),
+        );
+        if (!alive) {
+          logToFile(
+            `[Resolver] relay ${relayPort} unreachable, healing on SSH host...`,
+          );
+          const heal = await healRelay(
+            execServer,
+            {
+              containerId: proxy.containerId,
+              containerPort: proxy.containerPort,
+              installPath: proxy.installPath,
+              hostWorkspacePath: proxy.hostWorkspacePath,
+            },
+            (m) => logToFile(m),
+          );
+          if (heal.kind === "ok") {
+            relayPort = heal.relayPort;
+            logToFile(`[Resolver] relay healed, new port ${relayPort}`);
+          } else if (heal.kind === "container-missing") {
+            logToFile(`[Resolver] heal aborted: ${heal.message}`);
+            return { type: "error", message: heal.message };
+          } else if (heal.kind === "error") {
+            logToFile(`[Resolver] heal failed: ${heal.message}`);
+            // Fall through to bridge attempt against the original port;
+            // today's behavior is the timeout, no regression.
+          }
+        }
+      } else {
+        logToFile("[Resolver] payload missing container identity, skipping relay heal");
+      }
+
+      logToFile(`[Resolver] using ExecServer bridge for relayPort=${relayPort}`);
       try {
         const controller = await startExecServerBridge(
           execServer,
           "127.0.0.1",
-          proxy.relayPort,
+          relayPort,
         );
         const localPort = controller.localPort;
         this.tunnels.set(localPort, controller);
         logToFile(
-          `[Resolver] execServer bridge up: 127.0.0.1:${localPort} -> 127.0.0.1:${proxy.relayPort} (via ExecServer)`,
+          `[Resolver] execServer bridge up: 127.0.0.1:${localPort} -> 127.0.0.1:${relayPort} (via ExecServer)`,
         );
         return {
           type: "success",
@@ -831,6 +874,16 @@ function tryParseProxyPayload(id: string): ProxyAuthorityInfo | undefined {
       : "";
   const sshAuthority =
     typeof parsed.sshAuthority === "string" ? parsed.sshAuthority : "";
+  // containerId / containerPort / installPath are optional (added with the
+  // apex-side relay heal). Older payloads omit them; the heal is a no-op.
+  const containerId =
+    typeof parsed.containerId === "string" ? parsed.containerId : undefined;
+  const containerPort =
+    typeof parsed.containerPort === "number" && parsed.containerPort > 0
+      ? parsed.containerPort
+      : undefined;
+  const installPath =
+    typeof parsed.installPath === "string" ? parsed.installPath : undefined;
   return {
     proxy: true,
     sshHost: parsed.sshHost,
@@ -841,6 +894,9 @@ function tryParseProxyPayload(id: string): ProxyAuthorityInfo | undefined {
     workspacePath: parsed.workspacePath,
     hostWorkspacePath,
     sshAuthority,
+    containerId,
+    containerPort,
+    installPath,
   };
 }
 

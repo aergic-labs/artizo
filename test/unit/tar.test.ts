@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, readFileSync, readlinkSync, lstatSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, readFileSync, readlinkSync, lstatSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -26,8 +26,12 @@ function buildSourceTree(root: string): void {
   // <root>/dir/sub/file.txt
   mkdirSync(join(root, "dir", "sub"), { recursive: true });
   writeFileSync(join(root, "dir", "sub", "file.txt"), "hello\n");
-  // <root>/dir/exec.sh (0o755)
+  // <root>/dir/exec.sh (0o755). chmod on Unix so stat carries the bit;
+  // on Windows the round-trip test asserts isFile() instead.
   writeFileSync(join(root, "dir", "exec.sh"), "#!/bin/sh\n");
+  if (process.platform !== "win32") {
+    chmodSync(join(root, "dir", "exec.sh"), 0o755);
+  }
   // <root>/dir/sub/empty/  (dir entry)
   mkdirSync(join(root, "dir", "sub", "empty"), { recursive: true });
   // <root>/link -> dir/sub/file.txt (symlink, skipped on Windows)
@@ -68,6 +72,51 @@ describe("tar", () => {
       expect(readMode(0)).toBe(0o755); // sub/
       expect(readMode(512)).toBe(0o644); // sub/f.txt
       rmSync(src, { recursive: true, force: true });
+    });
+
+    it("marks executableRelPaths as 0o755 even without a host exec bit (issue #16)", () => {
+      // Windows apex: no host exec bit, but extractVsix passed the set.
+      const src = mkdtempSync(join(tmpdir(), "artizo-tar-exec-"));
+      mkdirSync(join(src, "jre", "bin"), { recursive: true });
+      mkdirSync(join(src, "jre", "lib"), { recursive: true });
+      writeFileSync(join(src, "jre", "bin", "java"), "\x7fELF");
+      writeFileSync(join(src, "jre", "lib", "jspawnhelper"), "helper");
+      const buf = tarDirectory(src, {
+        executableRelPaths: new Set([
+          "jre/bin/java",
+          "jre/lib/jspawnhelper",
+        ]),
+      });
+      const readMode = (want: string) => {
+        // Scan 512-byte headers for the one whose name field matches.
+        for (let off = 0; off < buf.length - 512; off += 512) {
+          const name = buf.toString("utf-8", off, off + 100).replace(/\0+$/, "");
+          if (name === want) {
+            return parseInt(
+              buf.toString("utf-8", off + 100, off + 108).replace(/[\0 ]/g, ""),
+              8,
+            );
+          }
+        }
+        throw new Error(`header not found for ${want}`);
+      };
+      expect(readMode("jre/bin/java")).toBe(0o755);
+      expect(readMode("jre/lib/jspawnhelper")).toBe(0o755);
+      // A non-listed file stays 0o644.
+      // (No other regular files in this tree, so assert via a second tree.)
+      const src2 = mkdtempSync(join(tmpdir(), "artizo-tar-exec2-"));
+      writeFileSync(join(src2, "plain.txt"), "x");
+      const buf2 = tarDirectory(src2, {
+        executableRelPaths: new Set(["nonexistent"]),
+      });
+      expect(
+        parseInt(
+          buf2.toString("utf-8", 100, 108).replace(/[\0 ]/g, ""),
+          8,
+        ),
+      ).toBe(0o644);
+      rmSync(src, { recursive: true, force: true });
+      rmSync(src2, { recursive: true, force: true });
     });
     it.skipIf(!canTar)(
       "round-trips through `tar -x` preserving paths, modes, and symlinks",

@@ -140,6 +140,12 @@ export async function buildContainerAuthority(params: {
     sshAuthority:
       remoteAuthority ??
       `ssh-remote+${Buffer.from(JSON.stringify({ hostName: ssh.sshHost, user: ssh.sshUser, port: ssh.sshPort })).toString("hex")}`,
+    // Include container identity so the apex-side resolver can re-spawn
+    // the relay if it has died (e.g. laptop slept past the 30-min idle
+    // timeout). Older payloads omit these; the heal is a no-op for them.
+    containerId,
+    containerPort,
+    installPath,
   };
 
   // Encode the JSON payload as the authority id. The apex-side resolver's

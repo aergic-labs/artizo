@@ -561,7 +561,8 @@ export class ExtensionInstaller {
 
       // 2. Extract VSIX on the apex (no unzip needed in container)
       const extractBase = path.join(tmpDir, `artizo-ext-${id}-${Date.now()}`);
-      extractedDir = await extractVsix(vsixPath, extractBase);
+      const extracted = await extractVsix(vsixPath, extractBase);
+      extractedDir = extracted.dir;
 
       // 3. Copy into container. Folder name must match what
       //    registerInExtensionsJson writes.
@@ -576,6 +577,7 @@ export class ExtensionInstaller {
         extractedDir,
         containerExtDir,
         remoteUser,
+        extracted.executableRelPaths,
       );
 
       // 4. Register in extensions.json
@@ -650,6 +652,7 @@ export class ExtensionInstaller {
     hostPath: string,
     containerPath: string,
     remoteUser?: string,
+    executableRelPaths?: Set<string>,
   ): Promise<void> {
     // tar -C requires the destination directory to exist. The per-extension
     // subfolder is created here (as remoteUser, not root) before streaming.
@@ -666,11 +669,15 @@ export class ExtensionInstaller {
 
     // Stream a tar of the host tree into `docker exec -i tar -xC <dir>`.
     // Files land owned by whatever user the exec runs as (remoteUser when
-    // set, otherwise the container's default — usually root). This replaces
-    // `docker cp`, which always wrote as root and caused the
-    // root-owned extensions.json / extension folders seen in issue #7.
+    // set, otherwise the container's default, usually root). This replaces
+    // `docker cp`, which always wrote as root and caused the root-owned
+    // extensions.json / extension folders seen in issue #7.
+    // executableRelPaths preserves bundled binaries' exec bits (issue #16).
     const tarBin = await this.resolveContainerTar(containerId);
-    const tarBuf = tarDirectory(hostPath);
+    const tarBuf = tarDirectory(
+      hostPath,
+      executableRelPaths ? { executableRelPaths } : undefined,
+    );
     const args = ["exec", "-i"];
     if (remoteUser) args.push("-u", remoteUser);
     args.push(containerId, tarBin, "-xC", containerPath);

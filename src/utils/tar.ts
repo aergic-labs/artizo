@@ -27,6 +27,14 @@ export interface TarEntry {
   linkTarget?: string; // for symlinks
 }
 
+export interface TarDirectoryOptions {
+  /**
+   * Rel paths to mark 0o755 even when the apex stat shows no exec bit.
+   * extractVsix passes these from the VSIX's unix mode (issue #16).
+   */
+  executableRelPaths?: Set<string>;
+}
+
 export function createTar(entries: TarEntry[]): Buffer {
   const chunks: Buffer[] = [];
 
@@ -67,22 +75,29 @@ export function createTar(entries: TarEntry[]): Buffer {
  * Build a tar of an entire directory tree, preserving relative paths,
  * file modes, directory entries, and symlinks. Files land owned by
  * whatever user the `docker exec` runs as.
+ *
+ * Regular files are 0o644 by default; exec bits come from host stat (Unix
+ * apex) or `options.executableRelPaths` from the VSIX unix mode (Windows
+ * apex, issue #16).
  */
-export function tarDirectory(dirPath: string): Buffer {
+export function tarDirectory(
+  dirPath: string,
+  options?: TarDirectoryOptions,
+): Buffer {
   const entries: TarEntry[] = [];
+  const execPaths = options?.executableRelPaths;
 
   function walk(dir: string): void {
     for (const item of readdirSync(dir)) {
       const fullPath = join(dir, item);
       const stat = lstatSync(fullPath);
       const relPath = relative(dirPath, fullPath).split(sep).join("/");
-      // Modes are forced by entry type, not taken from host stat: the
-      // apex filesystem's modes are wrong for the container (Windows stat
-      // gives directories 666 - no execute bit - which makes extracted
-      // dirs non-traversable; see issue #11). VSIX publishers' own modes
-      // carry no signal either (all regular files, no execute bits).
-      // createTar callers that build entries by hand (bootstrap.ts)
-      // still specify explicit modes.
+      // Modes are forced by entry type, not from host stat: the apex FS's
+      // modes are wrong for the container (Windows stat gives dirs 666, no
+      // exec bit, which makes extracted dirs non-traversable; issue #11).
+      // The one bit preserved is the exec bit on regular files, from host
+      // stat (Unix) or executableRelPaths (VSIX unix mode, issue #16).
+      // Callers that build entries by hand (bootstrap.ts) still set modes.
       if (stat.isSymbolicLink()) {
         entries.push({
           name: relPath,
@@ -100,10 +115,12 @@ export function tarDirectory(dirPath: string): Buffer {
         });
         walk(fullPath);
       } else if (stat.isFile()) {
+        const isExec =
+          (stat.mode & 0o111) !== 0 || execPaths?.has(relPath) === true;
         entries.push({
           name: relPath,
           hostPath: fullPath,
-          mode: 0o644,
+          mode: isExec ? 0o755 : 0o644,
           type: "file",
         });
       }

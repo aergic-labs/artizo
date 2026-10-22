@@ -8,7 +8,7 @@
     "scripts/**"
   ],
   "ignoreBinaries": ["ssh-keygen"],
-  "ignoreDependencies": ["ovsx", "upng-js"],
+  "ignoreDependencies": ["ovsx", "upng-js", "yazl"],
   "ignoreExportsUsedInFile": {
     "interface": true,
     "type": true,

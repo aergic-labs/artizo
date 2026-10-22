@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+## 0.8.9
+
+### Fixed
+
+- Reconnecting to a devcontainer over SSH now recovers if the relay on the remote host has died (laptop slept, host rebooted, crash) instead of timing out with `Connection refused`. If the container is gone, the error says so plainly instead of showing an opaque id.
+- Preserve exec bits on bundled VSIX binaries (#16).
+- Bump vite, follow-redirects, vitest, @vitest/mocker for dev-dep advisories.
+
 ## 0.8.8
 
 ### Changed

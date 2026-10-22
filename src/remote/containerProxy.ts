@@ -60,6 +60,22 @@ export interface ProxyAuthorityInfo {
    * "Reopen in Host" to reconstruct the SSH-remote workspace URI.
    */
   sshAuthority: string;
+  /**
+   * Docker container ID on the SSH host. Optional (older payloads lack it).
+   * When present, the apex can re-spawn the relay daemon on reload if the
+   * cached `relayPort` is no longer reachable.
+   */
+  containerId?: string;
+  /**
+   * Port `server-main.js` listens on inside the container. Optional. Needed
+   * only by the apex-side relay heal path.
+   */
+  containerPort?: number;
+  /**
+   * Server install path inside the container. The relay invokes
+   * `<installPath>/node` to exec into the container. Optional.
+   */
+  installPath?: string;
 }
 
 /** Result of starting the relay daemon. */
@@ -73,10 +89,10 @@ export interface RelayDaemonInfo {
 }
 
 /** Idle timeout in ms (30 min). No connections -> daemon exits. */
-const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+export const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
 /** Max consecutive docker exec failures before daemon exits. */
-const MAX_CONSECUTIVE_FAILURES = 5;
+export const MAX_CONSECUTIVE_FAILURES = 5;
 
 /**
  * Start the relay daemon on the SSH host.
@@ -372,7 +388,7 @@ async function waitForPortFile(
  * 5. Exits after `idleTimeoutMs` with no connections, or after
  *    `maxFailures` consecutive docker exec failures.
  */
-function buildRelayScript(params: {
+export function buildRelayScript(params: {
   containerId: string;
   containerPort: number;
   nodePath: string;

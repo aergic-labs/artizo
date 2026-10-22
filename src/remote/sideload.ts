@@ -199,6 +199,7 @@ async function tarStreamToRemote(
   remoteTargetPath: string,
   exec: RemoteExec,
   log: ReturnType<typeof getLogger>,
+  executableRelPaths?: Set<string>,
 ): Promise<void> {
   const tarBinary = resolveTarBinary();
 
@@ -224,9 +225,20 @@ async function tarStreamToRemote(
     });
   }
 
-  // Phase 2: stream the temp file to the remote via exec.stdin.
+  // Phase 2: stream the temp file to the remote via exec.stdin, then chmod
+  // +x the paths that had an exec bit in the VSIX. The apex tar may have
+  // stripped them (bsdtar on Windows reads no exec bit from NTFS), so the
+  // explicit chmod is the reliable path (issue #16).
   const escapedPath = remoteTargetPath.replace(/'/g, "'\\''");
-  const remoteCmd = `mkdir -p '${escapedPath}' && tar xzf - -C '${escapedPath}'`;
+  let remoteCmd = `mkdir -p '${escapedPath}' && tar xzf - -C '${escapedPath}'`;
+  if (executableRelPaths && executableRelPaths.size > 0) {
+    const targets: string[] = [];
+    for (const rel of executableRelPaths) {
+      const abs = `${remoteTargetPath}/${rel}`.replace(/'/g, "'\\''");
+      targets.push(`'${abs}'`);
+    }
+    remoteCmd += ` && chmod +x ${targets.join(" ")}`;
+  }
 
   try {
     const input = fs.createReadStream(tmpTar);
@@ -965,7 +977,7 @@ async function mirrorLocalExtensions(
           `artizo-ext-${extId}-${Date.now()}`,
         );
         try {
-          await extractVsix(tmpVsix, extractDir);
+          const extracted = await extractVsix(tmpVsix, extractDir);
           diag(`mirror: ${extId} extracted to ${extractDir}`);
           report(`installing ${extId}...`);
           await tarStreamToRemote(
@@ -973,6 +985,7 @@ async function mirrorLocalExtensions(
             targetFolder.path,
             exec,
             log,
+            extracted.executableRelPaths,
           );
           downloaded++;
           diag(`mirror: ${extId} tar stream from extract succeeded`);
