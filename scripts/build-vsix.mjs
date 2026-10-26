@@ -152,23 +152,17 @@ try {
   delete merged.scripts;
   delete merged.devDependencies;
 
-  // Generate vendor README: VSCodium has its own, others use the template
+  // Generate vendor README: vscodium/trae/devin ship bespoke per-vendor
+  // READMEs (trae/devin are deprecation notices); kiro uses the template.
   const vendorPkg = JSON.parse(fs.readFileSync(vendorPkgPath, "utf-8"));
   const platform = vendorPkg.platform;
   let readme;
-  if (target === "vscodium") {
+  if (target === "vscodium" || target === "trae" || target === "devin") {
     readme = fs.readFileSync(path.join(vendorDir, "README.md"), "utf-8");
   } else {
     readme = fs.readFileSync(templatePath, "utf-8");
     readme = readme.replace(/\{\{NAME\}\}/g, platform.name);
-    readme = readme.replace(
-      /\{\{URL\}\}/g,
-      platform.name === "Kiro"
-        ? "https://kiro.dev"
-        : platform.name === "Trae"
-          ? "https://trae.ai"
-          : "https://devin.ai",
-    );
+    readme = readme.replace(/\{\{URL\}\}/g, "https://kiro.dev");
   }
 
   // Copy project files, skipping dirs that .vscodeignore would exclude anyway

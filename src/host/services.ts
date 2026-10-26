@@ -68,7 +68,7 @@ export function readSettings(): ExtensionSettings {
 /**
  * Resolve this extension's own ID for argv.json. Read from the extension's
  * own package.json (baked into the VSIX at build time) so the right ID is
- * returned for whichever VSIX is installed — no build-time flags.
+ * returned for whichever VSIX is installed - no build-time flags.
  */
 let _extensionId: string | undefined;
 

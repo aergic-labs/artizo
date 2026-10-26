@@ -126,7 +126,7 @@ export function withDefaults(
 /**
  * Read dotfiles config from VS Code settings. Returns an object suitable
  * for spreading into `withDefaults` overrides. When no repository is set,
- * returns an empty object — the CLI's built-in default (targetPath
+ * returns an empty object - the CLI's built-in default (targetPath
  * "~/dotfiles") is used, and no dotfiles install runs.
  *
  * Decouples the settings read from the pure defaults logic so callers

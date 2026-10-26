@@ -2,6 +2,10 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    // 15s default: Windows Docker Desktop adds ~10s of latency to
+    // stop/inspect calls. The 5s vitest default times out the
+    // integration lifecycle tests on Windows.
+    testTimeout: 15_000,
     setupFiles: ["./test/setup.ts"],
     include: [
       "src/**/*.test.ts",

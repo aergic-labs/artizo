@@ -72,7 +72,7 @@ export async function reopenInContainer(
       )?.["disableCopyGitConfig"];
 
       // Resolve ${localEnv:...} and friends across the full config in one
-      // place — workspaceFolder, remoteEnv, etc. — so the resolved config
+      // place - workspaceFolder, remoteEnv, etc. - so the resolved config
       // flows to connectToContainer → start() without leaking literal
       // ${localEnv:...} strings into the server env (issue #12) or into the
       // remote window URI.
@@ -162,7 +162,7 @@ export async function reopenInContainer(
         //
         // If the CLI can't find the container by labels (e.g. config file
         // moved, or container created by another tool), fall back to
-        // manual `docker start` — hooks won't run, but the container is
+        // manual `docker start` - hooks won't run, but the container is
         // reused rather than orphaned.
         const idLabels = await buildIdentityLabels({
           platformTarget,

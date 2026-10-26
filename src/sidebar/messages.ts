@@ -124,7 +124,15 @@ export type WebviewMessage =
   | { type: "aiUpdateConfig" }
   | { type: "aiFixConfig" }
   | { type: "openConfigFile" }
-  | { type: "repairConfig" };
+  | { type: "repairConfig" }
+  | {
+      type: "deprecationAction";
+      action: "install" | "uninstall";
+      /** Present when action === "install". */
+      recommendedId?: string;
+      /** Present when action === "uninstall". */
+      selfId?: string;
+    };
 
 export interface ConfigParseError {
   message: string;

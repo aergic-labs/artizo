@@ -9,7 +9,7 @@
  * Selects the correct AiAssist implementation at runtime by reading
  * `product.json` `applicationName`. All four modules are bundled in every
  * VSIX; the factory picks one at first call and caches it. Mirrors
- * platform/index.ts — same detection order, same VSCodium fallback.
+ * platform/index.ts - same detection order, same VSCodium fallback.
  */
 
 import { detectPlatformName } from "../platform/index.js";
@@ -40,7 +40,7 @@ export async function getAiAssist(): Promise<AiAssist> {
       const { DevinAiAssist } = await import("./devin.js");
       _ai = new DevinAiAssist();
     } else {
-      // VSCodium and unrecognized IDEs — generic assist probes for
+      // VSCodium and unrecognized IDEs - generic assist probes for
       // Cline/Roo Code/Zoo Code extensions at runtime.
       const { GenericAiAssist } = await import("./generic.js");
       _ai = new GenericAiAssist();

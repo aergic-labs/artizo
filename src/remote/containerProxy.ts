@@ -101,6 +101,14 @@ export const MAX_CONSECUTIVE_FAILURES = 5;
  * detached with the given container connection info, waits for it to report
  * its chosen listen port, and returns the port + PID file.
  *
+ * The daemon also writes a `.meta.json` file beside the PID file holding
+ * `{port, nodePath}` so the apex-side `healRelay` can re-spawn the relay
+ * using the exact node binary that launched it (the SSH host's bundled
+ * node is not on PATH). The meta file is NOT cleaned up by the daemon -
+ * it must survive idle timeout, SIGTERM, SIGKILL, and remote reboot so a
+ * later reload can read it. Only the PID file is cleaned up (it's the
+ * stale-detection signal).
+ *
  * @param params.containerId  - Docker container ID
  * @param params.containerPort - Port server-main.js is listening on inside the container
  * @param params.nodePath     - Full path to node binary inside the container
@@ -112,38 +120,48 @@ export async function startRelayDaemon(params: {
   nodePath: string;
   dockerPath: string;
   /** Timeout in ms to wait for the daemon to report its port. Default 10s. */
-  portFileTimeoutMs?: number;
+  metaFileTimeoutMs?: number;
 }): Promise<RelayDaemonInfo> {
   const {
     containerId,
     containerPort,
     nodePath,
     dockerPath,
-    portFileTimeoutMs = 10_000,
+    metaFileTimeoutMs = 10_000,
   } = params;
   const log = getLogger();
 
   const scriptPath = path.join(os.tmpdir(), "artizo-relay.mjs");
   const pidFile = path.join(os.tmpdir(), `artizo-relay-${containerId}.pid`);
-  const portFile = path.join(os.tmpdir(), `artizo-relay-${containerId}.port`);
+  const metaFile = path.join(os.tmpdir(), `artizo-relay-${containerId}.meta.json`);
 
-  // Clean up stale PID/port files from a prior run.
-  for (const f of [pidFile, portFile]) {
-    try {
-      fs.unlinkSync(f);
-    } catch {
-      /* doesn't exist, fine */
-    }
+  // Clean up stale PID file from a prior run. The meta file is intentionally
+  // left in place: if a prior daemon is dead, its PID file is gone but the
+  // meta file may still hold a valid nodePath the apex can reuse. We unlink
+  // it before writing a fresh one below so we don't read stale port info.
+  try {
+    fs.unlinkSync(pidFile);
+  } catch {
+    /* doesn't exist, fine */
+  }
+  try {
+    fs.unlinkSync(metaFile);
+  } catch {
+    /* doesn't exist, fine */
   }
 
-  // Write the relay script.
+  // Write the relay script. Pass `process.execPath` (the node binary running
+  // this extension host) as `hostNodePath` so the daemon records it in the
+  // meta file for the apex-side heal path. The SSH host's bundled node is
+  // not on PATH, so a bare `node` would fail to re-spawn.
   const script = buildRelayScript({
     containerId,
     containerPort,
     nodePath,
     dockerPath,
     pidFile,
-    portFile,
+    metaFile,
+    hostNodePath: process.execPath,
     idleTimeoutMs: IDLE_TIMEOUT_MS,
     maxFailures: MAX_CONSECUTIVE_FAILURES,
   });
@@ -208,9 +226,9 @@ export async function startRelayDaemon(params: {
     );
   }
 
-  // Wait for the port file to appear (daemon writes it once listening).
+  // Wait for the meta file to appear (daemon writes it once listening).
   try {
-    const relayPort = await waitForPortFile(portFile, portFileTimeoutMs);
+    const relayPort = await waitForMetaFile(metaFile, metaFileTimeoutMs);
     log.info(`[relay] daemon listening on 127.0.0.1:${relayPort}`);
     return { relayPort, pidFile, pid: child.pid };
   } catch (err) {
@@ -224,64 +242,6 @@ export async function startRelayDaemon(params: {
     }
     throw err;
   }
-}
-
-/**
- * Kill a stale relay daemon by reading its PID file.
- * No-op if the PID file doesn't exist or the process is already dead.
- */
-export function killStaleRelay(pidFile: string): void {
-  let pid: number;
-  try {
-    pid = parseInt(fs.readFileSync(pidFile, "utf-8").trim(), 10);
-  } catch {
-    return; // no PID file
-  }
-  if (!Number.isFinite(pid)) return;
-  try {
-    process.kill(pid, "SIGTERM");
-    getLogger().info(`[relay] killed stale daemon PID=${pid}`);
-  } catch {
-    /* already dead */
-  }
-  try {
-    fs.unlinkSync(pidFile);
-  } catch {
-    /* already gone */
-  }
-}
-
-/**
- * Sweep stale relay daemon PID files in the OS temp dir and kill any whose
- * process is still alive but orphaned (e.g. from a crashed extension host).
- *
- * Called on activation when running workspace-side on an SSH host. Safe to
- * call any time: missing PID files are ignored, dead PIDs are no-ops, and
- * live PIDs that happen to belong to unrelated processes named differently
- * are left alone (we only kill PIDs whose PID file matches our naming
- * pattern `artizo-relay-<id>.pid`).
- *
- * @returns number of stale daemons killed (for logging).
- */
-export function sweepStaleRelays(): number {
-  const tmpDir = os.tmpdir();
-  let killed = 0;
-  let entries: string[];
-  try {
-    entries = fs.readdirSync(tmpDir);
-  } catch {
-    return 0;
-  }
-  for (const entry of entries) {
-    if (!entry.startsWith("artizo-relay-") || !entry.endsWith(".pid")) continue;
-    const pidFile = path.join(tmpDir, entry);
-    killStaleRelay(pidFile);
-    killed++;
-  }
-  if (killed > 0) {
-    getLogger().info(`[relay] swept ${killed} stale relay daemon(s)`);
-  }
-  return killed;
 }
 
 /**
@@ -355,18 +315,19 @@ export function decodeSshAuthority(
 
 // Relay script builder
 /**
- * Wait for the daemon to write its chosen port to `portFile`.
+ * Wait for the daemon to write its chosen port + nodePath to `metaFile`.
  * Polls every 100ms up to `timeoutMs`. Throws on timeout.
  */
-async function waitForPortFile(
-  portFile: string,
+async function waitForMetaFile(
+  metaFile: string,
   timeoutMs: number,
 ): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const content = fs.readFileSync(portFile, "utf-8").trim();
-      const port = parseInt(content, 10);
+      const content = fs.readFileSync(metaFile, "utf-8").trim();
+      const parsed = JSON.parse(content) as { port?: unknown };
+      const port = Number(parsed.port);
       if (Number.isFinite(port) && port > 0) return port;
     } catch {
       /* not written yet */
@@ -381,8 +342,12 @@ async function waitForPortFile(
  *
  * The script is a standalone ESM node file that:
  * 1. Listens on 127.0.0.1:0 (ephemeral port).
- * 2. Writes the chosen port to `portFile` so the parent can read it.
- * 3. Writes its PID to `pidFile` for stale detection.
+ * 2. Writes JSON `{port, nodePath}` to `metaFile` so the parent (and the
+ *    apex-side healRelay after this daemon dies) can read both the port
+ *    and the host node binary path. The meta file is NOT cleaned up on
+ *    exit - it must survive idle timeout, SIGTERM, SIGKILL, and remote
+ *    reboot so healRelay can re-spawn the relay with the same node binary.
+ * 3. Writes its PID to `pidFile` for stale detection (cleaned up on exit).
  * 4. For each accepted connection, spawns `docker exec -i <container>
  *    <nodePath> -e <tcpRelayScript>` and pipes bytes bidirectionally.
  * 5. Exits after `idleTimeoutMs` with no connections, or after
@@ -394,7 +359,14 @@ export function buildRelayScript(params: {
   nodePath: string;
   dockerPath: string;
   pidFile: string;
-  portFile: string;
+  /** Path to the JSON meta file the daemon writes {port, nodePath} to. */
+  metaFile: string;
+  /**
+   * Full path to the node binary that launched the daemon (process.execPath
+   * on the workspace side). Recorded in the meta file so the apex-side
+   * healRelay can re-spawn the relay with the same node after the daemon dies.
+   */
+  hostNodePath: string;
   idleTimeoutMs: number;
   maxFailures: number;
 }): string {
@@ -404,7 +376,8 @@ export function buildRelayScript(params: {
     nodePath,
     dockerPath,
     pidFile,
-    portFile,
+    metaFile,
+    hostNodePath,
     idleTimeoutMs,
     maxFailures,
   } = params;
@@ -432,7 +405,8 @@ const NODE_PATH = ${JSON.stringify(nodePath)};
 const DOCKER_PATH = ${JSON.stringify(dockerPath)};
 const RELAY_SCRIPT = ${relayScriptJson};
 const PID_FILE = ${JSON.stringify(pidFile)};
-const PORT_FILE = ${JSON.stringify(portFile)};
+const META_FILE = ${JSON.stringify(metaFile)};
+const HOST_NODE_PATH = ${JSON.stringify(hostNodePath)};
 const IDLE_TIMEOUT_MS = ${idleTimeoutMs};
 const MAX_FAILURES = ${maxFailures};
 
@@ -448,9 +422,11 @@ function resetIdleTimer() {
   }, IDLE_TIMEOUT_MS);
 }
 
+// cleanup() only removes the PID file. The meta file is intentionally left
+// in place so the apex-side healRelay can read nodePath and re-spawn the
+// relay after this daemon dies (idle timeout, SIGTERM, SIGKILL, reboot).
 function cleanup() {
   try { fs.unlinkSync(PID_FILE); } catch {}
-  try { fs.unlinkSync(PORT_FILE); } catch {}
 }
 
 // Write PID file.
@@ -513,7 +489,10 @@ server.on("error", (e) => {
 
 server.listen(0, "127.0.0.1", () => {
   const port = server.address().port;
-  fs.writeFileSync(PORT_FILE, String(port));
+  // Write JSON meta: the apex reads {port, nodePath} on heal. We deliberately
+  // do NOT unlink this on exit - it has to survive SIGTERM/SIGKILL/idle/reboot
+  // so healRelay can re-spawn the relay using HOST_NODE_PATH.
+  fs.writeFileSync(META_FILE, JSON.stringify({ port, nodePath: HOST_NODE_PATH }));
   console.log("[relay] listening on 127.0.0.1:" + port);
   resetIdleTimer();
 });

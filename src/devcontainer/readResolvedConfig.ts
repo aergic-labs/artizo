@@ -131,7 +131,7 @@ export async function readResolvedConfig(
  * ${localWorkspaceFolder...}, ${containerWorkspaceFolder...}) in a config.
  *
  * This is the single entry point for variable resolution across all
- * paths — the three workflow functions (reopenInContainer, openFolder,
+ * paths - the three workflow functions (reopenInContainer, openFolder,
  * rebuildContainer) pass the config they just parsed via configManager, and
  * the re-attach path (resolveContainerById) passes `undefined` for
  * `rawConfig` to re-read the file fresh from the config-file label. In both
@@ -144,7 +144,7 @@ export async function readResolvedConfig(
  * - Otherwise attempt `readResolvedConfig` and return its substituted
  *   `config`.
  * - On error (file gone, unreadable, parse failure), fall back to `rawConfig`
- *   — which is `undefined` for the re-attach path, signalling the caller to
+ *   - which is `undefined` for the re-attach path, signalling the caller to
  *   use probe defaults. Variable substitution is best-effort, not a hard
  *   requirement for server start.
  */

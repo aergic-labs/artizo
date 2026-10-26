@@ -30,8 +30,6 @@ vi.mock("node:child_process", () => ({
 import { spawn } from "node:child_process";
 import {
   decodeSshAuthority,
-  killStaleRelay,
-  sweepStaleRelays,
   startRelayDaemon,
 } from "../../src/remote/containerProxy";
 
@@ -191,125 +189,6 @@ describe("containerProxy", () => {
     });
   });
 
-  describe("killStaleRelay", () => {
-    it("is a no-op when PID file does not exist", () => {
-      const nonexistent = path.join(
-        os.tmpdir(),
-        `artizo-test-nopid-${Date.now()}.pid`,
-      );
-      // Should not throw
-      expect(() => killStaleRelay(nonexistent)).not.toThrow();
-    });
-
-    it("kills the process and removes the PID file", () => {
-      const pidFile = path.join(
-        os.tmpdir(),
-        `artizo-test-kill-${Date.now()}.pid`,
-      );
-      // Use a PID that's very unlikely to exist (but killStaleRelay should
-      // try and handle the error gracefully)
-      fs.writeFileSync(pidFile, "999999998");
-      // Mock process.kill to succeed
-      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
-      killStaleRelay(pidFile);
-      expect(killSpy).toHaveBeenCalledWith(999999998, "SIGTERM");
-      expect(fs.existsSync(pidFile)).toBe(false);
-      killSpy.mockRestore();
-    });
-
-    it("handles kill failure gracefully (process already dead)", () => {
-      const pidFile = path.join(
-        os.tmpdir(),
-        `artizo-test-dead-${Date.now()}.pid`,
-      );
-      fs.writeFileSync(pidFile, "999999997");
-      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
-        throw new Error("ESRCH");
-      });
-      // Should not throw
-      expect(() => killStaleRelay(pidFile)).not.toThrow();
-      // PID file should still be cleaned up
-      expect(fs.existsSync(pidFile)).toBe(false);
-      killSpy.mockRestore();
-    });
-
-    it("handles non-numeric PID file", () => {
-      const pidFile = path.join(
-        os.tmpdir(),
-        `artizo-test-badpid-${Date.now()}.pid`,
-      );
-      fs.writeFileSync(pidFile, "not-a-number");
-      expect(() => killStaleRelay(pidFile)).not.toThrow();
-      // A non-finite PID hits the early return before the unlink, so the
-      // file stays. That's fine: a corrupt PID file is overwritten on the
-      // next startRelayDaemon call.
-      fs.unlinkSync(pidFile);
-    });
-  });
-
-  describe("sweepStaleRelays", () => {
-    it("returns 0 when no artizo-relay PID files exist", () => {
-      // Ensure no stray files match. We can't fully guarantee the temp dir
-      // is clean, so just assert the return is a number and non-negative.
-      const result = sweepStaleRelays();
-      expect(result).toBeGreaterThanOrEqual(0);
-    });
-
-    it("sweeps matching artizo-relay-*.pid files", () => {
-      // Create fake PID files matching our pattern.
-      const pidFile1 = path.join(
-        os.tmpdir(),
-        `artizo-relay-test1-${Date.now()}.pid`,
-      );
-      const pidFile2 = path.join(
-        os.tmpdir(),
-        `artizo-relay-test2-${Date.now()}.pid`,
-      );
-      fs.writeFileSync(pidFile1, "999999991");
-      fs.writeFileSync(pidFile2, "999999992");
-      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
-
-      try {
-        const killed = sweepStaleRelays();
-        expect(killed).toBeGreaterThanOrEqual(2);
-        expect(fs.existsSync(pidFile1)).toBe(false);
-        expect(fs.existsSync(pidFile2)).toBe(false);
-        expect(killSpy).toHaveBeenCalledWith(999999991, "SIGTERM");
-        expect(killSpy).toHaveBeenCalledWith(999999992, "SIGTERM");
-      } finally {
-        killSpy.mockRestore();
-        for (const f of [pidFile1, pidFile2]) {
-          try {
-            fs.unlinkSync(f);
-          } catch {
-            /* already removed */
-          }
-        }
-      }
-    });
-
-    it("ignores files that don't match the pattern", () => {
-      const other = path.join(os.tmpdir(), `other-${Date.now()}.pid`);
-      fs.writeFileSync(other, "999999993");
-      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
-
-      try {
-        sweepStaleRelays();
-        // The other PID file should NOT have been killed.
-        expect(killSpy).not.toHaveBeenCalledWith(999999993, "SIGTERM");
-        // File should still exist (we don't touch non-matching files).
-        expect(fs.existsSync(other)).toBe(true);
-      } finally {
-        killSpy.mockRestore();
-        try {
-          fs.unlinkSync(other);
-        } catch {
-          /* ignore */
-        }
-      }
-    });
-  });
-
   describe("startRelayDaemon", () => {
     afterEach(() => {
       // Clean up any temp files created
@@ -325,19 +204,22 @@ describe("containerProxy", () => {
       }
     });
 
-    it("spawns a detached node process and returns the port from port file", async () => {
+    it("spawns a detached node process and returns the port from meta file", async () => {
       const containerId = "abc123";
-      const portFile = path.join(
+      const metaFile = path.join(
         os.tmpdir(),
-        `artizo-relay-${containerId}.port`,
+        `artizo-relay-${containerId}.meta.json`,
       );
 
-      // The mocked spawn writes the port file shortly after it's called,
-      // so waitForPortFile picks it up.
+      // The mocked spawn writes the meta file shortly after it's called,
+      // so waitForMetaFile picks it up.
       mockSpawn.mockImplementation(() => {
-        // Simulate the daemon writing the port file
+        // Simulate the daemon writing the meta file (JSON {port, nodePath}).
         setTimeout(() => {
-          fs.writeFileSync(portFile, "54321");
+          fs.writeFileSync(
+            metaFile,
+            JSON.stringify({ port: 54321, nodePath: process.execPath }),
+          );
         }, 50);
         return {
           pid: 12345,
@@ -386,7 +268,7 @@ describe("containerProxy", () => {
           containerPort: 38517,
           nodePath: "/tmp/.trae-server/node",
           dockerPath: "docker",
-          portFileTimeoutMs: 200,
+          metaFileTimeoutMs: 200,
         }),
       ).rejects.toThrow("did not report a port");
     }, 5000);
@@ -413,14 +295,17 @@ describe("containerProxy", () => {
 
     it("writes a relay script with correct container info", async () => {
       const containerId = "script-test";
-      const portFile = path.join(
+      const metaFile = path.join(
         os.tmpdir(),
-        `artizo-relay-${containerId}.port`,
+        `artizo-relay-${containerId}.meta.json`,
       );
 
       mockSpawn.mockImplementation(() => {
         setTimeout(() => {
-          fs.writeFileSync(portFile, "11111");
+          fs.writeFileSync(
+            metaFile,
+            JSON.stringify({ port: 11111, nodePath: process.execPath }),
+          );
         }, 10);
         return {
           pid: 22222,
@@ -448,23 +333,36 @@ describe("containerProxy", () => {
       expect(script).toContain("IDLE_TIMEOUT_MS");
       expect(script).toContain("MAX_FAILURES");
       expect(script).toContain("artizo-remote-ssh-helper"); // process title
+      // The script must embed the host node path (process.execPath) so the
+      // apex-side heal can re-spawn using the same binary. The path is embedded
+      // via JSON.stringify, so on Windows it has escaped backslashes.
+      expect(script).toContain(JSON.stringify(process.execPath));
+      expect(script).toContain("META_FILE");
+      expect(script).toContain("HOST_NODE_PATH");
+      expect(script).not.toContain("PORT_FILE");
     });
 
-    it("cleans up stale PID/port files before starting", async () => {
+    it("cleans up stale PID/meta files before starting", async () => {
       const containerId = "cleanup-test";
       const pidFile = path.join(os.tmpdir(), `artizo-relay-${containerId}.pid`);
-      const portFile = path.join(
+      const metaFile = path.join(
         os.tmpdir(),
-        `artizo-relay-${containerId}.port`,
+        `artizo-relay-${containerId}.meta.json`,
       );
 
       // Write stale files
       fs.writeFileSync(pidFile, "999999996");
-      fs.writeFileSync(portFile, "99999");
+      fs.writeFileSync(
+        metaFile,
+        JSON.stringify({ port: 99999, nodePath: "/old/node" }),
+      );
 
       mockSpawn.mockImplementation(() => {
         setTimeout(() => {
-          fs.writeFileSync(portFile, "33333");
+          fs.writeFileSync(
+            metaFile,
+            JSON.stringify({ port: 33333, nodePath: process.execPath }),
+          );
         }, 10);
         return {
           pid: 44444,
@@ -480,7 +378,7 @@ describe("containerProxy", () => {
         dockerPath: "docker",
       });
 
-      // The stale port file should have been deleted, and the new port
+      // The stale meta file should have been deleted, and the new port
       // (written by the mock) should be returned.
       expect(result.relayPort).toBe(33333);
     });

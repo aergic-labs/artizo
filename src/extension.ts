@@ -28,6 +28,7 @@ import { registerCoreCommands, type CommandContext } from "./host/commands";
 import { bootstrapRemoteSideLoad } from "./remote/sideload";
 import { clearAllCached, initCache, disposeCache } from "./ssh/askpassCache";
 import { initVscodiumFeed } from "./remote/vscodiumFeed";
+import { initVscodiumBundledVersion } from "./platform/vscodiumBundledVersion";
 import { configureDownloadCache, maybePruneCache } from "./remote/download";
 import { registerServerDownloadPanel } from "./webviews/serverDownloadPanel";
 import { FORK_TEMPLATES } from "./platform/forkTemplates";
@@ -41,6 +42,7 @@ import {
   canDriveDocker,
   type DetectedTier,
 } from "./host/state";
+import { showDeprecationNotice } from "./lifecycle/deprecation";
 
 /**
  * Called when the extension is activated.
@@ -80,16 +82,39 @@ export async function activate(
     }),
   );
 
+  // Deprecation notice for the trae and devin builds. Runs before any other
+  // registration so the "replacement already installed" branch can bail out
+  // of activate entirely (zero view/command/resolver conflicts with the
+  // supported build). The "no replacement yet" branch sets a context key so
+  // the sidebar can show an unremovable install-replacement banner, then
+  // continues to activate normally.
+  const deprecation = await showDeprecationNotice(context);
+  if (deprecation.deprecated && deprecation.replacementInstalled) {
+    getLogger().info(
+      `Artizo ${deprecation.selfId} is deprecated and a supported build is installed; registering nothing.`,
+    );
+    return;
+  }
+
   getLogger().info(`${BRAND} activating...`);
   getLogger().info(`Extension path: ${context.extensionPath}`);
   getLogger().info(`Log file: ${path.join(context.logPath, "artizo.log")}`);
 
   // Initialize the VSCodium release feed used by the code-oss fork
-  // (nearest-version lookup for VSCodium REH tarballs).
+  // (nearest-version lookup for VSCodium REH tarballs). The bundled
+  // fallback (newest version in versions.json) is artizo-local - zygos
+  // never consumes it, so it lives in ./platform not the shared file.
+  const bundledVscodiumPath = path.join(
+    context.extensionPath,
+    "tools",
+    "vscodium",
+    "versions.json",
+  );
   initVscodiumFeed({
-    bundledPath: path.join(context.extensionPath, "tools", "vscodium", "versions.json"),
+    bundledPath: bundledVscodiumPath,
     cachePath: path.join(os.homedir(), ".artizo", "vscodium-versions.json"),
   });
+  initVscodiumBundledVersion({ bundledPath: bundledVscodiumPath });
 
   // Register the server-download config panel (available in all builds).
   registerServerDownloadPanel(context, {
@@ -348,24 +373,6 @@ async function activateInternal(
     (detected.tier === ExecutionTier.RemoteSSH ||
       detected.tier === ExecutionTier.RemoteSSHDevContainer);
   vscode.commands.executeCommand("setContext", "artizo.onRemote", onRemote);
-
-  // State 4 housekeeping: when we're workspace-side on an SSH host, sweep
-  // stale relay daemons left over from a crashed extension host. The relay
-  // is detached (outlives us), so a crash leaves orphaned `artizo-relay-*.pid`
-  // files + processes. Safe no-op if none exist.
-  if (
-    detected.extensionKind === vscode.ExtensionKind.Workspace &&
-    detected.tier === ExecutionTier.RemoteSSH
-  ) {
-    try {
-      const { sweepStaleRelays } = await import("./remote/containerProxy.js");
-      sweepStaleRelays();
-    } catch (err) {
-      getLogger().info(
-        `[artizo] stale relay sweep failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
 
   // 4. Ensure resolvers available (may prompt restart)
   if (await ensureResolversAvailable()) {

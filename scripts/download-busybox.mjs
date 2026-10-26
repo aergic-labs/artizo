@@ -17,6 +17,7 @@ import { get } from "node:https";
 import { gunzipSync } from "node:zlib";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const DEST_DIR = `${ROOT}/tools/busybox`;
@@ -121,6 +122,34 @@ function parseBusyboxVersion(indexTarGz) {
 
 // Main
 
+// Windows AV (Defender et al.) briefly locks a freshly-written executable
+// while it scans it, which surfaces as `UNKNOWN: unknown error, open ...` on
+// the next writeFile of a binary in the same directory. Retry with backoff so
+// a transient scan doesn't fail the whole package build.
+async function writeBinary(dest, buf) {
+  let lastErr;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await writeFile(dest, buf, { mode: 0o755 });
+      return;
+    } catch (err) {
+      lastErr = err;
+      // Retry on the Windows-flaky open errors; bail on anything else.
+      const code = err?.code;
+      if (
+        code !== "UNKNOWN" &&
+        code !== "EBUSY" &&
+        code !== "EPERM" &&
+        code !== "EACCES"
+      ) {
+        throw err;
+      }
+      await sleep(250 * Math.pow(2, attempt));
+    }
+  }
+  throw lastErr;
+}
+
 async function main() {
   await mkdir(DEST_DIR, { recursive: true });
 
@@ -152,7 +181,7 @@ async function resolveRemote(alpineArch, runtimeArch, cdn) {
   const binary = extractFromTarGz(apkBuf, "bin/busybox.static");
   if (!binary) throw new Error("bin/busybox.static not found in apk");
 
-  await writeFile(`${DEST_DIR}/bb-${runtimeArch}`, binary, { mode: 0o755 });
+  await writeBinary(`${DEST_DIR}/bb-${runtimeArch}`, binary);
   console.log(`done (${(binary.length / 1024 / 1024).toFixed(1)} MB)`);
 }
 
@@ -163,7 +192,7 @@ async function resolveRemote(alpineArch, runtimeArch, cdn) {
 async function resolveLocal(runtimeArch) {
   try {
     const buf = await readFile("/bin/busybox.static");
-    await writeFile(`${DEST_DIR}/bb-${runtimeArch}`, buf, { mode: 0o755 });
+    await writeBinary(`${DEST_DIR}/bb-${runtimeArch}`, buf);
     console.log(`  busybox-static -> tools/busybox/bb-${runtimeArch} (local)`);
     console.log(`  done (${(buf.length / 1024 / 1024).toFixed(1)} MB)`);
   } catch {

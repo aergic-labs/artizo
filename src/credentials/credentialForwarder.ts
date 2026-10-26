@@ -6,7 +6,7 @@
 /**
  * Git credential forwarding into dev containers.
  *
- * NOT YET WIRED — defined for future use. Not instantiated or called
+ * NOT YET WIRED - defined for future use. Not instantiated or called
  * anywhere in the extension. Will be connected when HTTPS git credential
  * forwarding is requested by users.
  *

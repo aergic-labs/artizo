@@ -3,11 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style id="boot-style">
+      body { background: var(--vscode-sideBar-background); color: var(--vscode-foreground); }
+      #root { display: none !important; }
+      #boot { display: flex; align-items: center; justify-content: center; height: 100vh; color: var(--vscode-descriptionForeground); font-size: 12px; padding: 12px; }
+    </style>
     <link rel="stylesheet" href="${CODICON_CSS_URI}" />
     <link rel="stylesheet" href="${STYLE_URI}" />
     <title>Artizo</title>
   </head>
   <body>
+    <div id="boot">Loading…</div>
     <div id="root">
       <div class="panel active" id="panel-config">
         <div id="status-bar"></div>

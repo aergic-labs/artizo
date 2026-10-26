@@ -8,7 +8,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { readFileSync } from "node:fs";
 import type { IPlatformAdapter, PlatformConfig } from "./types";
-import { resolveNearestVsCodiumVersion, getNewestBundledVersion } from "../remote/vscodiumFeed";
+import { resolveNearestVsCodiumVersion } from "../remote/vscodiumFeed";
+import { getNewestBundledVersion } from "./vscodiumBundledVersion";
 
 const VSCodium_REH_BASE =
   "https://github.com/VSCodium/vscodium/releases/download";

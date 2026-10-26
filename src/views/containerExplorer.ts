@@ -49,7 +49,7 @@ export interface ContainerExplorerOptions {
  * by container authority (`artizo-container+<hex>` / `attached-container+<hex>`),
  * so folders opened against the same container show together. The old flat
  * `artizo.recentFolders` string[] store was never populated (dead code) and
- * is dropped — no migration needed.
+ * is dropped - no migration needed.
  */
 export class ContainerExplorerProvider implements IContainerExplorerProvider {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<
@@ -302,7 +302,7 @@ async function openRecentFolder(
   try {
     await history.addFolders([descriptor]);
   } catch {
-    // best effort — never block the open
+    // best effort - never block the open
   }
   await vscode.commands.executeCommand("vscode.openFolder", descriptor.toUri(), {
     forceNewWindow: newWindow,
@@ -327,7 +327,7 @@ async function connectToTarget(
     // at State 4 (RemoteSSH + owner workspace) the authority is the opaque
     // relay payload and isn't a stable reopenable key. Here we're always on
     // the apex (the explorer only renders where artizo.hostContext is set),
-    // so State 4 doesn't apply — but the try/catch keeps it fire-and-forget.
+    // so State 4 doesn't apply - but the try/catch keeps it fire-and-forget.
     try {
       const d = FolderDescriptor.fromUri(uri);
       if (d) await history.addFolders([d]);

@@ -86,7 +86,7 @@ export async function openFolderInContainer(
     )?.["disableCopyGitConfig"];
 
     // Resolve ${localEnv:...} and friends across the full config in one
-    // place — workspaceFolder, remoteEnv, etc. — so the resolved config
+    // place - workspaceFolder, remoteEnv, etc. - so the resolved config
     // flows to connectToContainer → start() without leaking literal
     // ${localEnv:...} strings into the server env (issue #12).
     const resolvedConfig = await resolveConfigVars(

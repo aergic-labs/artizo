@@ -8,7 +8,7 @@
  *
  * Used by ContainerBootstrap (server tool deployment) and
  * ExtensionInstaller (streaming extension files into the container
- * via `docker exec -i tar -xC`). Pure TypeScript — no host-side `tar`
+ * via `docker exec -i tar -xC`). Pure TypeScript - no host-side `tar`
  * binary needed, works on Windows/macOS/Linux apex.
  */
 

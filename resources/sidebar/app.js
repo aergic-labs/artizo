@@ -479,7 +479,7 @@ function basename(p) {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
-// Event delegation — all accordion toggles
+// Event delegation - all accordion toggles
 // Handles both static (Containers, Volumes, Wizard, Config, sub-accordions)
 // and dynamic (command groups rendered by renderCommands)
 document.addEventListener("click", (e) => {
@@ -672,6 +672,21 @@ const handlers = {
         manual.classList.toggle("hidden", tabId === "config-ai");
       }
     }
+  },
+
+  deprecationAction(target) {
+    let payload = {};
+    try {
+      payload = JSON.parse(decodeURIComponent(target.dataset.payload || "{}"));
+    } catch {
+      payload = {};
+    }
+    post({
+      type: "deprecationAction",
+      action: payload.action,
+      recommendedId: payload.recommendedId,
+      selfId: payload.selfId,
+    });
   },
 };
 
@@ -873,10 +888,31 @@ const messageHandlers = {
   },
 };
 
+// Boot reveal: #root is hidden by #boot-style until the first state
+// message lands, so the empty/populated flash is replaced by a brief
+// "Loading…" placeholder. Both the inline style element and the
+// placeholder are removed on the first state-bearing host message.
+let booted = false;
+function bootReveal() {
+  if (booted) return;
+  booted = true;
+  document.getElementById("boot")?.remove();
+  document.getElementById("boot-style")?.remove();
+}
+
 window.addEventListener("message", (event) => {
   const msg = event.data;
   const handler = messageHandlers[msg.type];
   if (handler) handler(msg);
+  switch (msg.type) {
+    case "configLoaded":
+    case "configMissing":
+    case "updateContainers":
+    case "updateVolumes":
+    case "updateCommands":
+      bootReveal();
+      break;
+  }
 });
 
 // Auto-open devcontainer.json in the editor when the user enters the
@@ -890,3 +926,8 @@ if (configSection) {
 }
 
 post({ type: "ready" });
+// Fallback: if no state message arrives within 1s, reveal anyway.
+// The host posts state on ready; if something blocks it (view not
+// visible, handler throw, etc.), an empty sidebar beats a frozen
+// loader.
+setTimeout(bootReveal, 1000);

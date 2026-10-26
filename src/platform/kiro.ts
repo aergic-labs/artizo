@@ -111,7 +111,7 @@ export class KiroAdapter implements IPlatformAdapter {
     // The registration file named by `clientIdHash` in the token JSON
     // holds the clientId/clientSecret the remote needs to refresh.
     // If we can't parse the hash or the sibling file is missing, we
-    // still return the token alone — many Kiro auth methods don't
+    // still return the token alone - many Kiro auth methods don't
     // use SSO refresh and may not produce this file.
     try {
       const token = JSON.parse(tokenContent);

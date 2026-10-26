@@ -640,13 +640,13 @@ export class RemoteAuthorityResolver {
         // (onCreateCommand, etc.) are skipped by the CLI's marker logic.
         // Labels on the container carry the workspace folder + config path,
         // both local to wherever this resolver runs (apex for local,
-        // remote-ssh host for dual-hop — same side that has Docker).
+        // remote-ssh host for dual-hop - same side that has Docker).
         await this.runLifecycleHooks(containerInfo);
 
         // Recover remoteUser (from our label) and containerUser (from
         // Config.User) so re-attach runs install/start as the right user
         // instead of defaulting to root. Both come from the existing
-        // dockerInspect call above — no new docker calls.
+        // dockerInspect call above - no new docker calls.
         const remoteUser =
           containerInfo.config.labels["artizo.remote_user"];
         const containerUser =
@@ -659,7 +659,7 @@ export class RemoteAuthorityResolver {
         // Read the devcontainer.json from the config-file label so the
         // env probe gets `userEnvProbe` and `remoteEnv`. If the file is
         // gone or unreadable (e.g. cloned into a volume and since
-        // deleted), pass undefined — the probe uses the default
+        // deleted), pass undefined - the probe uses the default
         // loginInteractiveShell and remoteEnv is skipped.
         const configFilePath =
           containerInfo.config.labels["artizo.config_file"] ||

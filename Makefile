@@ -18,8 +18,10 @@
 #   make setup            Explicit one-time setup (also runs automatically when needed)
 #   make check            Full quality gate (lint + test:all)
 #   make build            esbuild bundle only (no VSIX)
-#   make package          Build all platform VSIX files
+#   make package          Build supported VSIX files (kiro, vscodium)
 #   make package-kiro     Build a single VSIX for Kiro
+#   make package-trae     Build a single VSIX for Trae (deprecated; one-off)
+#   make package-devin    Build a single VSIX for Devin (deprecated; one-off)
 #   make release VERSION=x.y.z   Bump version, check, package, tag
 #   make publish          Publish all VSIX files to Open VSX
 #   make docs            Regenerate vendor README templates from README.md
@@ -152,8 +154,6 @@ build: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) typecheck
 
 package: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift docs
 	npm run package:kiro
-	npm run package:trae
-	npm run package:devin
 	npm run package:vscodium
 
 package-kiro: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift docs
@@ -187,8 +187,6 @@ release:
 publish: package
 	@test -n "$$OVSX_PAT" || (echo "Set OVSX_PAT environment variable" && exit 1)
 	npx ovsx publish artizo-kiro-*.vsix
-	npx ovsx publish artizo-trae-*.vsix
-	npx ovsx publish artizo-devin-*.vsix
 	npx ovsx publish artizo-vscodium-*.vsix
 
 # ── Shared-file sync ─────────────────────────────────────────

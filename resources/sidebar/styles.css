@@ -352,7 +352,7 @@ body {
     gap: 8px;
 }
 
-/* Custom checkbox — larger hit area, themed */
+/* Custom checkbox - larger hit area, themed */
 .toggle-checkbox {
     appearance: none;
     -webkit-appearance: none;
@@ -761,4 +761,52 @@ body {
 
 .panel::-webkit-scrollbar-thumb:hover {
     background: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+/*
+ * Deprecation banner for the trae/devin Artizo builds.
+ *
+ * Always visible for the deprecated build (unremovable, no dismiss control).
+ * Annoying styling (bold, red) so the user actually notices it. Sits at the
+ * top of <div id="root"> so it is the first thing they see when they open
+ * the sidebar.
+ */
+.deprecation-banner {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    margin: 0 0 8px 0;
+    background: var(--vscode-inputValidation-warningBackground, #5a3a00);
+    border: 2px solid var(--vscode-inputValidation-warningBorder, #ff8c00);
+    border-radius: 4px;
+    color: var(--vscode-foreground);
+    font-weight: 600;
+}
+
+.deprecation-banner-text {
+    line-height: 1.4;
+    font-size: 12px;
+}
+
+.deprecation-banner-text strong {
+    color: var(--vscode-errorForeground, #ff6b6b);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.deprecation-banner-btn {
+    align-self: flex-start;
+    padding: 4px 10px;
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    border-radius: 2px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 12px;
+}
+
+.deprecation-banner-btn:hover {
+    background: var(--vscode-button-hoverBackground);
 }

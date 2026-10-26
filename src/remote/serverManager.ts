@@ -241,7 +241,7 @@ export class ServerManager implements IServerManager {
   private resolvedArch: string | undefined;
   /**
    * Cached remoteUser preflight result per container: { user, exists, shell }.
-   * `shell` is parsed from `getent passwd` field 7 — no extra round-trip.
+   * `shell` is parsed from `getent passwd` field 7 - no extra round-trip.
    */
   private remoteUserChecked = new Map<
     string,
@@ -504,7 +504,7 @@ export class ServerManager implements IServerManager {
   }
 
   async preflightRemoteUser(containerId: string, remoteUser?: string): Promise<string | undefined> {
-    // No remoteUser provided — return cached value (for resolver re-attach path)
+    // No remoteUser provided - return cached value (for resolver re-attach path)
     if (!remoteUser) {
       const cached = this.remoteUserChecked.get(containerId);
       return cached?.exists ? cached.user : undefined;
@@ -512,7 +512,7 @@ export class ServerManager implements IServerManager {
     // Validate before any docker exec. remoteUser is user-controlled
     // (devcontainer.json) and reaches `docker exec -u <user>` as a raw
     // argv element. Reject anything that isn't a POSIX username, a
-    // numeric uid, or a uid:gid pair — prevents argument injection
+    // numeric uid, or a uid:gid pair - prevents argument injection
     // (e.g. "--privileged") and garbage from crashing docker or worse.
     if (!isValidDockerUser(remoteUser)) {
       getLogger().warn(
@@ -520,7 +520,7 @@ export class ServerManager implements IServerManager {
       );
       return undefined;
     }
-    // Numeric (uid or uid:gid) — Docker accepts these, no need to check existence.
+    // Numeric (uid or uid:gid) - Docker accepts these, no need to check existence.
     // No shell from getent for numeric users; probe falls back to /bin/sh.
     if (/^\d+(:\d+)?$/.test(remoteUser)) {
       this.remoteUserChecked.set(containerId, {
@@ -529,13 +529,13 @@ export class ServerManager implements IServerManager {
       });
       return remoteUser;
     }
-    // Check cache — if same user already preflighted, return cached result
+    // Check cache - if same user already preflighted, return cached result
     const cached = this.remoteUserChecked.get(containerId);
     if (cached?.user === remoteUser) {
       return cached.exists ? cached.user : undefined;
     }
     // Run preflight: getent passwd <remoteUser> as containerUser (no -u).
-    // Field 7 of the output is the login shell — parse it here so the env
+    // Field 7 of the output is the login shell - parse it here so the env
     // probe doesn't need a separate round-trip to resolve the shell.
     const result = await this.host.dockerExec(containerId, ["getent", "passwd", remoteUser]);
     const exists = result.exitCode === 0 && result.stdout.trim().length > 0;
@@ -554,7 +554,7 @@ export class ServerManager implements IServerManager {
   /**
    * Get the cached login shell for a container's resolved user.
    * Returns `/bin/sh` if the user wasn't preflighted, was numeric (no
-   * getent), or has no shell field. No round-trip — reads from the
+   * getent), or has no shell field. No round-trip - reads from the
    * `preflightRemoteUser` cache.
    */
   private getResolvedShell(containerId: string): string {
@@ -874,7 +874,7 @@ export class ServerManager implements IServerManager {
     // env instead of the bare image env. Mirrors MS Remote-Containers'
     // userEnvProbe pattern. The shell comes from the preflightRemoteUser
     // getent call (no new round-trip); the container PATH comes from
-    // probeContainer (no new round-trip). Only runs on cold start — the
+    // probeContainer (no new round-trip). Only runs on cold start - the
     // reuse path above returns before reaching here.
     const userEnvProbe =
       (config?.userEnvProbe as UserEnvProbe) ?? "loginInteractiveShell";

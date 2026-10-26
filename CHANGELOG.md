@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+
+- Moved trae and devin support into the vscodium build and deprecated the standalone VSIXes. Installed copies show a toast and unremovable banner pointing to the supported build for their IDE (Kiro -> aergic.artizo-kiro; else -> aergic.artizo-vscodium).
+- Bundled VSCodium version fallback (`getNewestBundledVersion`) moved from the shared `src/remote/vscodiumFeed.ts` to an artizo-local `src/platform/vscodiumBundledVersion.ts`.
+
+### Changed
+
+- Removed `*` from `activationEvents`.
+- Bumped `@azure/msal-node` to `^7.1.0` (override) and refreshed transitive deps in `package-lock.json` to clear npm audit vulnerabilities.
+- Default test timeout raised to 15s. Windows Docker Desktop adds ~10s to stop/inspect calls; the 5s vitest default timed out the integration lifecycle tests.
+
+### Fixed
+
+- Relay heal recovers after relay death (idle timeout, sleep, host reboot) instead of timing out. Re-spawns the daemon with the original node binary, and assembles the heal script with newlines instead of `; ` so `sh -c` parses it.
+- Removed the stale-relay sweep that raced a concurrent window's relay-heal and could kill a daemon another window had just started. Recovery now relies on relay-heal.
+- `scripts/download-busybox.mjs` retries `writeFile` on Windows AV (Defender) transient locks (`UNKNOWN`/`EBUSY`/`EPERM`/`EACCES`) with backoff. A scan on a freshly-written busybox binary used to fail the package build.
+- Sidebar webview no longer flashes empty/unstyled on open. A `Loading…` placeholder covers the CSS-load and empty-state flashes; `app.js` swaps it for `#root` on first state message.
+
 ## 0.8.10
 
 ### Fixed
@@ -50,7 +70,7 @@
 
 ### Fixed
 
-- `${localEnv:...}` and friends now resolved across the whole config — `remoteEnv`, `workspaceFolder`, etc. — before reaching the server. Previously only `workspaceFolder` was substituted (#12).
+- `${localEnv:...}` and friends now resolved across the whole config - `remoteEnv`, `workspaceFolder`, etc. - before reaching the server. Previously only `workspaceFolder` was substituted (#12).
 
 ## 0.8.4
 
@@ -84,7 +104,7 @@
 ### Added
 
 - Dotfiles support: `artizo.dotfiles.*` settings (repo, target, install command) wired into `withDefaults` via `dotfilesFromConfig()`. Clones and installs on container create/reopen/rebuild/clone-in-volume.
-- `artizo.createVolume` command and sidebar button — creates an empty managed volume with name prompt.
+- `artizo.createVolume` command and sidebar button - creates an empty managed volume with name prompt.
 
 ### Changed
 

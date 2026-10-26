@@ -11,7 +11,7 @@
  * outbound internet access still work, extracts them on the apex
  * using yauzl (no `unzip` needed in the container), then streams the
  * extracted directory tree into the container's server extensions
- * directory via `docker exec -i tar -xC` (no `docker cp` — files land
+ * directory via `docker exec -i tar -xC` (no `docker cp` - files land
  * owned by the container's remoteUser, not root).
  *
  * Dependency resolution: Open VSX metadata includes `dependencies`

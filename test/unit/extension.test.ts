@@ -55,6 +55,9 @@ vi.mock("vscode", () => ({
     registerCommand: vi.fn().mockReturnValue({ dispose: vi.fn() }),
     executeCommand: vi.fn(),
   },
+  extensions: {
+    getExtension: vi.fn().mockReturnValue(undefined),
+  },
   workspace: {
     getConfiguration: vi.fn().mockReturnValue({
       get: vi.fn((_key: string, defaultValue: unknown) => defaultValue),
@@ -130,8 +133,12 @@ function createMockContext(): any {
     extensionUri: { toString: () => "file:///mock/extension/path" },
     logPath: "/mock/log/path",
     extensionMode: 1,
-    extension: { extensionKind: 2 }, // workspace
+    extension: { extensionKind: 2, id: "aergic.artizo-kiro" }, // workspace, supported build
     workspaceState: {
+      get: vi.fn().mockReturnValue(false),
+      update: vi.fn().mockResolvedValue(undefined),
+    },
+    globalState: {
       get: vi.fn().mockReturnValue(false),
       update: vi.fn().mockResolvedValue(undefined),
     },

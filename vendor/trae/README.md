@@ -1,31 +1,15 @@
-# Artizo Dev Containers for Trae
+# Artizo Dev Containers for T-r-a-e - DEPRECATED
 
-A dev containers extension for [Trae](https://trae.ai).
+This build is no longer updated. The vscodium build is the supported replacement and contains every feature this one had. Install the supported Artizo build for your IDE instead:
 
-Open any folder or repository inside a Docker container and get a full-featured development environment.
-
-Reduces friction when developing for linux-centric targets on Windows or macOS.
-
-Isolate the AI agent inside the container. It can only easily touch what you mount, nothing else.
-
-## Why
-
-Microsoft's Dev Containers extension is closed-source and locked to VS Code. 
-
-Artizo Dev Containers provides the same functionality for Trae by leveraging the open-source `@devcontainers/cli` and reimplementing the IDE integration layer from scratch.
-
-## Requirements
-
-- [Trae](https://trae.ai)
-- Docker CLI client (`docker`)
-  - Alternatives like Podman or Rancher work too, provided their
-    optional Docker CLI compatibility packages are installed and working.
-
-That's it. Everything else is bundled with the extension.
+- Running Kiro? Install [Artizo for Kiro](https://open-vsx.org/extension/aergic/artizo-kiro).
+- Anything else? Install [Artizo for VSCodium](https://open-vsx.org/extension/aergic/artizo-vscodium).
+  Supports: Trae, Devin, VSCodium, code-oss / VSCode-OSS, Antigravity, Qoder, and other VS Code forks.
 
 ## License
 
-GNU Affero General Public License v3.0 (AGPL-3.0). See [LICENSE](LICENSE) for the full text.
+GNU Affero General Public License v3.0 (AGPL-3.0). See [LICENSE](LICENSE) for
+the full text.
 
 Commercial licensing: contact@aergic.com
 

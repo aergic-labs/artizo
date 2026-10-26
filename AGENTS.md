@@ -12,6 +12,24 @@ without explicit permission. This includes `git checkout -- <file>` and
 `git checkout HEAD -- <file>`. If a file is broken, explain the situation
 and ask before reverting.
 
+## Critical: NO EMDASHES ANYWHERE
+
+Do not use emdashes (—) or endashes (–) anywhere in code, comments, changelog
+entries, commit messages, docs, or any other text you write in this repo. Use a
+colon, semicolon, comma, parenthetical, or plain rewording instead. This is a
+hard rule; do not insert emdashes for emphasis or rhythm.
+
+## Critical: Comments and docs are ultra-terse, not LLM-like
+
+Code comments, changelog entries, commit messages, and docs must be ultra-terse
+while keeping all information present. No filler ("it is worth noting that",
+"please note", "as a matter of fact"). No hedging ("this might", "could
+potentially"). No narration of obvious steps. No restating the code in English.
+Say what the reader needs to know that the code does not say. State the
+constraint or the why. Then stop. One line if possible, multiple lines only
+when the why genuinely needs more. Write like a senior engineer's PR comments,
+not like a chatbot explaining its work.
+
 ## Shell: detect before assuming
 
 The shell environment is **configurable** and may not be what you expect.

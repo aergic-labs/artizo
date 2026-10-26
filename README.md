@@ -39,18 +39,17 @@ remotes during setup
 
 ## Supported editors
 
-- [Kiro](https://kiro.dev)
-- [Trae](https://trae.ai)
-- [Devin](https://devin.ai)
-- [VSCodium](https://vscodium.com) (including code-oss)
+- Running [Kiro](https://kiro.dev)? Install [Artizo for Kiro](https://open-vsx.org/extension/aergic/artizo-kiro).
+- Anything else? Install [Artizo for VSCodium](https://open-vsx.org/extension/aergic/artizo-vscodium).
+  Supports: VSCodium, code-oss / VSCode-OSS, Trae, Devin, Antigravity, Qoder, and other VS Code forks.
 
 ## Why
 
 Microsoft's Dev Containers extension is terrific, but closed-source and locked to
 the official VS Code IDE.
 
-Artizo Dev Containers does the same for Kiro, Trae, Devin, and
-VSCodium, using the open-source `@devcontainers/cli` and
+Artizo Dev Containers does the same for Kiro and VSCodium (plus other VS Code
+forks via the VSCodium build), using the open-source `@devcontainers/cli` and
 reimplementing the IDE integration layer from scratch.
 
 ## Requirements

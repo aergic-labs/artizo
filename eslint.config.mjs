@@ -33,6 +33,8 @@ export default tseslint.config(
         window: "readonly",
         Event: "readonly",
         acquireVsCodeApi: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
       },
     },
     // Browser-side webview code; not part of the extension bundle's strictness.

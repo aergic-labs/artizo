@@ -1,18 +1,8 @@
 {
   "name": "artizo-trae",
-  "displayName": "Artizo Dev Containers for Trae",
-  "description": "Artizo Dev Containers for Trae: Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
-  "keywords": [
-    "trae",
-    "dev container",
-    "dev containers",
-    "devcontainers",
-    "devcontainer",
-    "docker",
-    "remote",
-    "remote development",
-    "containers"
-  ],
+  "displayName": "Artizo Dev Containers for T-r-a-e - DEPRECATED",
+  "description": "DEPRECATED: install Artizo for VSCodium or Kiro instead. This T-r-a-e build is no longer updated.",
+  "keywords": [],
   "platform": {
     "name": "Trae",
     "dataFolderName": ".trae",

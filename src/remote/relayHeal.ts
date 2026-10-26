@@ -40,8 +40,8 @@ export interface HealParams {
   installPath: string;
   /** Friendly workspace path for error messages (e.g. /home/ubuntu/foo). */
   hostWorkspacePath: string;
-  /** Max wait for the relay to write its port file. Default 10s. */
-  portFileTimeoutMs?: number;
+  /** Max wait for the relay to write its meta file. Default 10s. */
+  metaFileTimeoutMs?: number;
 }
 
 type LogFn = (msg: string) => void;
@@ -124,7 +124,7 @@ export async function healRelay(
     containerPort,
     installPath,
     hostWorkspacePath,
-    portFileTimeoutMs = 10_000,
+    metaFileTimeoutMs = 10_000,
   } = params;
 
   const friendly = friendlyName(hostWorkspacePath, containerId);
@@ -148,16 +148,52 @@ export async function healRelay(
   }
 
   // 2. Build the relay script content (same generator the workspace side uses).
+  //    We re-use the meta file from the prior daemon: it holds {port, nodePath}
+  //    and nodePath is the exact binary (process.execPath of the prior workspace
+  //    extension host) that can re-spawn the relay. The SSH host's bundled node
+  //    is NOT on PATH, so bare `node` fails. If the meta file is missing or
+  //    unparseable we error clearly instead of guessing - the user said no
+  //    training wheels.
   const scriptPath = `${REMOTE_TMP}/artizo-relay.mjs`;
   const pidFile = `${REMOTE_TMP}/artizo-relay-${containerId}.pid`;
-  const portFile = `${REMOTE_TMP}/artizo-relay-${containerId}.port`;
+  const metaFile = `${REMOTE_TMP}/artizo-relay-${containerId}.meta.json`;
+
+  // Read nodePath from the meta file. Required: the SSH host has no `node` on
+  // PATH, and `<installPath>/node` is a container path that doesn't exist on
+  // the host. No fallback.
+  const meta = await remoteExec(execServer, "cat", [metaFile], log);
+  if (meta.status !== 0 || !meta.stdout.trim()) {
+    return {
+      kind: "error",
+      message: `Relay meta file missing at ${metaFile}; cannot determine nodePath to re-spawn. Rebuild the container.`,
+    };
+  }
+  let nodePath: string;
+  try {
+    const parsed = JSON.parse(meta.stdout) as { nodePath?: unknown; port?: unknown };
+    if (typeof parsed.nodePath !== "string" || !parsed.nodePath.trim()) {
+      return {
+        kind: "error",
+        message: `Relay meta file at ${metaFile} has no nodePath; cannot re-spawn. Rebuild the container.`,
+      };
+    }
+    nodePath = parsed.nodePath.trim();
+  } catch (e) {
+    return {
+      kind: "error",
+      message: `Relay meta file at ${metaFile} is unparseable: ${e instanceof Error ? e.message : String(e)}. Rebuild the container.`,
+    };
+  }
+  log(`[relay-heal] using nodePath from meta: ${nodePath}`);
+
   const script = buildRelayScript({
     containerId,
     containerPort,
     nodePath: `${installPath}/node`,
     dockerPath: "docker",
     pidFile,
-    portFile,
+    metaFile,
+    hostNodePath: nodePath,
     idleTimeoutMs: IDLE_TIMEOUT_MS,
     maxFailures: MAX_CONSECUTIVE_FAILURES,
   });
@@ -190,28 +226,52 @@ export async function healRelay(
   }
   log(`[relay-heal] relay script shipped (${scriptBytes.length}b)`);
 
-  // 4. Clean stale pid/port files, spawn the daemon detached, poll for the
-  //    port file. One shell invocation handles all three so we keep this to a
-  //    single round-trip.
-  const pollTicks = Math.max(10, Math.floor(portFileTimeoutMs / 100));
+  // 4. Clean stale pid file, spawn the daemon detached with the nodePath
+  //    from the meta file (NOT bare `node` - that's not on PATH on the SSH
+  //    host). We do NOT delete the meta file: if the spawn fails, the meta
+  //    file must survive so a retry can read nodePath again ("reload always
+  //    works"). To detect the new daemon's write, we create a marker file
+  //    after spawn and poll for the meta file to be newer than the marker.
+  //    This handles the rare race where the new daemon picks the same port as
+  //    the dead one (meta content would be identical, so a content compare
+  //    would never fire).
+  const pollTicks = Math.max(10, Math.floor(metaFileTimeoutMs / 100));
+  const marker = `${REMOTE_TMP}/artizo-relay-heal-marker.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+  // Build the spawn command as a single string. Use newlines instead of `;`
+  // between the backgrounded nohup and the marker creation: `&;` is a syntax
+  // error in dash (which is /usr/bin/sh on Ubuntu), and the apex's ExecServer
+  // spawn runs `sh -c`. `&` is itself a command separator, so `nohup ... &\n:`
+  // works in both bash and dash.
   const spawnCmd = [
-    `rm -f ${shQuote(pidFile)} ${shQuote(portFile)}`,
-    `nohup node ${shQuote(scriptPath)} >${shQuote(`${REMOTE_TMP}/artizo-relay.log`)} 2>&1 &`,
+    `rm -f ${shQuote(pidFile)}`,
+    `nohup ${shQuote(nodePath)} ${shQuote(scriptPath)} >${shQuote(`${REMOTE_TMP}/artizo-relay.log`)} 2>&1 &`,
+    `: > ${shQuote(marker)}`,
     `for i in $(seq 1 ${pollTicks}); do`,
-    `  [ -f ${shQuote(portFile)} ] && cat ${shQuote(portFile)} && exit 0`,
+    `  [ ${shQuote(metaFile)} -nt ${shQuote(marker)} ] && cat ${shQuote(metaFile)} && rm -f ${shQuote(marker)} && exit 0`,
     `  sleep 0.1`,
     `done`,
+    `rm -f ${shQuote(marker)}`,
     `echo TIMEOUT >&2`,
     `exit 1`,
-  ].join("; ");
+  ].join("\n");
   const spawn = await remoteExec(execServer, "sh", ["-c", spawnCmd], log);
   if (spawn.status !== 0) {
     return {
       kind: "error",
-      message: `Relay daemon did not report a port within ${portFileTimeoutMs}ms (stderr: ${spawn.stderr || "none"})`,
+      message: `Relay daemon did not report a port within ${metaFileTimeoutMs}ms (stderr: ${spawn.stderr || "none"})`,
     };
   }
-  const port = parseInt(spawn.stdout.trim(), 10);
+  // The shell's stdout is the contents of the meta file (JSON). Parse it.
+  let port: number;
+  try {
+    const parsed = JSON.parse(spawn.stdout.trim()) as { port?: unknown };
+    port = Number(parsed.port);
+  } catch (e) {
+    return {
+      kind: "error",
+      message: `Relay reported unparseable meta: ${JSON.stringify(spawn.stdout)} (${e instanceof Error ? e.message : String(e)})`,
+    };
+  }
   if (!Number.isFinite(port) || port <= 0) {
     return {
       kind: "error",

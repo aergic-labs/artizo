@@ -48,7 +48,7 @@ export function detectPlatformName(): PlatformName {
       return "Kiro";
     }
   } catch {
-    // product.json unreadable — fall through to VSCodium.
+    // product.json unreadable - fall through to VSCodium.
   }
   return "VSCodium";
 }

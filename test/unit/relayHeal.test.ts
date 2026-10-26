@@ -112,7 +112,7 @@ const baseParams: HealParams = {
   containerPort: 38517,
   installPath: "/tmp/.trae-server",
   hostWorkspacePath: "/home/ubuntu/foo",
-  portFileTimeoutMs: 200,
+  metaFileTimeoutMs: 200,
 };
 
 describe("probeRelayPort", () => {
@@ -182,19 +182,30 @@ describe("healRelay", () => {
 
   it("ships script and respawns relay, returns new port", async () => {
     const spawned: { cmd: string; args: string[] }[] = [];
+    const metaNodePath = "/opt/kiro-server/bin/abc/node";
     const server = makeFakeExecServer({
       spawnImpl: (cmd, args) => {
         spawned.push({ cmd, args });
         if (cmd === "docker" && args[0] === "inspect") {
           return { status: 0, out: "true\n" };
         }
+        if (cmd === "cat") {
+          // meta file read: return JSON {port, nodePath}.
+          return {
+            status: 0,
+            out: JSON.stringify({ port: 41234, nodePath: metaNodePath }) + "\n",
+          };
+        }
         if (cmd === "sh" && args[0] === "-c" && args[1].includes("cat >")) {
           // script write
           return { status: 0, out: "" };
         }
         if (cmd === "sh" && args[0] === "-c" && args[1].includes("nohup")) {
-          // spawn+poll: emit new port
-          return { status: 0, out: "41234\n" };
+          // spawn+poll: emit new meta JSON.
+          return {
+            status: 0,
+            out: JSON.stringify({ port: 41234, nodePath: metaNodePath }) + "\n",
+          };
         }
         return { status: 0, out: "" };
       },
@@ -204,19 +215,32 @@ describe("healRelay", () => {
     if (result.kind === "ok") {
       expect(result.relayPort).toBe(41234);
     }
-    // Verify the inspect, the script write, and the nohup poll all ran.
+    // Verify the inspect, the meta read, the script write, and the nohup
+    // poll all ran. The nohup must use the nodePath from the meta file (NOT
+    // bare `node` - that's not on PATH on the SSH host).
     const inspected = spawned.some(
       (s) => s.cmd === "docker" && s.args[0] === "inspect",
+    );
+    const readMeta = spawned.some(
+      (s) => s.cmd === "cat" && s.args[0].includes("meta.json"),
     );
     const wroteScript = spawned.some(
       (s) => s.cmd === "sh" && s.args[1].includes("artizo-relay.mjs"),
     );
     const spawnedRelay = spawned.some(
-      (s) => s.cmd === "sh" && s.args[1].includes("nohup node"),
+      (s) =>
+        s.cmd === "sh" &&
+        s.args[1].includes("nohup") &&
+        s.args[1].includes(metaNodePath),
+    );
+    const didNotUseBareNode = !spawned.some(
+      (s) => s.cmd === "sh" && s.args[1].includes("nohup node "),
     );
     expect(inspected).toBe(true);
+    expect(readMeta).toBe(true);
     expect(wroteScript).toBe(true);
     expect(spawnedRelay).toBe(true);
+    expect(didNotUseBareNode).toBe(true);
   });
 
   it("returns error when relay does not report a port in time", async () => {
@@ -224,6 +248,12 @@ describe("healRelay", () => {
       spawnImpl: (cmd, args) => {
         if (cmd === "docker" && args[0] === "inspect") {
           return { status: 0, out: "true\n" };
+        }
+        if (cmd === "cat") {
+          return {
+            status: 0,
+            out: JSON.stringify({ port: 41234, nodePath: "/opt/x/node" }) + "\n",
+          };
         }
         if (cmd === "sh" && args[0] === "-c" && args[1].includes("cat >")) {
           return { status: 0, out: "" };
@@ -239,12 +269,79 @@ describe("healRelay", () => {
     }
   });
 
+  it("returns error when meta file is missing (cannot determine nodePath)", async () => {
+    const server = makeFakeExecServer({
+      spawnImpl: (cmd, args) => {
+        if (cmd === "docker" && args[0] === "inspect") {
+          return { status: 0, out: "true\n" };
+        }
+        if (cmd === "cat") {
+          // meta file missing: cat exits non-zero, no stdout.
+          return { status: 1, out: "", err: "No such file" };
+        }
+        return { status: 0, out: "" };
+      },
+    });
+    const result = await healRelay(server, baseParams, () => {});
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.message).toContain("meta file missing");
+      expect(result.message).toContain("Rebuild the container");
+    }
+  });
+
+  it("returns error when meta file has no nodePath", async () => {
+    const server = makeFakeExecServer({
+      spawnImpl: (cmd, args) => {
+        if (cmd === "docker" && args[0] === "inspect") {
+          return { status: 0, out: "true\n" };
+        }
+        if (cmd === "cat") {
+          // meta exists but nodePath missing (old format / corrupt).
+          return { status: 0, out: JSON.stringify({ port: 41234 }) + "\n" };
+        }
+        return { status: 0, out: "" };
+      },
+    });
+    const result = await healRelay(server, baseParams, () => {});
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.message).toContain("no nodePath");
+    }
+  });
+
+  it("returns error when meta file is unparseable", async () => {
+    const server = makeFakeExecServer({
+      spawnImpl: (cmd, args) => {
+        if (cmd === "docker" && args[0] === "inspect") {
+          return { status: 0, out: "true\n" };
+        }
+        if (cmd === "cat") {
+          return { status: 0, out: "not-json{{" };
+        }
+        return { status: 0, out: "" };
+      },
+    });
+    const result = await healRelay(server, baseParams, () => {});
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.message).toContain("unparseable");
+    }
+  });
+
   it("returns error when script write fails", async () => {
     const server = makeFakeExecServer({
-      spawnImpl: (cmd) => {
+      spawnImpl: (cmd, args) => {
         if (cmd === "docker") return { status: 0, out: "true\n" };
+        if (cmd === "cat") {
+          // meta read succeeds; we need nodePath before the script write can fail.
+          return {
+            status: 0,
+            out: JSON.stringify({ port: 41234, nodePath: "/opt/x/node" }) + "\n",
+          };
+        }
         if (cmd === "sh") {
-          // Distinguish by args; first sh call is the cat-write.
+          // The cat-write of the script fails.
           return { status: 1, out: "", err: "Permission denied" };
         }
         return { status: 0, out: "" };
