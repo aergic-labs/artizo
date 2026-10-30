@@ -10,15 +10,15 @@ import { DevContainerConfig, DevContainerFeature } from '../../spec-configuratio
 import { CommonParams } from '../../spec-configuration/containerCollectionsOCI';
 import { LogLevel, createPlainLog, makeLog } from '../../spec-utils/log';
 import { isLocalFile, readLocalFile } from '../../spec-utils/pfs';
+import { createTestCommonParams } from '../testUtils';
 
 // const pkg = require('../../../package.json');
 export const output = makeLog(createPlainLog(text => process.stdout.write(text), () => LogLevel.Info));
 
 async function setupInstallOrderTest(testWorkspaceFolder: string) {
     const params: CommonParams = {
-        env: process.env,
-        output,
-        cachedAuthHeader: {}
+        ...createTestCommonParams(output),
+        cachedAuthHeader: {},
     };
 
     const configPath = `${testWorkspaceFolder}/.devcontainer/devcontainer.json`;
@@ -674,7 +674,8 @@ describe('Feature Dependencies', function () {
                 }
             });
 
-            assert.deepStrictEqual(actual.length, 3);
+            // The deprecated terraform shorthand resolves to terraform:1, which has github-cli as a hard dependency.
+            assert.deepStrictEqual(actual.length, 4);
             assert.deepStrictEqual(actual,
                 [
                     {
@@ -685,6 +686,12 @@ describe('Feature Dependencies', function () {
                         id: 'codspace/myfeatures/helloworld',
                         options: {
                             greeting: 'howdy'
+                        }
+                    },
+                    {
+                        id: 'ghcr.io/devcontainers/features/github-cli',
+                        options: {
+                            version: 'latest'
                         }
                     },
                     {

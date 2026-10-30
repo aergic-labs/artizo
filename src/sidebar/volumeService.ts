@@ -13,6 +13,7 @@
 import * as vscode from "vscode";
 import type { Host } from "../host/host";
 import { MANAGED_LABEL } from "../utils/constants";
+import { listJsonFormat } from "../docker/execPolicy.js";
 
 export interface VolumeInfo {
   name: string;
@@ -33,7 +34,7 @@ export class VolumeService {
         "--filter",
         `label=${MANAGED_LABEL}`,
         "--format",
-        "{{json .}}",
+        listJsonFormat(),
       ],
     });
 

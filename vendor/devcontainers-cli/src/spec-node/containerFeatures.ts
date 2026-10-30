@@ -6,7 +6,7 @@
 import * as path from 'path';
 
 import { DevContainerConfig } from '../spec-configuration/configuration';
-import { dockerCLI, dockerPtyCLI, ImageDetails, toExecParameters, toPtyExecParameters } from '../spec-shutdown/dockerUtils';
+import { dockerCLI, dockerPtyCLI, ImageDetails, toExecParameters, toPtyExecParameters, CLIVariant } from '../spec-shutdown/dockerUtils';
 import { LogLevel, makeLog } from '../spec-utils/log';
 import { FeaturesConfig, getContainerFeaturesBaseDockerFile, getFeatureInstallWrapperScript, getFeatureLayers, getFeatureMainValue, getFeatureValueObject, generateFeaturesConfig, Feature, generateContainerEnvs } from '../spec-configuration/containerFeaturesConfiguration';
 import { readLocalFile } from '../spec-utils/pfs';
@@ -206,7 +206,7 @@ ${getDevcontainerMetadataLabel(getDevcontainerMetadata(imageBuildInfo.metadata, 
 `,
         overrideTarget: 'dev_containers_target_stage',
         dockerfilePrefixContent: `${syntax ? `# syntax=${syntax}` : ''}
-    ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
+    ARG _DEV_CONTAINERS_BASE_IMAGE=scratch
 `,
         buildArgs: {
             _DEV_CONTAINERS_BASE_IMAGE: baseName,
@@ -274,7 +274,7 @@ async function getFeaturesBuildOptions(params: DockerResolverParameters, devCont
         skipDefaultSyntax ? (syntax ? `# syntax=${syntax}` : '') :
         useBuildKitBuildContexts && !(imageBuildInfo.dockerfile && supportsBuildContexts(imageBuildInfo.dockerfile)) ? '# syntax=docker/dockerfile:1.4' :
         syntax ? `# syntax=${syntax}` : ''}
-ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
+ARG _DEV_CONTAINERS_BASE_IMAGE=scratch
 `;
 
 	// Build devcontainer-features.env and devcontainer-features-install.sh file(s) for each features source folder
@@ -364,7 +364,7 @@ async function isUsingSELinuxLabels(params: DockerResolverParameters): Promise<b
 	try {
 		const { common } = params;
 		const { cliHost, output } = common;
-		return params.isPodman && cliHost.platform === 'linux'
+		return params.cliVariant === CLIVariant.Podman && cliHost.platform === 'linux'
 			&& (await runCommandNoPty({
 				exec: cliHost.exec,
 				cmd: 'getenforce',
@@ -467,7 +467,7 @@ export async function updateRemoteUserUID(params: DockerResolverParameters, merg
 		'-f', destDockerfile,
 		'-t', fixedImageName,
 		...(platform ? ['--platform', platform] : []),
-		'--build-arg', `BASE_IMAGE=${params.isPodman && !hasRegistryHostname(imageName) ? 'localhost/' : ''}${imageName}`, // Podman: https://github.com/microsoft/vscode-remote-release/issues/9748
+		'--build-arg', `BASE_IMAGE=${params.cliVariant === CLIVariant.Podman && !hasRegistryHostname(imageName) ? 'localhost/' : ''}${imageName}`, // Podman: https://github.com/microsoft/vscode-remote-release/issues/9748
 		'--build-arg', `REMOTE_USER=${remoteUser}`,
 		'--build-arg', `NEW_UID=${await cliHost.getuid!()}`,
 		'--build-arg', `NEW_GID=${await cliHost.getgid!()}`,

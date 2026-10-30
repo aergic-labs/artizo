@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("../../src/docker/execPolicy.js", () => ({
   configureDockerPath: vi.fn(),
   dockerExecPolicy: vi.fn().mockResolvedValue({ stdout: "", stderr: "" }),
+  getDockerPath: () => "docker",
 }));
 
 vi.mock("vscode", () => {

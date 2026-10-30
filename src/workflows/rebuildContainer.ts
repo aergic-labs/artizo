@@ -20,6 +20,7 @@ import {
   CancelledError,
 } from "./postLaunch";
 import { resolveConfigVars } from "../devcontainer/readResolvedConfig";
+import { warnWslcUnsupportedConfig } from "../devcontainer/wslcDiagnostics";
 import type { ReadConfigResult } from "../config/configManager";
 
 export interface RebuildContainerParams {
@@ -58,6 +59,10 @@ export async function rebuildContainer(
     perContainerDisable = !!(
       configResult.config as Record<string, unknown> | undefined
     )?.["disableCopyGitConfig"];
+
+    // wslc has no Compose runtime and cannot bind-mount WSL host paths;
+    // surface a toast before the build if the config needs one of those.
+    warnWslcUnsupportedConfig(configResult.config);
 
     // Resolve ${localEnv:...} and friends across the full config in one
     // place - workspaceFolder, remoteEnv, etc. - so the resolved config

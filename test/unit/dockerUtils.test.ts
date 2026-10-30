@@ -4,6 +4,14 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+vi.mock('vscode', () => ({
+  workspace: {
+    getConfiguration: vi.fn().mockReturnValue({
+      get: vi.fn().mockReturnValue('docker'),
+    }),
+  },
+}));
+
 import { dockerExec, dockerInspect, isContainerRunning } from '../../src/utils/dockerUtils';
 
 // We mock child_process.execFile to avoid needing a real Docker daemon

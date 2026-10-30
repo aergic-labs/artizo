@@ -84,15 +84,28 @@ export function buildAttachUI(ui: VscodeWorkflowUI) {
 export function buildDockerLister() {
   return {
     async listRunningContainers() {
-      const { dockerExecPolicy } = await import("../docker/execPolicy.js");
+      const { dockerExecPolicy, isWslcRuntime } =
+        await import("../docker/execPolicy.js");
+      const wslc = isWslcRuntime();
       const result = await dockerExecPolicy([
         "ps",
         "--no-trunc",
         "--format",
-        "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}",
+        wslc ? "json" : "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}",
       ]);
       if (result.exitCode !== 0)
         throw new Error(`docker ps failed: ${result.stderr}`);
+      if (wslc) {
+        // wslc --format json is JSON-per-line (same shape as docker
+        // {{json .}}); parseContainerList handles it. Map state -> status.
+        const { parseContainerList } = await import("../devcontainer/labels.js");
+        return parseContainerList(result.stdout).map((c) => ({
+          id: c.id,
+          name: c.name,
+          image: c.image,
+          status: c.state,
+        }));
+      }
       const lines = result.stdout.trim().split("\n").filter(Boolean);
       return lines.map((line) => {
         const [id, name, image, status] = line.split("\t");

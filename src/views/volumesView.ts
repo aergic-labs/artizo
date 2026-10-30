@@ -9,7 +9,7 @@
  */
 
 import * as vscode from "vscode";
-import { dockerExecPolicy } from "../docker/execPolicy.js";
+import { dockerExecPolicy, listJsonFormat } from "../docker/execPolicy.js";
 import { MANAGED_LABEL } from "../utils/constants";
 
 /** Represents a Docker volume entry. */
@@ -66,7 +66,7 @@ export class VolumesViewProvider implements vscode.TreeDataProvider<VolumeViewIt
         "--filter",
         `label=${MANAGED_LABEL}`,
         "--format",
-        "{{json .}}",
+        listJsonFormat(),
       ]);
 
       if (result.exitCode !== 0) {

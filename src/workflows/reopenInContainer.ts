@@ -12,6 +12,7 @@ import { resolveConfigVars } from "../devcontainer/readResolvedConfig";
 import { ProvisionFailedError } from "../devcontainer/provisionError";
 import { getPlatformAdapter } from "../platform";
 import { getLogger } from "../utils/logger";
+import { getDockerPath } from "../docker/execPolicy.js";
 import {
   connectToContainer,
   writeOverrideConfig,
@@ -149,7 +150,9 @@ export async function reopenInContainer(
         const { checkContainerConfig } = await import(
           "../remote/configCheck.js"
         );
-        const existingInfo = await dockerInspect(existingContainerId);
+        const existingInfo = await dockerInspect(existingContainerId, {
+          dockerPath: getDockerPath(),
+        });
         const checkResult = await checkContainerConfig(existingInfo);
         if (checkResult === "rebuild") {
           return; // rebuild command opens its own window

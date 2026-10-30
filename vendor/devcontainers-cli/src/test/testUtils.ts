@@ -6,10 +6,11 @@ import * as assert from 'assert';
 import * as cp from 'child_process';
 import { getCLIHost, loadNativeModule, plainExec, plainPtyExec, runCommand, runCommandNoPty } from '../spec-common/commonUtils';
 import { SubstituteConfig } from '../spec-node/utils';
-import { LogLevel, createPlainLog, makeLog, nullLog } from '../spec-utils/log';
+import { Log, LogLevel, createPlainLog, makeLog, nullLog } from '../spec-utils/log';
 import { dockerComposeCLIConfig } from '../spec-node/dockerCompose';
 import { DockerCLIParameters } from '../spec-shutdown/dockerUtils';
-import { mapNodeArchitectureToGOARCH, mapNodeOSToGOOS } from '../spec-configuration/containerCollectionsOCI';
+import { CommonParams, mapNodeArchitectureToGOARCH, mapNodeOSToGOOS } from '../spec-configuration/containerCollectionsOCI';
+import { createOCIAuthDiagnostics } from '../spec-common/ociAuth';
 
 export interface BuildKitOption {
     text: string;
@@ -126,6 +127,36 @@ export async function pathExists(cli: string, workspaceFolder: string, location:
         return false;
     }
 }
+
+export function findFromArgsWithoutDefault(dockerfile: string): string[] {
+    const preambleArgsWithDefault = new Set<string>();
+    const offenders: string[] = [];
+    let beforeFirstFrom = true;
+
+    for (const rawLine of dockerfile.split('\n')) {
+        const line = rawLine.trim();
+
+        const argWithDefault = /^ARG\s+([A-Za-z0-9_]+)\s*=\s*\S+/.exec(line);
+        if (argWithDefault) {
+            if (beforeFirstFrom) {
+                preambleArgsWithDefault.add(argWithDefault[1]);
+            }
+            continue;
+        }
+
+        const fromMatch = /^FROM(?:\s+--platform=\S+)?\s+\$\{?([A-Za-z0-9_]+)/i.exec(line);
+        if (fromMatch && !preambleArgsWithDefault.has(fromMatch[1])) {
+            offenders.push(fromMatch[1]);
+        }
+
+        if (/^FROM\b/i.test(line)) {
+            beforeFirstFrom = false;
+        }
+    }
+
+    return offenders;
+}
+
 export async function commandMarkerTests(cli: string, workspaceFolder: string, expected: { postCreate: boolean; postStart: boolean; postAttach: boolean }, message: string) {
     const actual = {
         postCreate: await pathExists(cli, workspaceFolder, '/tmp/postCreateCommand.testmarker'),
@@ -147,6 +178,14 @@ export const testSubstitute: SubstituteConfig = value => {
 
 export const output = makeLog(createPlainLog(text => process.stdout.write(text), () => LogLevel.Trace));
 
+export function createTestCommonParams(output: Log, env: NodeJS.ProcessEnv = process.env): CommonParams {
+	return {
+		output,
+		env,
+		ociAuthDiagnostics: createOCIAuthDiagnostics(),
+	};
+}
+
 export async function createCLIParams(hostPath: string) {
 	const cliHost = await getCLIHost(hostPath, loadNativeModule, true);
 	const dockerComposeCLI = dockerComposeCLIConfig({
@@ -159,13 +198,12 @@ export async function createCLIParams(hostPath: string) {
 		arch: mapNodeArchitectureToGOARCH(cliHost.arch),
 	};
 	const cliParams: DockerCLIParameters = {
+		...createTestCommonParams(output, {}),
 		cliHost,
 		dockerCLI: 'docker',
 		dockerComposeCLI,
-		env: {},
-		output,
 		buildPlatformInfo,
 		targetPlatformInfo: buildPlatformInfo,
-};
+	};
 	return cliParams;
 }

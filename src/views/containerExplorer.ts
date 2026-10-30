@@ -6,7 +6,7 @@
 /** Container Explorer tree view for the Remote Explorer panel. */
 
 import * as vscode from "vscode";
-import { dockerExecPolicy } from "../docker/execPolicy.js";
+import { dockerExecPolicy, listJsonFormat } from "../docker/execPolicy.js";
 import { MANAGED_LABEL } from "../utils/constants";
 import { parseContainerList, isDevContainer } from "../devcontainer/labels";
 import {
@@ -122,7 +122,7 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
         "-a",
         "--no-trunc",
         "--format",
-        "{{json .}}",
+        listJsonFormat(),
       ]);
 
       if (result.exitCode !== 0) {
@@ -152,7 +152,7 @@ export class ContainerExplorerProvider implements IContainerExplorerProvider {
         "--filter",
         `label=${MANAGED_LABEL}`,
         "--format",
-        "{{json .}}",
+        listJsonFormat(),
       ]);
 
       if (result.exitCode !== 0) {

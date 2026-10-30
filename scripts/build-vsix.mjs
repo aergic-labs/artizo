@@ -5,7 +5,7 @@
 
 /**
  * Build a vendor-specific VSIX.
- * Usage: node scripts/build-vsix.mjs --target=kiro|trae|devin
+ * Usage: node scripts/build-vsix.mjs --target=kiro|vscodium
  *
  * Builds the esbuild bundle in the working tree, then assembles the VSIX in a
  * temp directory so the working tree's package.json is never mutated.
@@ -17,6 +17,30 @@ import * as os from "node:os";
 import { execSync } from "node:child_process";
 
 const root = path.resolve(import.meta.dirname, "..");
+
+// Sections shared from README.md (delimited by <!-- BEGIN:name --> ... 
+// <!-- END:name -->). Substituted into vendor READMEs at package time so
+// shared content lives once in README.md.
+const readmeSections = (() => {
+  const src = fs.readFileSync(path.join(root, "README.md"), "utf-8");
+  const sections = {};
+  const re = /<!-- BEGIN:(\S+) -->\r?\n([\s\S]*?)<!-- END:\1 -->/g;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    sections[m[1]] = m[2].replace(/\n$/, "");
+  }
+  return sections;
+})();
+
+function expandSections(text) {
+  return text.replace(/\{\{section:(\S+)\}\}/g, (_match, name) => {
+    const content = readmeSections[name];
+    if (content === undefined) {
+      throw new Error(`MISSING section "${name}" in README.md`);
+    }
+    return content;
+  });
+}
 
 // Staging dir lives in the OS temp dir, not the project root, so a
 // killed run can't orphan an `artizo-pack-*` dir into the worktree.
@@ -67,13 +91,10 @@ const target = process.argv
   ?.split("=")[1];
 if (
   !target ||
-  (target !== "kiro" &&
-    target !== "trae" &&
-    target !== "devin" &&
-    target !== "vscodium")
+  (target !== "kiro" && target !== "vscodium")
 ) {
   console.error(
-    "Usage: node scripts/build-vsix.mjs --target=kiro|trae|devin|vscodium",
+    "Usage: node scripts/build-vsix.mjs --target=kiro|vscodium",
   );
   process.exit(1);
 }
@@ -152,18 +173,20 @@ try {
   delete merged.scripts;
   delete merged.devDependencies;
 
-  // Generate vendor README: vscodium/trae/devin ship bespoke per-vendor
-  // READMEs (trae/devin are deprecation notices); kiro uses the template.
+  // Generate vendor README: vscodium ships a bespoke README; kiro uses
+  // the template. Both expand {{section:name}} from README.md; kiro also
+  // substitutes {{NAME}}/{{URL}}.
   const vendorPkg = JSON.parse(fs.readFileSync(vendorPkgPath, "utf-8"));
   const platform = vendorPkg.platform;
   let readme;
-  if (target === "vscodium" || target === "trae" || target === "devin") {
+  if (target === "vscodium") {
     readme = fs.readFileSync(path.join(vendorDir, "README.md"), "utf-8");
   } else {
     readme = fs.readFileSync(templatePath, "utf-8");
     readme = readme.replace(/\{\{NAME\}\}/g, platform.name);
     readme = readme.replace(/\{\{URL\}\}/g, "https://kiro.dev");
   }
+  readme = expandSections(readme);
 
   // Copy project files, skipping dirs that .vscodeignore would exclude anyway
   // and skipping node_modules (huge, not packaged). Staging lives outside the

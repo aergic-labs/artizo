@@ -12,6 +12,8 @@ Reduces friction when developing for linux-centric targets on Windows or macOS.
 devcontainers from there. Artizo installs itself onto the remote
 on first connect.
 - **Container provisioning** - image, Dockerfile, or Docker Compose
+- **WSL Containers (wslc)** - on Windows, run devcontainers under WSL
+  without Docker Desktop
 - **Server download** - auto-detects the correct REH server tarball
   URL per fork from `product.json`, with checksum verification
   (sidecar or manifest, sha256/md5) before installation. A
@@ -58,6 +60,10 @@ reimplementing the IDE integration layer from scratch.
 - Docker CLI client (`docker`)
   - Alternatives like Podman or Rancher work too, provided their
     optional Docker CLI compatibility packages are installed and working.
+  - On Windows, [wslc](https://learn.microsoft.com/en-us/windows/wsl/wsl-container)
+    (WSL Containers CLI) runs devcontainers without Docker Desktop.
+    Must be installed and working. Enable **Use Wslc If Installed** in
+    settings to use it.
 
 Everything else is bundled with the extension.
 <!-- END:requirements-tail -->

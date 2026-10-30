@@ -10,12 +10,13 @@ import * as os from 'os';
 import { ContainerError, toErrorText } from '../spec-common/errors';
 import { CLIHost, runCommandNoPty, runCommand, getLocalUsername, PlatformInfo } from '../spec-common/commonUtils';
 import { Log, LogLevel, makeLog, nullLog } from '../spec-utils/log';
+import { delay } from '../spec-common/async';
 
 import { CommonDevContainerConfig, ContainerProperties, getContainerProperties, LifecycleCommand, ResolverParameters } from '../spec-common/injectHeadless';
 import { Workspace } from '../spec-utils/workspaces';
 import { URI } from 'vscode-uri';
 import { ShellServer } from '../spec-common/shellServer';
-import { inspectContainer, inspectContainers, inspectImage, getEvents, listContainers, ContainerDetails, DockerCLIParameters, dockerExecFunction, dockerPtyCLI, dockerPtyExecFunction, toDockerImageName, DockerComposeCLI, ImageDetails, dockerCLI, removeContainer } from '../spec-shutdown/dockerUtils';
+import { inspectContainer, inspectContainers, inspectImage, getEvents, listContainers, ContainerDetails, DockerCLIParameters, dockerExecFunction, dockerPtyCLI, dockerPtyExecFunction, toDockerImageName, DockerComposeCLI, ImageDetails, dockerCLI, removeContainer, CLIVariant } from '../spec-shutdown/dockerUtils';
 import { getRemoteWorkspaceFolder } from './dockerCompose';
 import { findGitRootFolder } from '../spec-common/git';
 import { parentURI, uriToFsPath } from '../spec-configuration/configurationCommonUtils';
@@ -26,6 +27,7 @@ import { Mount } from '../spec-configuration/containerFeaturesConfiguration';
 import { PackageConfiguration } from '../spec-utils/product';
 import { ImageMetadataEntry, MergedDevContainerConfig } from './imageMetadata';
 import { getImageIndexEntryForPlatform, getManifest, getRef } from '../spec-configuration/containerCollectionsOCI';
+import { createOCIAuthDiagnostics, OCIAuthDiagnostics } from '../spec-common/ociAuth';
 import { requestEnsureAuthenticated } from '../spec-configuration/httpOCIRegistry';
 import { configFileLabel, findDevContainer, hostFolderLabel } from './singleContainer';
 export { getConfigFilePath, getDockerfilePath, isDockerFileConfig } from '../spec-configuration/configuration';
@@ -108,7 +110,7 @@ export interface DockerResolverParameters {
 	common: ResolverParameters;
 	parsedAuthority: ParsedAuthority | undefined;
 	dockerCLI: string;
-	isPodman: boolean;
+	cliVariant: CLIVariant;
 	dockerComposeCLI: () => Promise<DockerComposeCLI>;
 	dockerEnv: NodeJS.ProcessEnv;
 	workspaceMountConsistencyDefault: BindMountConsistency;
@@ -170,6 +172,9 @@ export function addSubstitution<T extends DevContainerConfig | ImageMetadataEntr
 }
 
 export async function startEventSeen(params: DockerResolverParameters, labels: Record<string, string>, canceled: Promise<void>, output: Log, trace: boolean) {
+	if (params.cliVariant === CLIVariant.Wslc) {
+		return startEventSeenPolling(params, labels, canceled, output, trace);
+	}
 	const eventsProcess = await getEvents(params, { event: ['start'] });
 	return {
 		started: new Promise<void>((resolve, reject) => {
@@ -205,6 +210,36 @@ export async function startEventSeen(params: DockerResolverParameters, labels: R
 					}
 				}
 			});
+		})
+	};
+}
+
+// Polling-based fallback for runtimes that don't support `events` (e.g., wslc).
+function startEventSeenPolling(params: DockerResolverParameters, labels: Record<string, string>, canceled: Promise<void>, output: Log, trace: boolean) {
+	let stopped = false;
+	canceled.catch(() => { stopped = true; });
+	const labelFilters = Object.entries(labels).map(([k, v]) => `${k}=${v}`);
+	return {
+		started: new Promise<void>((resolve, reject) => {
+			canceled.catch(reject);
+			const poll = async () => {
+				while (!stopped) {
+					try {
+						const containers = await listContainers(params, false, labelFilters);
+						if (trace) {
+							output.write(`Log: startEventSeenPolling found ${containers.length} container(s)\r\n`);
+						}
+						if (containers.length > 0) {
+							resolve();
+							return;
+						}
+					} catch (e) {
+						// Ignore transient errors during polling.
+					}
+					await delay(500);
+				}
+			};
+			poll();
 		})
 	};
 }
@@ -251,7 +286,10 @@ export async function inspectDockerImage(params: DockerResolverParameters | Dock
 			throw inspectErr;
 		}
 		try {
-			return await inspectImageInRegistry(output, params.targetPlatformInfo, imageName);
+			const allowedCrossOriginAuthHosts = 'cliHost' in params ? params.allowedCrossOriginAuthHosts : params.common.allowedCrossOriginAuthHosts;
+			const ociAuthHardening = 'cliHost' in params ? params.ociAuthHardening : params.common.ociAuthHardening;
+			const ociAuthDiagnostics = 'cliHost' in params ? params.ociAuthDiagnostics : params.common.ociAuthDiagnostics;
+			return await inspectImageInRegistry(output, params.targetPlatformInfo, imageName, allowedCrossOriginAuthHosts, ociAuthHardening, ociAuthDiagnostics);
 		} catch (inspectErr2) {
 			output.write(`Error fetching image details: ${inspectErr2?.message}`, LogLevel.Info);
 		}
@@ -283,16 +321,17 @@ function logErrorStdoutStderr(err: any, output: Log) {
 	}
 }
 
-export async function inspectImageInRegistry(output: Log, platformInfo: PlatformInfo, name: string): Promise<ImageDetails> {
+export async function inspectImageInRegistry(output: Log, platformInfo: PlatformInfo, name: string, allowedCrossOriginAuthHosts?: string[], ociAuthHardening?: boolean, ociAuthDiagnostics: OCIAuthDiagnostics = createOCIAuthDiagnostics()): Promise<ImageDetails> {
 	const resourceAndVersion = qualifyImageName(name);
-	const params = { output, env: process.env };
+	const params = { output, env: process.env, allowedCrossOriginAuthHosts, ociAuthHardening, ociAuthDiagnostics };
 	const ref = getRef(output, resourceAndVersion);
 	if (!ref) {
 		throw new Error(`Could not parse image name '${name}'`);
 	}
 
 	const registryServer = ref.registry === 'docker.io' ? 'registry-1.docker.io' : ref.registry;
-	const manifestUrl = `https://${registryServer}/v2/${ref.path}/manifests/${ref.version}`;
+	const registryOrigin = `${ref.scheme}://${registryServer}`;
+	const manifestUrl = `${registryOrigin}/v2/${ref.path}/manifests/${ref.version}`;
 	output.write(`manifest url: ${manifestUrl}`, LogLevel.Trace);
 
 	let targetDigest: string | undefined = undefined;
@@ -304,7 +343,7 @@ export async function inspectImageInRegistry(output: Log, platformInfo: Platform
 		// Spec: https://github.com/opencontainers/image-spec/blob/main/image-index.md
 		const imageIndexEntry = await getImageIndexEntryForPlatform(params, manifestUrl, ref, platformInfo);
 		if (imageIndexEntry) {
-			const manifestUrl = `https://${registryServer}/v2/${ref.path}/manifests/${imageIndexEntry.digest}`;
+			const manifestUrl = `${registryOrigin}/v2/${ref.path}/manifests/${imageIndexEntry.digest}`;
 			const a = await getManifest(params, manifestUrl, ref);
 			if (a) {
 				targetDigest = a.manifestObj.config.digest;
@@ -316,7 +355,7 @@ export async function inspectImageInRegistry(output: Log, platformInfo: Platform
 		throw new Error(`No manifest found for ${resourceAndVersion}.`);
 	}
 
-	const blobUrl = `https://${registryServer}/v2/${ref.path}/blobs/${targetDigest}`;
+	const blobUrl = `${registryOrigin}/v2/${ref.path}/blobs/${targetDigest}`;
 	output.write(`blob url: ${blobUrl}`, LogLevel.Trace);
 
 	const httpOptions = {

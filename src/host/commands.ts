@@ -30,6 +30,7 @@ import { rebuildContainer } from "../workflows/rebuildContainer";
 import { openFolderInContainer } from "../workflows/openFolder";
 import { cloneInVolume } from "../workflows/cloneInVolume";
 import { attachToContainer } from "../workflows/attachToContainer";
+import { CancelledError } from "../workflows/postLaunch";
 import type { SidebarProvider } from "../sidebar/provider";
 import {
   guardHostContext,
@@ -38,6 +39,7 @@ import {
 } from "./guards";
 import { isInDevContainerWindow } from "./state";
 import { dockerVolumeCreate } from "../utils/dockerUtils";
+import { getDockerPath } from "../docker/execPolicy.js";
 import type { Host } from "./host";
 import { registerCommand, type CommandSpec } from "./commandRunner";
 import { ProvisionFailedError } from "../devcontainer/provisionError";
@@ -149,12 +151,12 @@ export async function cloneInVolumeHandler(ctx: CommandContext): Promise<void> {
     prompt: "Enter the repository URL to clone",
     placeHolder: "https://github.com/owner/repo.git",
   });
-  if (!repoUrl) return;
+  if (!repoUrl) throw new CancelledError();
   const cloneUI = buildCloneInVolumeUI(ctx.ui, repoUrl);
   await cloneInVolume(ctx.deps, cloneUI, { repoUrl });
 }
 
-export async function createVolumeHandler(_ctx: CommandContext): Promise<void> {
+export async function createVolumeHandler(ctx: CommandContext): Promise<void> {
   const name = await vscode.window.showInputBox({
     prompt: "Enter a name for the new volume",
     placeHolder: "my-volume",
@@ -163,17 +165,22 @@ export async function createVolumeHandler(_ctx: CommandContext): Promise<void> {
         ? undefined
         : "Invalid volume name",
   });
-  if (!name) return;
+  if (!name) throw new CancelledError();
   const trimmed = name.trim();
   const result = await dockerVolumeCreate(trimmed, {
+    dockerPath: getDockerPath(),
     labels: { "com.artizo.managed": "true" },
   });
   if (result.exitCode !== 0) {
+    ctx.buildLogPty.writeLine(
+      `${BRAND_PREFIX} Failed to create volume ${trimmed}: ${result.stderr}`,
+    );
     vscode.window.showErrorMessage(
       `${BRAND_PREFIX} Failed to create volume: ${result.stderr}`,
     );
     return;
   }
+  ctx.buildLogPty.writeLine(`${BRAND_PREFIX} Created volume: ${trimmed}`);
   vscode.window.showInformationMessage(
     `${BRAND_PREFIX} Created volume: ${trimmed}`,
   );
@@ -206,7 +213,7 @@ export async function cleanUpContainersHandler(
     ],
     { placeHolder: "What should be cleaned up?" },
   );
-  if (!shouldRemoveImages) return;
+  if (!shouldRemoveImages) throw new CancelledError();
 
   const removeImages = shouldRemoveImages !== "Containers only";
   const removeVolumes =

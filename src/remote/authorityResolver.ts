@@ -22,6 +22,7 @@ import {
   tcpRelayScript,
   pipeDockerRelay,
 } from "../utils/dockerUtils";
+import { getDockerPath } from "../docker/execPolicy.js";
 import type { IServerManager } from "./serverManager";
 import type { ProxyAuthorityInfo } from "./containerProxy";
 import { startManagedSshTunnel, type TunnelController } from "./sshTunnel";
@@ -121,7 +122,7 @@ export class RemoteAuthorityResolver {
   private readonly tunnels: Map<number, TunnelController> = new Map();
 
   constructor(options?: AuthorityResolverOptions) {
-    this.dockerPath = options?.dockerPath ?? "docker";
+    this.dockerPath = options?.dockerPath ?? getDockerPath();
     this.serverManager = options?.serverManager;
     this.extensionPath = options?.extensionPath;
     logToFile("=== RemoteAuthorityResolver created ===");

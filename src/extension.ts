@@ -23,6 +23,7 @@ import {
   createServices,
   createBuildLogTerminal,
   autoDetectDevcontainer,
+  type ExtensionSettings,
 } from "./host/services";
 import { registerCoreCommands, type CommandContext } from "./host/commands";
 import { bootstrapRemoteSideLoad } from "./remote/sideload";
@@ -42,7 +43,15 @@ import {
   canDriveDocker,
   type DetectedTier,
 } from "./host/state";
-import { showDeprecationNotice } from "./lifecycle/deprecation";
+import {
+  configureDockerPath,
+  configureRuntimeKind,
+  resolveRuntime,
+} from "./docker/execPolicy";
+import {
+  configureApiDockerPath,
+  configureApiRuntimeKind,
+} from "./devcontainer/api";
 
 /**
  * Called when the extension is activated.
@@ -81,20 +90,6 @@ export async function activate(
       getLogger().show();
     }),
   );
-
-  // Deprecation notice for the trae and devin builds. Runs before any other
-  // registration so the "replacement already installed" branch can bail out
-  // of activate entirely (zero view/command/resolver conflicts with the
-  // supported build). The "no replacement yet" branch sets a context key so
-  // the sidebar can show an unremovable install-replacement banner, then
-  // continues to activate normally.
-  const deprecation = await showDeprecationNotice(context);
-  if (deprecation.deprecated && deprecation.replacementInstalled) {
-    getLogger().info(
-      `Artizo ${deprecation.selfId} is deprecated and a supported build is installed; registering nothing.`,
-    );
-    return;
-  }
 
   getLogger().info(`${BRAND} activating...`);
   getLogger().info(`Extension path: ${context.extensionPath}`);
@@ -284,8 +279,48 @@ async function activateInternal(
   buildLogTerminal: { show(preserveFocus?: boolean): void },
   detected: DetectedTier,
 ): Promise<void> {
-  // 2. Read settings, read productInfo, create Host
-  const settings = readSettings();
+  // 2. Read settings, resolve the Docker runtime (docker or wslc), create Host.
+  const rawSettings = readSettings();
+  const runtime = await resolveRuntime({
+    platform: process.platform,
+    dockerPath: rawSettings.dockerPath,
+    wslcPath: rawSettings.wslcPath,
+    useWslc: rawSettings.useWslcIfInstalled,
+  });
+  configureDockerPath(runtime.path);
+  configureRuntimeKind(runtime.kind);
+  configureApiDockerPath(runtime.path);
+  configureApiRuntimeKind(runtime.kind);
+  getLogger().info(
+    `[activate] runtime=${runtime.kind} path=${runtime.path}`,
+  );
+  // Opted in but wslc didn't win on Windows: wslc not installed / not on PATH.
+  if (
+    rawSettings.useWslcIfInstalled &&
+    process.platform === "win32" &&
+    runtime.kind === "docker"
+  ) {
+    void vscode.window
+      .showErrorMessage(
+        "wslc not found. Install with `wsl --update` (WSL 2.9.3+) and reload.",
+        "Open WSL install docs",
+      )
+      .then((choice) => {
+        if (choice === "Open WSL install docs") {
+          vscode.env.openExternal(
+            vscode.Uri.parse(
+              "https://learn.microsoft.com/en-us/windows/wsl/wsl-container",
+            ),
+          );
+        }
+      });
+  }
+  // settings.dockerPath is the resolved runtime path for all downstream
+  // consumers (Host, resolver, services, command context).
+  const settings: ExtensionSettings = {
+    ...rawSettings,
+    dockerPath: runtime.path,
+  };
 
   // 3. Read product.json for commit and platform info (used by ServerManager)
   const productInfo = await loadProductInfo();

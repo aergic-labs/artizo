@@ -123,6 +123,7 @@ import {
   closeRemoteConnectionHandler,
   registerCoreCommands,
 } from "../../src/host/commands";
+import { CancelledError } from "../../src/workflows/postLaunch";
 
 function mockCtx(overrides: Partial<CommandContext> = {}): CommandContext {
   // Reset mutable mock state that could leak between tests
@@ -276,14 +277,15 @@ describe("command handlers", () => {
   });
 
   describe("cleanUpContainersHandler", () => {
-    it("exits early when user cancels the pick", async () => {
+    it("throws CancelledError when user cancels the pick", async () => {
       const ctx = mockCtx();
       vi.mocked(vscode.window.showQuickPick).mockResolvedValue(
         undefined as any,
       );
 
-      await cleanUpContainersHandler(ctx);
-
+      await expect(cleanUpContainersHandler(ctx)).rejects.toBeInstanceOf(
+        CancelledError,
+      );
       expect(vscode.window.withProgress).not.toHaveBeenCalled();
     });
 
@@ -535,12 +537,13 @@ describe("command handlers", () => {
   });
 
   describe("cloneInVolumeHandler", () => {
-    it("returns early when user cancels input", async () => {
+    it("throws CancelledError when user cancels input", async () => {
       const ctx = mockCtx();
       vi.mocked(vscode.window.showInputBox).mockResolvedValue(undefined);
 
-      await cloneInVolumeHandler(ctx);
-
+      await expect(cloneInVolumeHandler(ctx)).rejects.toBeInstanceOf(
+        CancelledError,
+      );
       expect(cloneInVolume).not.toHaveBeenCalled();
     });
 

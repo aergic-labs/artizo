@@ -9,6 +9,14 @@ vi.mock("../../src/utils/logger", () => ({
   getLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
 
+vi.mock("vscode", () => ({
+  workspace: {
+    getConfiguration: vi.fn().mockReturnValue({
+      get: vi.fn().mockReturnValue("docker"),
+    }),
+  },
+}));
+
 import {
   ExtensionInstaller,
   DEFAULT_EXTENSIONS_INSTALL_PATH,
@@ -316,7 +324,7 @@ describe("extensionInstaller", () => {
           const child = createMockSpawnChild({});
           captures.push("");
           const idx = captures.length - 1;
-          child.stdin.on("data", (c: Buffer) => {
+          child.stdin!.on("data", (c: Buffer) => {
             captures[idx] += c.toString();
           });
           return child;

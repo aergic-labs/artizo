@@ -245,7 +245,11 @@ describe("services", () => {
   describe("registerResolverEarly", () => {
     it("creates and registers the authority resolver", () => {
       const context = { subscriptions: [] } as any;
-      const settings: ExtensionSettings = { dockerPath: "docker" };
+      const settings: ExtensionSettings = {
+        dockerPath: "docker",
+        wslcPath: "wslc",
+        useWslcIfInstalled: false,
+      };
 
       const resolver = registerResolverEarly(context, settings);
 
@@ -316,7 +320,11 @@ describe("services", () => {
           update: vi.fn().mockResolvedValue(undefined),
         },
       } as any;
-      const settings: ExtensionSettings = { dockerPath: "docker" };
+      const settings: ExtensionSettings = {
+        dockerPath: "docker",
+        wslcPath: "wslc",
+        useWslcIfInstalled: false,
+      };
       const resolver = makeResolver();
       const productInfo: ProductInfo = {
         commit: "abc",
@@ -369,7 +377,11 @@ describe("services", () => {
           update: vi.fn().mockResolvedValue(undefined),
         },
       } as any;
-      const settings: ExtensionSettings = { dockerPath: "docker" };
+      const settings: ExtensionSettings = {
+        dockerPath: "docker",
+        wslcPath: "wslc",
+        useWslcIfInstalled: false,
+      };
       const resolver = makeResolver();
       const productInfo: ProductInfo = {
         commit: "abc",

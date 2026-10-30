@@ -19,6 +19,7 @@ import {
   getConfigFile,
   isDevContainer,
 } from "../devcontainer/labels";
+import { listJsonFormat } from "../docker/execPolicy.js";
 
 export interface ContainerInfo {
   id: string;
@@ -43,7 +44,7 @@ export class ContainerService {
     getLogger().info("refreshContainers: called");
     const result = await this.host.exec({
       cmd: this.host.dockerPath,
-      args: ["ps", "-a", "--no-trunc", "--format", "{{json .}}"],
+      args: ["ps", "-a", "--no-trunc", "--format", listJsonFormat()],
     });
 
     getLogger().info(

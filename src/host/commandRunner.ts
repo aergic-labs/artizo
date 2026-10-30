@@ -21,6 +21,7 @@ import {
 } from "./guards";
 import { ProvisionFailedError } from "../devcontainer/provisionError";
 import { reportProvisionFailure } from "./reportProvisionFailure";
+import { CancelledError } from "../workflows/postLaunch";
 import type { CommandContext } from "./commands";
 
 export interface CommandSpec {
@@ -82,6 +83,11 @@ export function registerCommand(
         ctx.buildLogPty.writeLine(`${BRAND_PREFIX} Done.`);
       } catch (err: unknown) {
         const error = err instanceof Error ? err : new Error(String(err));
+        if (error instanceof CancelledError) {
+          logger.info(`${spec.label} cancelled`);
+          ctx.buildLogPty.writeLine(`${BRAND_PREFIX} Cancelled.`);
+          return;
+        }
         logger.error(`${spec.label} failed`, error);
         ctx.buildLogPty.writeLine(`${BRAND_PREFIX} ERROR: ${error.message}`);
         if (error.stack) ctx.buildLogPty.writeLine(error.stack);

@@ -13,6 +13,7 @@ import {
   type ExecFileException,
 } from "node:child_process";
 import type { Socket } from "node:net";
+import { getDockerPath } from "../docker/execPolicy.js";
 
 export interface ExecResult {
   exitCode: number;
@@ -78,7 +79,7 @@ export async function dockerInspectImage(
   imageRef: string,
   options?: { dockerPath?: string },
 ): Promise<ImagePlatformInfo> {
-  const docker = options?.dockerPath ?? "docker";
+  const docker = options?.dockerPath ?? getDockerPath();
   const result = await execFilePromise(docker, ["inspect", imageRef]);
 
   if (result.exitCode !== 0) {
@@ -102,7 +103,7 @@ export async function dockerExec(
   command: string[],
   options?: DockerExecOptions,
 ): Promise<ExecResult> {
-  const docker = options?.dockerPath ?? "docker";
+  const docker = options?.dockerPath ?? getDockerPath();
   const args: string[] = ["exec"];
 
   if (options?.user) {
@@ -126,7 +127,7 @@ export async function dockerInspect(
   containerId: string,
   options?: { dockerPath?: string },
 ): Promise<ContainerInfo> {
-  const docker = options?.dockerPath ?? "docker";
+  const docker = options?.dockerPath ?? getDockerPath();
   const result = await execFilePromise(docker, ["inspect", containerId]);
 
   if (result.exitCode !== 0) {
@@ -252,7 +253,7 @@ export function dockerSpawn(
   args: string[],
   options?: SpawnOptions,
 ): ChildProcess {
-  return spawn(dockerPath ?? "docker", args, options ?? {});
+  return spawn(dockerPath ?? getDockerPath(), args, options ?? {});
 }
 
 export function execFilePromise(
@@ -299,7 +300,7 @@ export async function dockerVolumeCreate(
       args.push("--label", `${k}=${v}`);
     }
   }
-  return execFilePromise(options?.dockerPath ?? "docker", args);
+  return execFilePromise(options?.dockerPath ?? getDockerPath(), args);
 }
 
 // Run a command in a temporary docker run --rm container.
@@ -316,5 +317,5 @@ export async function dockerRun(options: {
     }
   }
   args.push(options.image, ...options.command);
-  return execFilePromise(options.dockerPath ?? "docker", args);
+  return execFilePromise(options.dockerPath ?? getDockerPath(), args);
 }

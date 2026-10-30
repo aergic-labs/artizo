@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.10.0
+
+### Added
+
+- On Windows, wslc (WSL Containers CLI) runs devcontainers without Docker Desktop. Opt in with `artizo.useWslcIfInstalled`; `artizo.wslcPath` overrides the executable. Skips the vendored CLI's `buildx version` probe when active.
+
+### Removed
+
+- Trae and Devin standalone VSIX build paths (`make package-trae`/`package-devin`, `vendor/trae`/`vendor/devin`).
+- Deprecation toast and sidebar banner for the trae/devin VSIXes
+
+### Fixed
+
+- Reopen/attach/clone-in-volume pass the resolved Docker path to inspect/volume-rm, so wslc-managed containers/volumes are visible.
+- Volume create/clone-in-volume pass the resolved Docker path through, so wslc volumes land in wslc, not Docker Desktop.
+- Volume create logs the volume name (`Created volume: <name>`).
+- All Docker call sites route through `getDockerPath()`; no `dockerPath` arg can silently hit Docker Desktop when wslc is active.
+- wslc mount parsing: vendored `convertMountToVolume`/`parseMount` now split on `,` and `;`, so `;`-separated mounts and multi-mount dedup work.
+- Command-abort UX: canceling a prompt (clone-in-volume, create-volume, clean-up-containers) logs `Cancelled.` instead of `Done.`
+
 ## 0.9.0
 
 ### Added

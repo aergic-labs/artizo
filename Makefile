@@ -20,8 +20,6 @@
 #   make build            esbuild bundle only (no VSIX)
 #   make package          Build supported VSIX files (kiro, vscodium)
 #   make package-kiro     Build a single VSIX for Kiro
-#   make package-trae     Build a single VSIX for Trae (deprecated; one-off)
-#   make package-devin    Build a single VSIX for Devin (deprecated; one-off)
 #   make release VERSION=x.y.z   Bump version, check, package, tag
 #   make publish          Publish all VSIX files to Open VSX
 #   make docs            Regenerate vendor README templates from README.md
@@ -40,7 +38,7 @@
 #   OVSX_PAT environment variable (Personal Access Token from open-vsx.org)
 #   Publisher namespace claimed on Open VSX (one-time setup)
 
-.PHONY: setup check lint typecheck test test-all test-coverage coverage build package package-kiro package-trae package-devin package-vscodium release publish clean distclean sync-shared docs vscodium-versions
+.PHONY: setup check lint typecheck test test-all test-coverage coverage build package package-kiro package-vscodium release publish clean distclean sync-shared docs vscodium-versions
 
 # ── Sentinel files ─────────────────────────────────────────────
 
@@ -88,7 +86,7 @@ SHARED_FROM_ZYGOS := \
   test/unit/mergeConfig.test.ts:test/unit/mergeConfig.test.ts
 
 # Change this to update the vendored CLI. make does the rest.
-VENDOR_CLI_VERSION := v0.87.0
+VENDOR_CLI_VERSION := v0.90.0
 
 # ── Auto-setup (Make resolves these via file timestamps) ───────
 
@@ -159,12 +157,6 @@ package: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift docs
 package-kiro: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift docs
 	npm run package:kiro
 
-package-trae: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift docs
-	npm run package:trae
-
-package-devin: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift docs
-	npm run package:devin
-
 package-vscodium: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift docs
 	npm run package:vscodium
 
@@ -231,12 +223,13 @@ check-shared-drift:
     fi; \
   fi
 
-# ── README template sync ─────────────────────────────────────
+# ── README section lint ───────────────────────────────────────
 #
-# Regenerates vendor/README.template.md and vendor/vscodium/README.md
-# from sections in the main README.md. Edit README.md, then run `make docs`.
-# The vendor templates use {{section:name}} placeholders that are filled
-# from <!-- BEGIN:name --> ... <!-- END:name --> blocks in README.md.
+# Verifies vendor README templates (vendor/README.template.md,
+# vendor/vscodium/README.md) reference only sections that exist in
+# README.md (<!-- BEGIN:name --> ... <!-- END:name -->). Expansion of
+# {{section:name}} happens at package time in build-vsix.mjs, so shared
+# content lives once in README.md. Edit README.md sections there.
 
 docs:
 	@node scripts/build-readme.mjs

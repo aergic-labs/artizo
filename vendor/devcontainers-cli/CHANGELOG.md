@@ -2,6 +2,29 @@
 
 Notable changes.
 
+## October 2026
+
+### [0.90.0]
+- Fix registry inspection for valid `tag@digest` image references. (https://github.com/devcontainers/cli/pull/1311)
+- Fix relative symlink resolution in the install script. (https://github.com/devcontainers/cli/pull/1244)
+- Dependency updates:
+  - Bump basic-ftp from 5.3.1 to 6.2.3 (via resolution, get-uri still requires 5.x). (https://github.com/devcontainers/cli/pull/1345)
+  - Bump shell-quote from 1.9.0 to 1.11.0. (https://github.com/devcontainers/cli/pull/1337)
+  - Bump follow-redirects from 1.16.0 to 1.16.1. (https://github.com/devcontainers/cli/pull/1336)
+  - Bump ip-address from 10.5.0 to 10.7.5. (https://github.com/devcontainers/cli/pull/1343)
+  - Bump brace-expansion to 1.1.21, 2.1.7 and 5.0.12. (https://github.com/devcontainers/cli/pull/1342)
+  - Bump js-yaml from 4.3.1 to 4.3.2. (https://github.com/devcontainers/cli/pull/1329)
+
+## August 2026
+
+### [0.89.0]
+- Add opt-in OCI authentication hardening with `--oci-auth-hardening`, trusted cross-origin authentication host mappings, and diagnostics for measuring compatibility impact. (https://github.com/devcontainers/cli/pull/1278)
+
+## June 2026
+
+### [0.88.0]
+- Add WSLc support (https://github.com/devcontainers/cli/pull/1249)
+
 ## May 2026
 
 ### [0.87.0]

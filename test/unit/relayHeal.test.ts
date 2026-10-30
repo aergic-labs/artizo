@@ -5,6 +5,14 @@
 
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import type { ExecServer } from "../../src/remote/execServerBridge";
+vi.mock("vscode", () => ({
+  workspace: {
+    getConfiguration: vi.fn().mockReturnValue({
+      get: vi.fn().mockReturnValue("docker"),
+    }),
+  },
+}));
+
 import {
   probeRelayPort,
   healRelay,

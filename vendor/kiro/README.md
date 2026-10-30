@@ -20,6 +20,10 @@ Artizo Dev Containers provides the same functionality for Kiro by leveraging the
 - Docker CLI client (`docker`)
   - Alternatives like Podman or Rancher work too, provided their
     optional Docker CLI compatibility packages are installed and working.
+  - On Windows, [wslc](https://learn.microsoft.com/en-us/windows/wsl/wsl-container)
+    (WSL Containers CLI) runs devcontainers without Docker Desktop.
+    Must be installed and working. Enable **Use Wslc If Installed** in
+    settings to use it.
 
 That's it. Everything else is bundled with the extension.
 

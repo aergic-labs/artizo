@@ -14,43 +14,15 @@ development stack: SSH host + devcontainer chaining via
 
 ## Features
 
-- **SSH remotes** - open folders on a remote SSH host and run
-  devcontainers from there. Artizo installs itself onto the remote
-  on first connect.
-- **Container provisioning** - image, Dockerfile, or Docker Compose
-- **Auto-detected server download** - reads `product.json` to build the
-  correct REH server tarball URL for each fork (VSCodium, VSCode-OSS,
-  Trae, Devin, Antigravity, Qoder, etc.). Server tarballs are
-  checksum-verified before extraction. A configuration wizard
-  (`Artizo: Configure Server Download`) lets you override with a custom
-  template, pick a fork preset, test the URL, and configure checksum
-  sources.
-- **AI-assisted setup** - create, update, or repair devcontainer.json
-  with integrated AI assist
-- **JSON repair** - auto-fix syntax errors in broken config files
-- **Sidebar panel** - toggle GPU, privileged mode, mounts, ports, extensions
-- **Container lifecycle** - start, stop, rebuild, remove
-- **Port forwarding** - auto-detect and forward container ports
-- **Extension install** - install extensions from devcontainer.json
-  config into the container
-- **Extension mirroring** - copy locally-installed extensions onto SSH
-  remotes during setup
-- **SSH agent forwarding** - use host SSH keys inside the container
-- **Git config copy** - mirror host `.gitconfig` into the container
-- **Zygos integration** - when [Zygos](https://github.com/aergic-labs/zygos)
-  is installed as the remote-ssh plugin, Artizo uses its ExecServer API to
-  connect to devcontainers without a second SSH authentication or
-  password prompt
+{{section:features-head}}
+- **AI-assisted setup** - create, update, or repair devcontainer.json with integrated AI assist
+{{section:features-tail}}
 
 ## Requirements
 
 - A supported VS Code fork: VSCodium, VSCode-OSS, Trae,
   Devin, Antigravity, Qoder, Windsurf, or other VS Code fork.
-- Docker CLI client (`docker`)
-  - Alternatives like Podman or Rancher work too, provided their
-    optional Docker CLI compatibility packages are installed and working.
-
-Everything else is bundled with the extension.
+{{section:requirements-tail}}
 
 ## Disabling other Dev Containers extensions
 
@@ -90,6 +62,8 @@ before using Artizo:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `artizo.dockerPath` | `docker` | Path to the Docker executable. |
+| `artizo.wslcPath` | `wslc` | Path to the wslc (WSL Containers CLI) executable. Probed on Windows when **Use Wslc If Installed** is on. |
+| `artizo.useWslcIfInstalled` | `false` | On Windows, prefer wslc over Docker for devcontainer provisioning. wslc has no Compose runtime and cannot bind-mount WSL host paths; uncheck for those projects. |
 | `artizo.sshPath` | `""` | Path to the ssh executable used for remote SSH tunnels and side-load. When empty, Artizo uses the Windows OpenSSH client if present, otherwise ssh from PATH. |
 | `artizo.copyGitConfig` | `true` | Copy host `.gitconfig` into dev containers. |
 | `artizo.askpass` | `true` | Surface SSH password/passphrase prompts as VS Code input boxes. |
@@ -147,9 +121,4 @@ setup and automated build-failure diagnosis.
 
 ## License
 
-GNU Affero General Public License v3.0 (AGPL-3.0). See [LICENSE](LICENSE) for
-the full text.
-
-Commercial licensing: contact@aergic.com
-
-© 2026 Aergic Labs, LLC | [aergic.com](https://aergic.com)
+{{section:license}}

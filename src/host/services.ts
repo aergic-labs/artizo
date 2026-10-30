@@ -45,6 +45,8 @@ import { FolderHistoryManager } from "../remote/folderHistory";
  */
 export interface ExtensionSettings {
   dockerPath: string;
+  wslcPath: string;
+  useWslcIfInstalled: boolean;
 }
 
 /**
@@ -54,6 +56,8 @@ export function readSettings(): ExtensionSettings {
   const config = vscode.workspace.getConfiguration("artizo");
   return {
     dockerPath: config.get<string>("dockerPath", "docker"),
+    wslcPath: config.get<string>("wslcPath", "wslc"),
+    useWslcIfInstalled: config.get<boolean>("useWslcIfInstalled", false),
   };
 }
 

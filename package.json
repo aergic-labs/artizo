@@ -2,7 +2,7 @@
   "name": "artizo",
   "displayName": "Artizo Dev Containers",
   "description": "Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "publisher": "aergic",
   "productName": "Artizo",
   "license": "AGPL-3.0-only",
@@ -28,6 +28,8 @@
       "description": "Container provisioning, credential forwarding, and dotfiles run commands derived from workspace and user configuration. Settings that feed executables or clone/run scripts are restricted until you trust the workspace.",
       "restrictedConfigurations": [
         "artizo.dockerPath",
+        "artizo.wslcPath",
+        "artizo.useWslcIfInstalled",
         "artizo.sshPath",
         "artizo.dotfiles.repository",
         "artizo.dotfiles.installCommand",
@@ -466,7 +468,17 @@
         "artizo.dockerPath": {
           "type": "string",
           "default": "docker",
-          "description": "Path to the Docker executable."
+          "description": "Path to the Docker executable. Used unless wslc wins the runtime gate (Windows + artizo.useWslcIfInstalled + wslc present)."
+        },
+        "artizo.wslcPath": {
+          "type": "string",
+          "default": "wslc",
+          "description": "Path to the wslc (WSL Containers CLI) executable. Probed on Windows when artizo.useWslcIfInstalled is true."
+        },
+        "artizo.useWslcIfInstalled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Opt-in: prefer wslc over Docker for devcontainer provisioning on Windows. wslc has no Compose runtime and cannot bind-mount WSL host paths (e.g. docker-in-docker); uncheck for those projects."
         },
         "artizo.sshPath": {
           "type": "string",
@@ -545,8 +557,6 @@
     "test:integration": "vitest run test/integration/ --testTimeout=60000",
     "test:all": "vitest run",
     "package:kiro": "node scripts/build-vsix.mjs --target=kiro",
-    "package:trae": "node scripts/build-vsix.mjs --target=trae",
-    "package:devin": "node scripts/build-vsix.mjs --target=devin",
     "package:vscodium": "node scripts/build-vsix.mjs --target=vscodium"
   },
   "devDependencies": {

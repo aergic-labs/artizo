@@ -12,6 +12,14 @@ vi.mock("../../src/utils/logger", () => ({
   getLogger: () => ({ info: vi.fn(), error: vi.fn(), debug: vi.fn(), trace: vi.fn(), warn: vi.fn() }),
 }));
 
+vi.mock("vscode", () => ({
+  workspace: {
+    getConfiguration: vi.fn().mockReturnValue({
+      get: vi.fn().mockReturnValue("docker"),
+    }),
+  },
+}));
+
 import { parseHome, ContainerBootstrap } from "../../src/remote/bootstrap";
 
 function makeChild() {

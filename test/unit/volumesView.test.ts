@@ -61,6 +61,9 @@ vi.mock("node:child_process", () => ({
 vi.mock("../../src/docker/execPolicy.js", () => ({
   configureDockerPath: vi.fn(),
   dockerExecPolicy: vi.fn(),
+  listJsonFormat: () => "{{json .}}",
+  isWslcRuntime: () => false,
+  getDockerPath: () => "docker",
 }));
 
 import * as vscode from "vscode";

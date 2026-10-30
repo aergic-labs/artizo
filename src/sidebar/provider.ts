@@ -28,7 +28,6 @@ import { AiAssistController } from "./aiAssistController";
 import { getHostWorkspaceFolder } from "../utils/uriUtils";
 import type { Host } from "../host/host";
 import { detectPlatformName } from "../platform/index.js";
-import { getDeprecationState } from "../lifecycle/deprecation";
 
 /**
  * Allowlist of commands the sidebar webview may invoke via action/runCommand
@@ -315,7 +314,6 @@ export class SidebarProvider
     aiFixConfig: () => this.ai.aiFixConfig(),
     openConfigFile: () => this.configEdit.openConfigFileInEditor(),
     repairConfig: () => this.configEdit.repairConfig(),
-    deprecationAction: (m) => this.handleDeprecationAction(m),
   };
 
   private async handleMessage(message: WebviewMessage): Promise<void> {
@@ -395,39 +393,6 @@ export class SidebarProvider
     }
   }
 
-  // Deprecation banner action (install replacement / uninstall this build)
-  private async handleDeprecationAction(
-    m: Extract<WebviewMessage, { type: "deprecationAction" }>,
-  ): Promise<void> {
-    if (m.action === "install" && m.recommendedId) {
-      await vscode.commands.executeCommand(
-        "workbench.extensions.action.showExtensionsWithIds",
-        [m.recommendedId],
-      );
-      return;
-    }
-    if (m.action === "uninstall" && m.selfId) {
-      try {
-        await vscode.commands.executeCommand(
-          "workbench.extensions.uninstallExtension",
-          m.selfId,
-        );
-        const reload = await vscode.window.showInformationMessage(
-          `Artizo: uninstalled ${m.selfId}. Reload to finish.`,
-          "Reload Now",
-        );
-        if (reload === "Reload Now") {
-          await vscode.commands.executeCommand("workbench.action.reloadWindow");
-        }
-      } catch {
-        await vscode.commands.executeCommand(
-          "workbench.extensions.action.showExtensionsWithIds",
-          [m.selfId],
-        );
-      }
-    }
-  }
-
   // Clone in Volume
   private async handleCloneInVolume(): Promise<void> {
     await vscode.commands.executeCommand("artizo.cloneInVolume");
@@ -481,68 +446,6 @@ export class SidebarProvider
       );
     }
 
-    // Deprecation banner for trae/devin builds. Unremovable, always visible
-    // for the deprecated build (independent of the toast dismiss flag).
-    const deprecation = getDeprecationState();
-    if (deprecation?.deprecated) {
-      const banner = buildDeprecationBanner(deprecation);
-      html = html.replace('<div id="root">', `<div id="root">${banner}`);
-    }
-
     return html;
   }
-}
-
-/**
- * Build the unremovable deprecation banner HTML. Two variants:
- *  - replacementInstalled: "uninstall this deprecated build" button
- *  - no replacement: "install replacement" button (recommended build).
- *
- * The buttons postMessage `deprecationAction` to the host; the host then
- * runs the actual command (showExtensionsWithIds or uninstallExtension). The
- * webview itself can't run vscode.commands directly and the allowlist above
- * gates which commands the host will accept from the webview.
- */
-function buildDeprecationBanner(state: {
-  selfId: string;
-  recommendedReplacementId: string | null;
-  replacementInstalled: boolean;
-}): string {
-  if (state.replacementInstalled) {
-    const data = encodeURIComponent(
-      JSON.stringify({ action: "uninstall", selfId: state.selfId }),
-    );
-    return (
-      `<div class="deprecation-banner" role="alert">` +
-      `<div class="deprecation-banner-text">` +
-      `<strong>Artizo:</strong> this deprecated ${state.selfId} build ` +
-      `is no longer updated. A supported Artizo build is installed; ` +
-      `uninstall this one to avoid conflicts.` +
-      `</div>` +
-      `<button class="deprecation-banner-btn" ` +
-      `data-action="deprecationAction" data-payload="${data}">` +
-      `Uninstall this deprecated build` +
-      `</button>` +
-      `</div>`
-    );
-  }
-  const recommended = state.recommendedReplacementId ?? "";
-  const platform = detectPlatformName();
-  const recommendLabel =
-    platform === "Kiro" ? "Kiro Artizo" : "VSCodium Artizo";
-  const data = encodeURIComponent(
-    JSON.stringify({ action: "install", recommendedId: recommended }),
-  );
-  return (
-    `<div class="deprecation-banner" role="alert">` +
-    `<div class="deprecation-banner-text">` +
-    `<strong>Artizo:</strong> this deprecated build is no longer updated. ` +
-    `Install ${recommendLabel} (${recommended}) to keep getting updates.` +
-    `</div>` +
-    `<button class="deprecation-banner-btn" ` +
-    `data-action="deprecationAction" data-payload="${data}">` +
-    `Install replacement` +
-    `</button>` +
-    `</div>`
-  );
 }

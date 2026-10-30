@@ -34,6 +34,9 @@ vi.mock("vscode", () => {
       }),
     },
     workspace: {
+      getConfiguration: () => ({
+        get: (_key: string, fallback: unknown) => fallback,
+      }),
       fs: {
         stat: async (uri: { fsPath: string }) => {
           if (realFs.existsSync(uri.fsPath)) {

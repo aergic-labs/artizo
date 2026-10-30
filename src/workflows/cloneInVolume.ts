@@ -4,7 +4,12 @@
  */
 
 import * as vscode from "vscode";
-import { execFilePromise, dockerVolumeCreate, dockerRun } from "../utils/dockerUtils";
+import {
+  execFilePromise,
+  dockerVolumeCreate,
+  dockerRun,
+} from "../utils/dockerUtils";
+import { getDockerPath } from "../docker/execPolicy.js";
 import { BRAND, BRAND_PREFIX } from "../utils/constants";
 import type { BuildResult, WorkflowDependencies, WorkflowUI } from "./types";
 import {
@@ -68,6 +73,7 @@ export async function cloneInVolume(
           progress.report({ message: `Cloning ${repoUrl}...` });
 
           const createResult = await dockerVolumeCreate(volumeName, {
+            dockerPath: getDockerPath(),
             labels: { "com.artizo.managed": "true" },
           });
           if (createResult.exitCode !== 0) {
@@ -77,6 +83,7 @@ export async function cloneInVolume(
 
           progress.report({ message: "Cloning repository into volume..." });
           const cloneResult = await dockerRun({
+            dockerPath: getDockerPath(),
             image: "alpine/git",
             command: ["clone", repoUrl, "/workspace"],
             volumes: [{ source: volumeName, target: "/workspace" }],
@@ -93,6 +100,7 @@ export async function cloneInVolume(
       // volume. The CLI default (no devcontainer.json) is not a useful
       // outcome for a clone-in-volume workflow.
       const checkResult = await dockerRun({
+        dockerPath: getDockerPath(),
         image: "alpine",
         command: ["test", "-f", "/workspace/.devcontainer/devcontainer.json"],
         volumes: [{ source: volumeName, target: "/workspace" }],
@@ -102,6 +110,7 @@ export async function cloneInVolume(
 
       if (!hasConfig) {
         const checkAltResult = await dockerRun({
+          dockerPath: getDockerPath(),
           image: "alpine",
           command: ["test", "-f", "/workspace/.devcontainer.json"],
           volumes: [{ source: volumeName, target: "/workspace" }],
@@ -196,9 +205,11 @@ export async function cloneInVolume(
       // Any failure/cancellation path: reclaim the volume so we don't leak a
       // cloned repo that nothing will ever manage.
       if (volumeCreated) {
-        await execFilePromise("docker", ["volume", "rm", volumeName]).catch(
-          () => {},
-        );
+        await execFilePromise(getDockerPath(), [
+          "volume",
+          "rm",
+          volumeName,
+        ]).catch(() => {});
       }
       throw err;
     }

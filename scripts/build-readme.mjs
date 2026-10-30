@@ -1,32 +1,25 @@
 #!/usr/bin/env node
 /**
- * Build vendor README templates from the main README.
+ * Verify vendor README templates resolve against README.md sections.
  *
- * The main README.md contains sections delimited by HTML comments:
+ * README.md has sections delimited by:
  *   <!-- BEGIN:name --> ... <!-- END:name -->
  *
  * Template files (vendor/README.template.md, vendor/vscodium/README.md)
- * reference these via {{section:name}} placeholders. This script extracts
- * sections from README.md and substitutes them into each template, then
- * applies the existing {{NAME}} / {{URL}} substitution at package time.
+ * reference these via {{section:name}} placeholders. Expansion happens
+ * at package time in build-vsix.mjs. This script just checks every
+ * placeholder resolves to a section in README.md. Does not write.
  *
  * Run via: make docs
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const root = import.meta.dirname
   ? path.resolve(import.meta.dirname, "..")
   : path.resolve("..");
 
-const readmePath = path.join(root, "README.md");
-const templates = [
-  path.join(root, "vendor", "README.template.md"),
-  path.join(root, "vendor", "vscodium", "README.md"),
-];
-
-// Extract sections from the main README.
-const readme = readFileSync(readmePath, "utf-8");
+const readme = readFileSync(path.join(root, "README.md"), "utf-8");
 const sections = {};
 const re = /<!-- BEGIN:(\S+) -->\r?\n([\s\S]*?)<!-- END:\1 -->/g;
 let m;
@@ -34,26 +27,28 @@ while ((m = re.exec(readme)) !== null) {
   sections[m[1]] = m[2].replace(/\n$/, "");
 }
 
-let changed = false;
+const templates = [
+  path.join(root, "vendor", "README.template.md"),
+  path.join(root, "vendor", "vscodium", "README.md"),
+];
 
+let missing = 0;
 for (const tplPath of templates) {
-  let tpl = readFileSync(tplPath, "utf-8");
-  tpl = tpl.replace(/\{\{section:(\S+)\}\}/g, (_match, name) => {
-    const content = sections[name];
-    if (content === undefined) {
-      console.error(`  MISSING section "${name}" in README.md`);
-      process.exit(1);
+  const tpl = readFileSync(tplPath, "utf-8");
+  for (const match of tpl.matchAll(/\{\{section:(\S+)\}\}/g)) {
+    const name = match[1];
+    if (sections[name] === undefined) {
+      console.error(
+        `  MISSING section "${name}" in README.md (referenced by ${path.relative(root, tplPath)})`,
+      );
+      missing++;
     }
-    return content;
-  });
-
-  // Skip if unchanged.
-  const current = readFileSync(tplPath, "utf-8");
-  if (tpl === current) continue;
-
-  writeFileSync(tplPath, tpl, "utf-8");
-  console.log(`  updated ${path.relative(root, tplPath)}`);
-  changed = true;
+  }
 }
 
-if (!changed) console.log("  all templates up to date");
+if (missing > 0) {
+  console.error(`  ${missing} missing section(s)`);
+  process.exit(1);
+}
+
+console.log("  all section placeholders resolve");

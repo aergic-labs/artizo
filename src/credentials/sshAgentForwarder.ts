@@ -14,6 +14,7 @@ import type { ChildProcess } from "node:child_process";
 import { createConnection } from "node:net";
 import type { Host } from "../host/host";
 import { dockerSpawn, childPipes } from "../utils/dockerUtils";
+import { getDockerPath } from "../docker/execPolicy.js";
 
 export interface ISshAgentForwarder {
   setupSshAgentForwarding(
@@ -64,7 +65,7 @@ export class SshAgentForwarder implements ISshAgentForwarder {
   private hostConn: import("node:net").Socket | null = null;
 
   constructor(options: SshAgentForwarderOptions) {
-    this.dockerPath = options?.dockerPath ?? "docker";
+    this.dockerPath = options?.dockerPath ?? getDockerPath();
     this.host = options.host;
     this.hostSshAuthSock =
       options?.hostSshAuthSock ?? process.env.SSH_AUTH_SOCK;

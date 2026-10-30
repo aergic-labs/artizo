@@ -10,6 +10,7 @@ import { Log, makeLog } from '../spec-utils/log';
 import { Event } from '../spec-utils/event';
 import { escapeRegExCharacters } from '../spec-utils/strings';
 import { delay } from '../spec-common/async';
+import { OCIAuthDiagnostics } from '../spec-common/ociAuth';
 
 export interface ContainerDetails {
 	Id: string;
@@ -54,6 +55,9 @@ export interface DockerCLIParameters {
 	output: Log;
 	buildPlatformInfo: PlatformInfo;
 	targetPlatformInfo: PlatformInfo;
+	allowedCrossOriginAuthHosts?: string[];
+	ociAuthHardening?: boolean;
+	ociAuthDiagnostics: OCIAuthDiagnostics;
 }
 
 export interface PartialExecParameters {
@@ -77,7 +81,7 @@ export interface PartialPtyExecParameters {
 
 interface DockerResolverParameters {
 	dockerCLI: string;
-	isPodman: boolean;
+	cliVariant: CLIVariant;
 	dockerComposeCLI: () => Promise<DockerComposeCLI>;
 	dockerEnv: NodeJS.ProcessEnv;
 	common: {
@@ -171,6 +175,7 @@ export async function listContainers(params: DockerCLIParameters | PartialExecPa
 }
 
 export async function removeContainer(params: DockerCLIParameters | PartialExecParameters | DockerResolverParameters, nameOrId: string) {
+	const useEvents = !('cliVariant' in params && params.cliVariant === CLIVariant.Wslc);
 	let eventsProcess: Exec | undefined;
 	let removedSeenP: Promise<void> | undefined;
 	try {
@@ -184,7 +189,7 @@ export async function removeContainer(params: DockerCLIParameters | PartialExecP
 				if (i === n - 1 || !stderr.includes('already in progress')) {
 					throw err;
 				}
-				if (!removedSeenP) {
+				if (useEvents && !removedSeenP) {
 					eventsProcess = await getEvents(params, {
 						container: [nameOrId],
 						event: ['destroy'],
@@ -197,7 +202,11 @@ export async function removeContainer(params: DockerCLIParameters | PartialExecP
 						});
 					});
 				}
-				await Promise.race([removedSeenP, delay(1000)]);
+				if (removedSeenP) {
+					await Promise.race([removedSeenP, delay(1000)]);
+				} else {
+					await delay(1000);
+				}
 			}
 		}
 	} finally {
@@ -215,7 +224,7 @@ export async function getEvents(params: DockerCLIParameters | PartialExecParamet
 			filterArgs.push('--filter', `${filter}=${value}`);
 		}
 	}
-	const format = 'isPodman' in params && params.isPodman ? 'json' : '{{json .}}'; // https://github.com/containers/libpod/issues/5981
+	const format = 'cliVariant' in params && params.cliVariant === CLIVariant.Podman ? 'json' : '{{json .}}'; // https://github.com/containers/libpod/issues/5981
 	const combinedArgs = (args || []).concat(['events', '--format', format, ...filterArgs]);
 
 	const p = await exec({
@@ -260,13 +269,16 @@ export async function dockerBuildKitVersion(params: DockerCLIParameters | Partia
 	}
 }
 
-export async function dockerEngineVersion(params: DockerCLIParameters | PartialExecParameters | DockerResolverParameters): Promise<{ versionString: string; versionMatch?: string } | undefined> {
+export async function dockerEngineVersion(params: DockerCLIParameters | PartialExecParameters | DockerResolverParameters, options?: { useSimpleVersion?: boolean }): Promise<{ versionString: string; versionMatch?: string } | undefined> {
     try {
         const execParams = {
             ...toExecParameters(params),
             print: true,
         };
-        const result = await dockerCLI(execParams, 'version', '--format', '{{.Server.Version}}');
+        const args: string[] = options?.useSimpleVersion
+            ? ['version']
+            : ['version', '--format', '{{.Server.Version}}'];
+        const result = await dockerCLI(execParams, ...args);
         const versionString = result.stdout.toString().trim();
         const versionMatch = versionString.match(/(?<major>[0-9]+)\.(?<minor>[0-9]+)\.(?<patch>[0-9]+)/);
         if (!versionMatch) {
@@ -286,13 +298,26 @@ export async function dockerCLI(params: DockerCLIParameters | PartialExecParamet
 	});
 }
 
-export async function isPodman(params: PartialExecParameters) {
+export enum CLIVariant {
+	Docker = 'docker',
+	Podman = 'podman',
+	Wslc = 'wslc',
+}
+
+export async function lookupCLIVariant(params: PartialExecParameters): Promise<CLIVariant> {
 	try {
 		const { stdout } = await dockerCLI(params, '-v');
-		return stdout.toString().toLowerCase().indexOf('podman') !== -1;
-	} catch (err) {
-		return false;
+		const lower = stdout.toString().toLowerCase();
+		if (lower.indexOf('wslc') !== -1) {
+			return CLIVariant.Wslc;
+		}
+		if (lower.indexOf('podman') !== -1) {
+			return CLIVariant.Podman;
+		}
+	} catch (_err) {
+		// fall through
 	}
+	return CLIVariant.Docker;
 }
 
 export async function dockerPtyCLI(params: PartialPtyExecParameters | DockerResolverParameters | DockerCLIParameters, ...args: string[]) {

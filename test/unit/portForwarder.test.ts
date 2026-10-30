@@ -18,6 +18,14 @@ vi.mock('node:net', () => ({
 
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
+vi.mock('vscode', () => ({
+  workspace: {
+    getConfiguration: vi.fn().mockReturnValue({
+      get: vi.fn().mockReturnValue('docker'),
+    }),
+  },
+}));
+
 import { PortForwarder, type ForwardedPort } from '../../src/ports/portForwarder';
 
 const mockSpawn = vi.mocked(spawn);

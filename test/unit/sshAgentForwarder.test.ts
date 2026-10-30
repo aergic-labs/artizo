@@ -6,6 +6,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
 
+vi.mock("vscode", () => ({
+  workspace: {
+    getConfiguration: vi.fn().mockReturnValue({
+      get: vi.fn().mockReturnValue("docker"),
+    }),
+  },
+}));
+
 vi.mock("../../src/utils/dockerUtils", () => ({
   dockerExec: vi.fn(),
   dockerSpawn: vi.fn(),

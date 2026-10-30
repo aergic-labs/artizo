@@ -8,7 +8,7 @@
  * dev containers. Uses Docker CLI directly.
  */
 
-import { dockerExecPolicy } from "../docker/execPolicy.js";
+import { dockerExecPolicy, isWslcRuntime } from "../docker/execPolicy.js";
 import { MANAGED_LABEL } from "../utils/constants";
 
 /**
@@ -138,16 +138,28 @@ export class ContainerLifecycle implements IContainerLifecycle {
 
     const ids = new Set<string>();
     for (const labelFilter of labelFilters) {
-      const listResult = await this.execDocker([
-        "ps",
-        "-a",
-        "--filter",
-        `label=${labelFilter}`,
-        "--filter",
-        "status=exited",
-        "--format",
-        "{{.ID}}",
-      ]);
+      // wslc has no Go-template --format; use -q for IDs.
+      const listArgs = isWslcRuntime()
+        ? [
+            "ps",
+            "-a",
+            "-q",
+            "--filter",
+            `label=${labelFilter}`,
+            "--filter",
+            "status=exited",
+          ]
+        : [
+            "ps",
+            "-a",
+            "--filter",
+            `label=${labelFilter}`,
+            "--filter",
+            "status=exited",
+            "--format",
+            "{{.ID}}",
+          ];
+      const listResult = await this.execDocker(listArgs);
       if (listResult.exitCode === 0 && listResult.stdout.trim()) {
         for (const id of listResult.stdout.trim().split("\n").filter(Boolean)) {
           ids.add(id);
@@ -186,16 +198,28 @@ export class ContainerLifecycle implements IContainerLifecycle {
 
     // Remove unused volumes if requested
     if (options?.removeVolumes) {
-      const volumeResult = await this.execDocker([
-        "volume",
-        "ls",
-        "--filter",
-        "dangling=true",
-        "--filter",
-        `label=${MANAGED_LABEL}`,
-        "--format",
-        "{{.Name}}",
-      ]);
+      // wslc has no Go-template --format; use -q for names.
+      const volumeArgs = isWslcRuntime()
+        ? [
+            "volume",
+            "ls",
+            "-q",
+            "--filter",
+            "dangling=true",
+            "--filter",
+            `label=${MANAGED_LABEL}`,
+          ]
+        : [
+            "volume",
+            "ls",
+            "--filter",
+            "dangling=true",
+            "--filter",
+            `label=${MANAGED_LABEL}`,
+            "--format",
+            "{{.Name}}",
+          ];
+      const volumeResult = await this.execDocker(volumeArgs);
 
       if (volumeResult.exitCode === 0 && volumeResult.stdout.trim()) {
         const volumeNames = volumeResult.stdout

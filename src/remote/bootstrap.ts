@@ -17,6 +17,7 @@ import {
   dockerSpawn as realDockerSpawn,
   childPipes,
 } from "../utils/dockerUtils";
+import { getDockerPath } from "../docker/execPolicy.js";
 import { createTar } from "../utils/tar";
 
 // Constants
@@ -53,7 +54,7 @@ export class ContainerBootstrap {
   private readonly fetcher: typeof httpsGet;
 
   constructor(options: BootstrapOptions) {
-    this.dockerPath = options.dockerPath ?? "docker";
+    this.dockerPath = options.dockerPath ?? getDockerPath();
     this.extensionPath = options.extensionPath;
     this.spawner = options.spawner ?? realDockerSpawn;
     this.fetcher = options.fetcher ?? httpsGet;

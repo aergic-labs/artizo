@@ -1,8 +1,25 @@
 import { assert } from 'chai';
 import { getRef, getManifest, getBlob, getCollectionRef } from '../../spec-configuration/containerCollectionsOCI';
+import { createTestCommonParams } from '../testUtils';
 import { createPlainLog, LogLevel, makeLog } from '../../spec-utils/log';
 
 export const output = makeLog(createPlainLog(text => process.stdout.write(text), () => LogLevel.Trace));
+
+describe('registry scheme', () => {
+	const cases = [
+		{ identifier: 'localhost/owner/features/test', expected: 'http' },
+		{ identifier: 'localhost:5000/owner/features/test', expected: 'http' },
+		{ identifier: 'LOCALHOST:5000/owner/features/test', expected: 'http' },
+		{ identifier: '127.0.0.1:5000/owner/features/test', expected: 'https' },
+		{ identifier: 'registry.example:5000/owner/features/test', expected: 'https' },
+	];
+
+	for (const { identifier, expected } of cases) {
+		it(`uses '${expected}' for '${identifier}'`, () => {
+			assert.equal(getRef(output, identifier)?.scheme, expected);
+		});
+	}
+});
 
 describe('getCollectionRef()', async function () {
     this.timeout('240s');
@@ -91,6 +108,40 @@ describe('getRef()', async function () {
         assert.equal(feat.path, 'my-org/my-features/my-feat');
         assert.isUndefined(feat.tag);
         assert.equal(feat.digest, 'sha256:1234567890123456789012345678901234567890123456789012345678901234');
+        assert.equal(feat.digest, feat.version);
+    });
+
+    it('valid getRef() with a tag and digest', async () => {
+        const feat = getRef(output, 'mcr.microsoft.com/devcontainers/go:2.3.1-1.27-bookworm@sha256:adc326255c019241228f9da4a1cb5d6a89abaaa0eb8d926a355b00af7daafd00');
+        if (!feat) {
+            assert.fail('featureRef should not be undefined');
+        }
+        assert.ok(feat);
+        assert.equal(feat.id, 'go');
+        assert.equal(feat.namespace, 'devcontainers');
+        assert.equal(feat.owner, 'devcontainers');
+        assert.equal(feat.registry, 'mcr.microsoft.com');
+        assert.equal(feat.resource, 'mcr.microsoft.com/devcontainers/go');
+        assert.equal(feat.path, 'devcontainers/go');
+        assert.equal(feat.tag, '2.3.1-1.27-bookworm');
+        assert.equal(feat.digest, 'sha256:adc326255c019241228f9da4a1cb5d6a89abaaa0eb8d926a355b00af7daafd00');
+        assert.equal(feat.digest, feat.version);
+    });
+
+    it('valid getRef() with a registry port, tag, and digest', async () => {
+        const feat = getRef(output, 'docker.io:8001/devcontainers/templates/docker-from-docker:1.3.4@sha256:4ef08c9c3b708f3c2faecc5a898b39736423dd639f09f2a9f8bf9b0b9252ef0a');
+        if (!feat) {
+            assert.fail('featureRef should not be undefined');
+        }
+        assert.ok(feat);
+        assert.equal(feat.id, 'docker-from-docker');
+        assert.equal(feat.namespace, 'devcontainers/templates');
+        assert.equal(feat.owner, 'devcontainers');
+        assert.equal(feat.registry, 'docker.io:8001');
+        assert.equal(feat.resource, 'docker.io:8001/devcontainers/templates/docker-from-docker');
+        assert.equal(feat.path, 'devcontainers/templates/docker-from-docker');
+        assert.equal(feat.tag, '1.3.4');
+        assert.equal(feat.digest, 'sha256:4ef08c9c3b708f3c2faecc5a898b39736423dd639f09f2a9f8bf9b0b9252ef0a');
         assert.equal(feat.digest, feat.version);
     });
 
@@ -280,7 +331,7 @@ describe('Test OCI Pull', async function () {
         if (!featureRef) {
             assert.fail('featureRef should not be undefined');
         }
-        const manifest = await getManifest({ output, env: process.env }, 'https://ghcr.io/v2/codspace/features/ruby/manifests/1.0.13', featureRef);
+        const manifest = await getManifest(createTestCommonParams(output), 'https://ghcr.io/v2/codspace/features/ruby/manifests/1.0.13', featureRef);
         assert.isNotNull(manifest);
         assert.exists(manifest);
 
@@ -306,7 +357,7 @@ describe('Test OCI Pull', async function () {
         if (!featureRef) {
             assert.fail('featureRef should not be undefined');
         }
-        const blobResult = await getBlob({ output, env: process.env }, 'https://ghcr.io/v2/codspace/features/ruby/blobs/sha256:8f59630bd1ba6d9e78b485233a0280530b3d0a44338f472206090412ffbd3efb', '/tmp', '/tmp/featureTest', featureRef, 'sha256:8f59630bd1ba6d9e78b485233a0280530b3d0a44338f472206090412ffbd3efb');
+        const blobResult = await getBlob(createTestCommonParams(output), 'https://ghcr.io/v2/codspace/features/ruby/blobs/sha256:8f59630bd1ba6d9e78b485233a0280530b3d0a44338f472206090412ffbd3efb', '/tmp', '/tmp/featureTest', featureRef, 'sha256:8f59630bd1ba6d9e78b485233a0280530b3d0a44338f472206090412ffbd3efb');
         assert.isDefined(blobResult);
         assert.isArray(blobResult?.files);
     });

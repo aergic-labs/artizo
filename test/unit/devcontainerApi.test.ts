@@ -15,7 +15,11 @@ vi.mock("../../src/utils/logger", () => ({
   }),
 }));
 
-import { withDefaults, dotfilesFromConfig } from "../../src/devcontainer/api";
+import {
+  withDefaults,
+  dotfilesFromConfig,
+  configureApiRuntimeKind,
+} from "../../src/devcontainer/api";
 
 describe("devcontainer/api", () => {
   describe("withDefaults", () => {
@@ -110,6 +114,35 @@ describe("devcontainer/api", () => {
       } as any);
 
       expect((result as any).customField).toBe("value");
+    });
+
+    // wslc has no buildx subcommand; withDefaults forces useBuildKit 'never'
+    // so the vendored CLI skips its `<dockerPath> buildx version` probe
+    // (exits 1 on wslc, dumps ~35 help lines into the build log).
+    it("defaults useBuildKit to never when runtime kind is wslc", () => {
+      configureApiRuntimeKind("wslc");
+      try {
+        const log = vi.fn();
+        const result = withDefaults({ workspaceFolder: "/ws", log });
+        expect(result.useBuildKit).toBe("never");
+      } finally {
+        configureApiRuntimeKind("docker");
+      }
+    });
+
+    it("lets caller override useBuildKit even when runtime kind is wslc", () => {
+      configureApiRuntimeKind("wslc");
+      try {
+        const log = vi.fn();
+        const result = withDefaults({
+          workspaceFolder: "/ws",
+          log,
+          useBuildKit: "auto",
+        });
+        expect(result.useBuildKit).toBe("auto");
+      } finally {
+        configureApiRuntimeKind("docker");
+      }
     });
   });
 

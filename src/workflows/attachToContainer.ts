@@ -21,6 +21,7 @@ import {
   throwIfCancelled,
   CancelledError,
 } from "./postLaunch";
+import { getDockerPath } from "../docker/execPolicy.js";
 
 /**
  * Information about a running container for selection.
@@ -120,7 +121,9 @@ export async function attachToContainer(
       // matches an attach-by-name flow, so the two flows never share a config.
       try {
         const { dockerInspect } = await import("../utils/dockerUtils.js");
-        const info = await dockerInspect(params.containerId);
+        const info = await dockerInspect(params.containerId, {
+          dockerPath: getDockerPath(),
+        });
         selectedContainer = {
           id: params.containerId,
           name: info.name || params.containerId,

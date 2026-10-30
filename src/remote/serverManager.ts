@@ -39,6 +39,7 @@ import {
 } from "./userEnvProbe";
 
 import { ContainerBootstrap } from "./bootstrap";
+import { getDockerPath } from "../docker/execPolicy.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -251,7 +252,7 @@ export class ServerManager implements IServerManager {
   private probedContainerPath: string | undefined;
 
   constructor(options: ServerManagerOptions) {
-    this.dockerPath = options?.dockerPath ?? "docker";
+    this.dockerPath = options?.dockerPath ?? getDockerPath();
     this.host = options.host;
     this.productInfo = options?.productInfo ?? {
       commit: "unknown",

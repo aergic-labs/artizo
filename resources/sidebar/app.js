@@ -673,21 +673,6 @@ const handlers = {
       }
     }
   },
-
-  deprecationAction(target) {
-    let payload = {};
-    try {
-      payload = JSON.parse(decodeURIComponent(target.dataset.payload || "{}"));
-    } catch {
-      payload = {};
-    }
-    post({
-      type: "deprecationAction",
-      action: payload.action,
-      recommendedId: payload.recommendedId,
-      selfId: payload.selfId,
-    });
-  },
 };
 
 // Change handlers (for inputs, selects)

@@ -48,6 +48,7 @@ import {
   dockerSpawn,
   childPipes,
 } from "../utils/dockerUtils";
+import { getDockerPath } from "../docker/execPolicy.js";
 import { tarDirectory } from "../utils/tar";
 
 /**
@@ -127,7 +128,7 @@ export class ExtensionInstaller {
   private localExtCache = new Map<string, string | undefined>();
 
   constructor(options: ExtensionInstallerOptions) {
-    this.dockerPath = options?.dockerPath ?? "docker";
+    this.dockerPath = options?.dockerPath ?? getDockerPath();
     this.host = options.host;
     this.marketplace = new MarketplaceClient(options?.marketplaceOptions);
     this.extensionsDirOverride = options?.extensionsDir;
