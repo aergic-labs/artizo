@@ -39,11 +39,6 @@ export interface WorkflowDependencies {
    */
   extensionInstaller: ExtensionInstaller;
   /**
-   * Docker binary path (from `artizo.dockerPath` setting). Used by the
-   * State 4 workspace-side relay daemon to spawn `docker exec`.
-   */
-  dockerPath: string;
-  /**
    * Recent-folder history for the Remote Explorer. Captured at the open
    * path (`buildAuthorityAndOpen`) for the LocalHost tier; read by the
    * container explorer tree to render + reopen + forget.

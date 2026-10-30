@@ -39,7 +39,6 @@ import {
 } from "./userEnvProbe";
 
 import { ContainerBootstrap } from "./bootstrap";
-import { getDockerPath } from "../docker/execPolicy.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -225,7 +224,7 @@ export interface ServerManagerOptions {
 
 /** Server lifecycle manager implementation. */
 export class ServerManager implements IServerManager {
-  private readonly dockerPath: string;
+  private readonly dockerPathOverride: string | undefined;
   private readonly host: Host;
   private readonly productInfo: ProductInfo;
   private readonly telemetryLevel: string;
@@ -252,7 +251,7 @@ export class ServerManager implements IServerManager {
   private probedContainerPath: string | undefined;
 
   constructor(options: ServerManagerOptions) {
-    this.dockerPath = options?.dockerPath ?? getDockerPath();
+    this.dockerPathOverride = options?.dockerPath;
     this.host = options.host;
     this.productInfo = options?.productInfo ?? {
       commit: "unknown",
@@ -267,7 +266,7 @@ export class ServerManager implements IServerManager {
     this.telemetryLevel = options?.telemetryLevel ?? "off";
     this.bootstrap = options?.extensionPath
       ? new ContainerBootstrap({
-          dockerPath: this.dockerPath,
+          dockerPath: this.dockerPathOverride,
           extensionPath: options.extensionPath,
         })
       : null;

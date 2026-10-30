@@ -27,6 +27,7 @@ import * as path from "node:path";
 import { execFilePromise } from "../utils/dockerUtils";
 import { decodeAuthority } from "../utils/uriUtils";
 import { isInDevContainer } from "./state";
+import { getDockerPath } from "../docker/execPolicy.js";
 
 export type HostKind = "local" | "managed";
 
@@ -47,19 +48,19 @@ export class Host {
   readonly platform: NodeJS.Platform;
   readonly path: typeof path.posix | typeof path.win32;
   readonly workspace: string | undefined;
-  readonly dockerPath: string;
+  private readonly dockerPathOverride: string | undefined;
 
   private constructor(
     kind: HostKind,
     platform: NodeJS.Platform,
     workspace: string | undefined,
-    dockerPath: string,
+    dockerPathOverride: string | undefined,
   ) {
     this.kind = kind;
     this.platform = platform;
     this.path = platform === "win32" ? path.win32 : path.posix;
     this.workspace = workspace;
-    this.dockerPath = dockerPath;
+    this.dockerPathOverride = dockerPathOverride;
   }
 
   get isManaged(): boolean {
@@ -110,7 +111,7 @@ export class Host {
     }
     args.push(containerId, ...command);
 
-    return this.exec({ cmd: this.dockerPath, args });
+    return this.exec({ cmd: this.dockerPathOverride ?? getDockerPath(), args });
   }
 
   async readFile(
@@ -151,7 +152,7 @@ export class Host {
   }
 
   // Factory
-  static create(params: { dockerPath: string }): Host {
+  static create(params: { dockerPath?: string }): Host {
     // Managed container - workspace-side trapped inside a devcontainer.
     // Defensive only: the activation guard should prevent this, but if it
     // happens, exec() will throw rather than silently fail.

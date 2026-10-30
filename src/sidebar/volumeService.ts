@@ -13,7 +13,7 @@
 import * as vscode from "vscode";
 import type { Host } from "../host/host";
 import { MANAGED_LABEL } from "../utils/constants";
-import { listJsonFormat } from "../docker/execPolicy.js";
+import { listJsonFormat, getDockerPath } from "../docker/execPolicy.js";
 
 export interface VolumeInfo {
   name: string;
@@ -27,7 +27,7 @@ export class VolumeService {
   /** Fetch all managed Docker volumes. */
   async refreshVolumes(): Promise<VolumeInfo[]> {
     const result = await this.host.exec({
-      cmd: this.host.dockerPath,
+      cmd: getDockerPath(),
       args: [
         "volume",
         "ls",
@@ -56,7 +56,7 @@ export class VolumeService {
   ): Promise<void> {
     try {
       const result = await this.host.exec({
-        cmd: this.host.dockerPath,
+        cmd: getDockerPath(),
         args: ["volume", "inspect", volumeName],
       });
       const info = JSON.parse(result.stdout);
@@ -81,7 +81,7 @@ export class VolumeService {
         );
         if (confirmed === "Remove") {
           await this.host.exec({
-            cmd: this.host.dockerPath,
+            cmd: getDockerPath(),
             args: ["volume", "rm", volumeName],
           });
         }

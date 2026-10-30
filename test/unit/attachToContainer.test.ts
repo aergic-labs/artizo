@@ -23,7 +23,12 @@ vi.mock("vscode", () => ({
   ProgressLocation: { Notification: 15 },
   ExtensionKind: { UI: 1, Workspace: 2 },
   env: { remoteAuthority: undefined, remoteName: undefined },
-  workspace: { workspaceFolders: [] },
+  workspace: {
+    workspaceFolders: [],
+    getConfiguration: vi.fn().mockReturnValue({
+      get: vi.fn().mockImplementation((_k: string, fallback: string) => fallback),
+    }),
+  },
   Uri: { parse: (s: string) => ({ toString: () => s }) },
 }));
 
@@ -156,7 +161,6 @@ describe("attachToContainer", () => {
       configManager: createMockConfigManager(),
       serverManager: createMockServerManager(),
       gitConfigCopier: createMockGitConfigCopier(),
-      dockerPath: "docker",
       folderHistory: {
         addFolders: vi.fn().mockResolvedValue(undefined),
         removeFolder: vi.fn().mockResolvedValue(false),

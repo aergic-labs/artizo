@@ -152,7 +152,6 @@ function mockCtx(overrides: Partial<CommandContext> = {}): CommandContext {
       show: vi.fn(),
       dispose: vi.fn(),
     } as any,
-    dockerPath: "docker",
     extensionUri: vscode.Uri.file("/test/extension"),
     sidebarProvider: {
       loadConfig: vi.fn(),

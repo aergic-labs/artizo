@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.1
+
+### Fixed
+
+- Docker path reads live; toggling `useWslcIfInstalled` or swapping Docker for Podman takes effect without a reload. Runtime kind (docker vs wslc) stays cached and re-probes on config change.
+- `PortForwarder` no longer hardcodes `'docker'`; reads live like every other call site.
+- `checkDockerAvailable()` no longer takes a captured path arg.
+- Bumped `qs` to 6.17.1 to clear a moderate DoS advisory (transitive via `@vscode/vsce`, build-only).
+
 ## 0.10.0
 
 ### Added

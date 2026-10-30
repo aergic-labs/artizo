@@ -19,7 +19,7 @@ import {
   getConfigFile,
   isDevContainer,
 } from "../devcontainer/labels";
-import { listJsonFormat } from "../docker/execPolicy.js";
+import { listJsonFormat, getDockerPath } from "../docker/execPolicy.js";
 
 export interface ContainerInfo {
   id: string;
@@ -43,7 +43,7 @@ export class ContainerService {
   async refreshContainers(): Promise<ContainerInfo[]> {
     getLogger().info("refreshContainers: called");
     const result = await this.host.exec({
-      cmd: this.host.dockerPath,
+      cmd: getDockerPath(),
       args: ["ps", "-a", "--no-trunc", "--format", listJsonFormat()],
     });
 
@@ -83,7 +83,7 @@ export class ContainerService {
     containerId: string,
     containerName?: string,
   ): Promise<void> {
-    const docker = this.host.dockerPath;
+    const docker = getDockerPath();
 
     switch (action) {
       case "start":

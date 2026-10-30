@@ -18,6 +18,7 @@ import { getPlatformAdapter } from "../platform";
 import { getLogger } from "../utils/logger";
 import { getTier, ExecutionTier } from "../host/state";
 import { buildContainerAuthority } from "../remote/state4Authority";
+import { getDockerPath } from "../docker/execPolicy.js";
 import { FolderDescriptor } from "../remote/folderHistory";
 import {
   computeConfigHashes,
@@ -278,7 +279,7 @@ export async function buildAuthorityAndOpen(params: {
     connectionToken: params.connectionToken,
     workspaceFolder: params.workspaceFolder,
     workspacePath: params.workspacePath,
-    dockerPath: params.deps.dockerPath,
+    dockerPath: getDockerPath(),
     ui: params.ui,
   });
   const url = `vscode-remote://${authority}${params.uriPath}`;

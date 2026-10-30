@@ -58,7 +58,6 @@ export interface CommandContext {
   containerLifecycle: ContainerLifecycle;
   buildLogTerminal: { show(preserveFocus?: boolean): void };
   buildLogPty: LogOutputTerminal;
-  dockerPath: string;
   host?: Host;
   sidebarProvider: SidebarProvider;
   extensionUri: vscode.Uri;
@@ -356,7 +355,7 @@ export async function rebuildContainerMenuHandler(
     ctx.buildLogTerminal.show(true);
     ctx.buildLogPty.writeLine(`${BRAND_PREFIX} ${picked.label} starting...`);
     guardHostContext();
-    await checkDockerAvailable(ctx.dockerPath);
+    await checkDockerAvailable();
     guardHostContext();
     ctx.buildLogPty.writeLine(`${BRAND_PREFIX} Workspace: ${workspaceFolder}`);
     await rebuildContainer(ctx.deps, ctx.ui, {
@@ -402,7 +401,7 @@ export async function rebuildContainerHandler(
     }
 
     guardHostContext();
-    await checkDockerAvailable(ctx.dockerPath);
+    await checkDockerAvailable();
     guardHostContext();
     ctx.buildLogPty.writeLine(`${BRAND_PREFIX} Workspace: ${workspaceFolder}`);
     await rebuildContainer(ctx.deps, ctx.ui, {
@@ -450,7 +449,7 @@ export async function rebuildContainerNoCacheHandler(
     }
 
     guardHostContext();
-    await checkDockerAvailable(ctx.dockerPath);
+    await checkDockerAvailable();
     guardHostContext();
     await rebuildContainer(ctx.deps, ctx.ui, {
       workspaceFolder,

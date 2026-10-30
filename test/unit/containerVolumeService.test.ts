@@ -21,6 +21,9 @@ vi.mock("vscode", () => ({
   commands: { executeCommand: vi.fn() },
   workspace: {
     openTextDocument: vi.fn(),
+    getConfiguration: vi.fn().mockReturnValue({
+      get: vi.fn().mockReturnValue("docker"),
+    }),
   },
   languages: {
     setTextDocumentLanguage: vi.fn().mockResolvedValue(undefined),
@@ -41,7 +44,6 @@ import { VolumeService } from "../../src/sidebar/volumeService";
 function createMockHost() {
   return {
     kind: "local" as const,
-    dockerPath: "docker",
     exec: mockHostExec,
     onReady: vi.fn(() => ({ dispose: vi.fn() })),
   } as any;

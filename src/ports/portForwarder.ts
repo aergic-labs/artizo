@@ -18,6 +18,7 @@ import { dockerSpawn, tcpRelayScript, pipeDockerRelay } from '../utils/dockerUti
 import { getLogger } from '../utils/logger.js';
 import { createServer, type Server, type Socket } from 'node:net';
 import { EventEmitter } from 'node:events';
+import { getDockerPath } from '../docker/execPolicy.js';
 
 export interface ForwardedPort {
   containerPort: number;
@@ -48,7 +49,7 @@ export interface PortForwarderOptions {
 
 export class PortForwarder implements IPortForwarder {
   private readonly containerId: string;
-  private readonly dockerPath: string;
+  private readonly dockerPathOverride: string | undefined;
   private readonly installPath?: string;
   private readonly forwards = new Map<number, ActiveForward>();
   private readonly emitter = new EventEmitter();
@@ -56,7 +57,7 @@ export class PortForwarder implements IPortForwarder {
 
   constructor(options: PortForwarderOptions) {
     this.containerId = options.containerId;
-    this.dockerPath = options.dockerPath ?? 'docker';
+    this.dockerPathOverride = options.dockerPath;
     this.installPath = options.installPath;
   }
 
@@ -181,7 +182,7 @@ export class PortForwarder implements IPortForwarder {
       ? [`${this.installPath}/node`, `${this.installPath}/bin/relay.js`, String(containerPort)]
       : ['node', '-e', tcpRelayScript(containerPort)];
 
-    const child = dockerSpawn(this.dockerPath, [
+    const child = dockerSpawn(this.dockerPathOverride ?? getDockerPath(), [
       'exec',
       '-i',
       this.containerId,

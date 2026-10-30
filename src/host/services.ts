@@ -307,10 +307,8 @@ export async function ensureResolversAvailable(): Promise<boolean> {
  */
 export function registerResolverEarly(
   context: vscode.ExtensionContext,
-  settings: ExtensionSettings,
 ): RemoteAuthorityResolver {
   const resolver = new RemoteAuthorityResolver({
-    dockerPath: settings.dockerPath,
     extensionPath: context.extensionPath,
   });
   registerAuthorityResolver(context, resolver);
@@ -364,7 +362,6 @@ export interface CreatedServices {
  */
 export function createServices(
   context: vscode.ExtensionContext,
-  settings: ExtensionSettings,
   resolver: RemoteAuthorityResolver,
   productInfo: ProductInfo | undefined,
   buildLogPty: LogOutputTerminal,
@@ -383,7 +380,6 @@ export function createServices(
   const configManager = new ConfigManager();
 
   const serverManager = new ServerManager({
-    dockerPath: settings.dockerPath,
     productInfo,
     extensionPath: context.extensionPath,
     host: host!,
@@ -398,13 +394,11 @@ export function createServices(
     .getConfiguration("artizo")
     .get<boolean>("copyGitConfig", true);
   const gitConfigCopier = new GitConfigCopier({
-    dockerPath: settings.dockerPath,
     enabled: copyGitConfigEnabled,
     host: host!,
   });
 
   const extensionInstaller = new ExtensionInstaller({
-    dockerPath: settings.dockerPath,
     host: host!,
     getUserExtensionsDir: (containerId) =>
       serverManager.getUserExtensionsDir(containerId),
@@ -422,7 +416,6 @@ export function createServices(
     serverManager,
     gitConfigCopier,
     extensionInstaller,
-    dockerPath: settings.dockerPath,
     folderHistory,
   };
 

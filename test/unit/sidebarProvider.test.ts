@@ -27,6 +27,9 @@ const mocks = vi.hoisted(() => {
         .fn()
         .mockReturnValue({ dispose: vi.fn() }),
       onDidSaveTextDocument: vi.fn().mockReturnValue({ dispose: vi.fn() }),
+      getConfiguration: vi.fn().mockReturnValue({
+        get: vi.fn().mockReturnValue("docker"),
+      }),
       fs: {
         createDirectory: vi.fn().mockResolvedValue(undefined),
         writeFile: vi.fn().mockResolvedValue(undefined),
@@ -118,7 +121,6 @@ import {
 function createProvider() {
   const mockHost = {
     kind: "local" as const,
-    dockerPath: "docker",
     exec: vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
     onReady: vi.fn(() => ({ dispose: vi.fn() })),
   } as any;

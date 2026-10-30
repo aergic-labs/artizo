@@ -112,7 +112,7 @@ export interface ExtensionInstallerOptions {
  * Install extensions into a running container.
  */
 export class ExtensionInstaller {
-  private readonly dockerPath: string;
+  private readonly dockerPathOverride: string | undefined;
   private readonly host: Host;
   private readonly marketplace: MarketplaceClient;
   private readonly extensionsDirOverride: string | undefined;
@@ -128,7 +128,7 @@ export class ExtensionInstaller {
   private localExtCache = new Map<string, string | undefined>();
 
   constructor(options: ExtensionInstallerOptions) {
-    this.dockerPath = options?.dockerPath ?? getDockerPath();
+    this.dockerPathOverride = options?.dockerPath;
     this.host = options.host;
     this.marketplace = new MarketplaceClient(options?.marketplaceOptions);
     this.extensionsDirOverride = options?.extensionsDir;
@@ -170,12 +170,12 @@ export class ExtensionInstaller {
     // gives us the architecture fields. Two calls, but only once per
     // container per session.
     const containerInfo = await dockerInspect(containerId, {
-      dockerPath: this.dockerPath,
+      dockerPath: this.dockerPathOverride ?? getDockerPath(),
     });
     const imageRef = containerInfo.config.image;
     log.info(`[extensions] inspecting image "${imageRef}" for platform`);
     const imgInfo = await dockerInspectImage(imageRef, {
-      dockerPath: this.dockerPath,
+      dockerPath: this.dockerPathOverride ?? getDockerPath(),
     });
     const platform = dockerArchToTargetPlatform(
       imgInfo.architecture,
@@ -682,7 +682,7 @@ export class ExtensionInstaller {
     const args = ["exec", "-i"];
     if (remoteUser) args.push("-u", remoteUser);
     args.push(containerId, tarBin, "-xC", containerPath);
-    const child = dockerSpawn(this.dockerPath, args);
+    const child = dockerSpawn(this.dockerPathOverride ?? getDockerPath(), args);
     const pipes = childPipes(child);
     let stderr = "";
     pipes.stderr.on("data", (c: Buffer) => (stderr += c.toString()));
@@ -808,7 +808,7 @@ export class ExtensionInstaller {
     const writeArgs = ["exec", "-i"];
     if (remoteUser) writeArgs.push("-u", remoteUser);
     writeArgs.push(containerId, "sh", "-c", `cat > ${quotedPath}`);
-    const child = dockerSpawn(this.dockerPath, writeArgs);
+    const child = dockerSpawn(this.dockerPathOverride ?? getDockerPath(), writeArgs);
     const pipes = childPipes(child);
     let stderr = "";
     pipes.stderr.on("data", (c: Buffer) => (stderr += c.toString()));

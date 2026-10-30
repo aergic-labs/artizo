@@ -13,7 +13,6 @@
  */
 
 import { ProvisionFailedError } from "./provisionError";
-import type { RuntimeKind } from "../docker/execPolicy.js";
 
 let _vendor: any;
 let _vendorError: Error | undefined;
@@ -82,25 +81,12 @@ export interface ProvisionOptions {
   [key: string]: unknown;
 }
 
-// Resolved Docker runtime binary (docker or wslc). Set once during
-// activation via configureApiDockerPath(); the vendored CLI auto-detects
-// wslc from `<dockerPath> -v` output and routes to its wslc adapter.
-let _dockerPath = "docker";
-// Resolved runtime kind. Set once during activation via
-// configureApiRuntimeKind(). wslc has no buildx subcommand, so withDefaults
-// forces useBuildKit 'never' for wslc to skip the vendored CLI's
-// `<dockerPath> buildx version` probe (exits 1, dumps ~35 help lines).
-let _runtimeKind: RuntimeKind = "docker";
-
-/** Set once during activation. Drives the dockerPath default in withDefaults. */
-export function configureApiDockerPath(dockerPath: string): void {
-  _dockerPath = dockerPath;
-}
-
-/** Set once during activation. Drives the useBuildKit default in withDefaults. */
-export function configureApiRuntimeKind(kind: RuntimeKind): void {
-  _runtimeKind = kind;
-}
+// Runtime kind + path come from execPolicy live. getDockerPath() reads
+// the setting on every call; isWslcRuntime() reflects the activation-time
+// probe (re-run on config change). wslc has no buildx subcommand, so
+// withDefaults forces useBuildKit 'never' for wslc to skip the vendored
+// CLI's `<dockerPath> buildx version` probe (exits 1, dumps ~35 help lines).
+import { getDockerPath, isWslcRuntime } from "../docker/execPolicy.js";
 
 const defaults: Record<string, unknown> = {
   logLevel: 1,
@@ -140,16 +126,13 @@ export function withDefaults(
     log: ProvisionOptions["log"];
   },
 ): ProvisionOptions {
-  // dockerPath defaults to the activation-resolved runtime so the
-  // vendored CLI calls wslc when wslc won the gate. Callers can still
-  // override per-call (none do today). wslc has no buildx, so force
-  // useBuildKit 'never' to skip the vendored probe; callers can still
-  // override per-call (none do today).
+  // dockerPath + useBuildKit read live from execPolicy so setting changes
+  // (toggle wslc, swap docker for podman) take effect without a reload.
   const runtimeDefaults =
-    _runtimeKind === "wslc" ? { useBuildKit: "never" as const } : {};
+    isWslcRuntime() ? { useBuildKit: "never" as const } : {};
   return {
     ...defaults,
-    dockerPath: _dockerPath,
+    dockerPath: getDockerPath(),
     ...runtimeDefaults,
     ...overrides,
   };

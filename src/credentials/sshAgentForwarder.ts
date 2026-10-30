@@ -58,14 +58,14 @@ process.stdin.resume();
 
 // Future use: defined but not yet instantiated or called from any workflow.
 export class SshAgentForwarder implements ISshAgentForwarder {
-  private readonly dockerPath: string;
+  private readonly dockerPathOverride: string | undefined;
   private readonly host: Host;
   private readonly hostSshAuthSock: string | undefined;
   private relayProcess: ChildProcess | null = null;
   private hostConn: import("node:net").Socket | null = null;
 
   constructor(options: SshAgentForwarderOptions) {
-    this.dockerPath = options?.dockerPath ?? getDockerPath();
+    this.dockerPathOverride = options?.dockerPath;
     this.host = options.host;
     this.hostSshAuthSock =
       options?.hostSshAuthSock ?? process.env.SSH_AUTH_SOCK;
@@ -103,7 +103,7 @@ export class SshAgentForwarder implements ISshAgentForwarder {
   private startRelay(containerId: string, nodePath: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const child = dockerSpawn(
-        this.dockerPath,
+        this.dockerPathOverride ?? getDockerPath(),
         ["exec", "-i", containerId, nodePath, "-e", CONTAINER_RELAY_SCRIPT],
         { stdio: ["pipe", "pipe", "pipe"] },
       );

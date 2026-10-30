@@ -210,7 +210,6 @@ import {
   ensureResolversAvailable,
   getArgvExtensionId,
   _setExtensionIdForTest,
-  type ExtensionSettings,
 } from "../../src/host/services";
 import { patchArgvContent } from "../../src/host/argvPatch";
 import { getPlatformAdapter } from "../../src/platform";
@@ -245,13 +244,8 @@ describe("services", () => {
   describe("registerResolverEarly", () => {
     it("creates and registers the authority resolver", () => {
       const context = { subscriptions: [] } as any;
-      const settings: ExtensionSettings = {
-        dockerPath: "docker",
-        wslcPath: "wslc",
-        useWslcIfInstalled: false,
-      };
 
-      const resolver = registerResolverEarly(context, settings);
+      const resolver = registerResolverEarly(context);
 
       expect(resolver).toBeDefined();
       expect(mockLogger.info).toHaveBeenCalledWith(
@@ -320,11 +314,6 @@ describe("services", () => {
           update: vi.fn().mockResolvedValue(undefined),
         },
       } as any;
-      const settings: ExtensionSettings = {
-        dockerPath: "docker",
-        wslcPath: "wslc",
-        useWslcIfInstalled: false,
-      };
       const resolver = makeResolver();
       const productInfo: ProductInfo = {
         commit: "abc",
@@ -343,7 +332,6 @@ describe("services", () => {
 
       const mockHost = {
         kind: "local" as const,
-        dockerPath: "docker",
         exec: vi
           .fn()
           .mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
@@ -352,7 +340,6 @@ describe("services", () => {
 
       const services = createServices(
         context,
-        settings,
         resolver,
         productInfo,
         pty,
@@ -377,11 +364,6 @@ describe("services", () => {
           update: vi.fn().mockResolvedValue(undefined),
         },
       } as any;
-      const settings: ExtensionSettings = {
-        dockerPath: "docker",
-        wslcPath: "wslc",
-        useWslcIfInstalled: false,
-      };
       const resolver = makeResolver();
       const productInfo: ProductInfo = {
         commit: "abc",
@@ -400,14 +382,13 @@ describe("services", () => {
 
       const mockHost = {
         kind: "local" as const,
-        dockerPath: "docker",
         exec: vi
           .fn()
           .mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" }),
         onReady: vi.fn(() => ({ dispose: vi.fn() })),
       } as any;
 
-      createServices(context, settings, resolver, productInfo, pty, mockHost);
+      createServices(context, resolver, productInfo, pty, mockHost);
 
       expect(resolver.setServerManager).toHaveBeenCalled();
     });

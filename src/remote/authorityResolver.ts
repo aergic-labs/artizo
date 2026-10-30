@@ -107,7 +107,7 @@ export interface AuthorityResolverOptions {
  * The resolver looks up the container directly by ID.
  */
 export class RemoteAuthorityResolver {
-  private readonly dockerPath: string;
+  private readonly dockerPathOverride: string | undefined;
   private serverManager: IServerManager | undefined;
   private forwardServer: net.Server | undefined;
   /** Active sockets + docker exec children from forwardContainerPort. */
@@ -122,7 +122,7 @@ export class RemoteAuthorityResolver {
   private readonly tunnels: Map<number, TunnelController> = new Map();
 
   constructor(options?: AuthorityResolverOptions) {
-    this.dockerPath = options?.dockerPath ?? getDockerPath();
+    this.dockerPathOverride = options?.dockerPath;
     this.serverManager = options?.serverManager;
     this.extensionPath = options?.extensionPath;
     logToFile("=== RemoteAuthorityResolver created ===");
@@ -604,7 +604,7 @@ export class RemoteAuthorityResolver {
     let containerInfo: ContainerInfo;
     try {
       containerInfo = await dockerInspect(containerId, {
-        dockerPath: this.dockerPath,
+        dockerPath: this.dockerPathOverride ?? getDockerPath(),
       });
       logToFile(`[Resolver] Container state: ${containerInfo.state.status}`);
     } catch (err: unknown) {
@@ -746,7 +746,7 @@ export class RemoteAuthorityResolver {
         { pauseOnConnect: true },
         (localSocket) => {
           const child = dockerSpawn(
-            this.dockerPath,
+            this.dockerPathOverride ?? getDockerPath(),
             [
               "exec",
               "-i",
@@ -806,7 +806,7 @@ export class RemoteAuthorityResolver {
         LABEL_LOCAL_FOLDER_ARTIZO,
         LABEL_LOCAL_FOLDER_SPEC,
       ]) {
-        const result = await execFilePromise(this.dockerPath, [
+        const result = await execFilePromise(this.dockerPathOverride ?? getDockerPath(), [
           "ps",
           "-a",
           "-q",

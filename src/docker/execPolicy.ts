@@ -9,13 +9,12 @@
  * Thin wrapper around src/utils/dockerUtils.ts. All runtime Docker
  * calls go through this module rather than calling execFilePromise directly.
  *
- * Call configureDockerPath()/configureRuntimeKind() once during activation.
- * Falls back to artizo.dockerPath from VS Code settings (default: docker).
- *
  * Runtime kind: artizo can drive either docker or wslc (WSL Containers CLI).
- * wslc's --format accepts json/table, not Go templates, so list call sites
- * ask listJsonFormat() for the right format string. configureRuntimeKind()
- * is the single source of truth for the active kind.
+ * configureRuntimeKind() is set during activation and re-run on config change.
+ * getDockerPath() reads the setting live on every call so toggling
+ * useWslcIfInstalled or swapping docker for podman takes effect without
+ * a reload. wslc's --format accepts json/table, not Go templates, so list
+ * call sites ask listJsonFormat() for the right format string.
  */
 
 import * as vscode from "vscode";
@@ -28,15 +27,9 @@ export interface ResolvedRuntime {
   kind: RuntimeKind;
 }
 
-let _dockerPath: string | undefined;
 let _runtimeKind: RuntimeKind = "docker";
 
-/** Set once during activation. After this, dockerExecPolicy stops reading settings. */
-export function configureDockerPath(dockerPath: string): void {
-  _dockerPath = dockerPath;
-}
-
-/** Set once during activation. Drives isWslcRuntime()/listJsonFormat(). */
+/** Set during activation and on config change. Drives isWslcRuntime()/listJsonFormat(). */
 export function configureRuntimeKind(kind: RuntimeKind): void {
   _runtimeKind = kind;
 }
@@ -54,14 +47,15 @@ export function listJsonFormat(): string {
   return _runtimeKind === "wslc" ? "json" : "{{json .}}";
 }
 
-/** Resolved docker binary path. Lazy-reads the setting on first use. */
+/** Active runtime binary path. Reads live so setting changes take effect
+ *  without a reload. Returns the wslc path when wslc is active, else the
+ *  docker path. */
 export function getDockerPath(): string {
-  if (!_dockerPath) {
-    _dockerPath = vscode.workspace
-      .getConfiguration("artizo")
-      .get<string>("dockerPath", "docker");
+  const config = vscode.workspace.getConfiguration("artizo");
+  if (isWslcRuntime()) {
+    return config.get<string>("wslcPath", "wslc");
   }
-  return _dockerPath;
+  return config.get<string>("dockerPath", "docker");
 }
 
 /**

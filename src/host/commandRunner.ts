@@ -64,7 +64,7 @@ export function registerCommand(
 
       try {
         if (spec.guardLocal) guardHostContext();
-        if (spec.guardDocker) await checkDockerAvailable(ctx.dockerPath);
+        if (spec.guardDocker) await checkDockerAvailable();
         // Double-guard for workflows that need it (matching existing behavior)
         if (spec.guardLocal && spec.guardDocker) guardHostContext();
 

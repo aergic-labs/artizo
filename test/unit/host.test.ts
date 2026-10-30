@@ -125,7 +125,6 @@ describe("Host", () => {
       const host = Host.create({ dockerPath: "docker" });
       expect(host.kind).toBe("local");
       expect(host.isManaged).toBe(false);
-      expect(host.dockerPath).toBe("docker");
       expect(host.platform).toBe(process.platform);
       expect(host.workspace).toBeUndefined();
     });
@@ -167,7 +166,6 @@ describe("Host", () => {
       expect(host.isManaged).toBe(true);
       expect(host.platform).toBe("linux");
       expect(host.workspace).toBe(id);
-      expect(host.dockerPath).toBe("docker");
     });
 
     it("leaves workspace undefined when managed with no folder", () => {

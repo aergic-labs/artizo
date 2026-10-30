@@ -63,6 +63,7 @@ vi.mock("vscode", () => ({
       get: vi.fn((_key: string, defaultValue: unknown) => defaultValue),
     }),
     workspaceFolders: [{ uri: { fsPath: "/test/workspace" } }],
+    onDidChangeConfiguration: vi.fn().mockReturnValue({ dispose: vi.fn() }),
   },
   Uri: {
     parse: (str: string) => ({ toString: () => str, fsPath: str }),
@@ -184,9 +185,7 @@ describe("extension activation", () => {
     // Core wiring: logger -> settings -> resolvers -> services -> commands
     expect(mockCreateBuildLogTerminal).toHaveBeenCalledWith(context);
     expect(mockReadSettings).toHaveBeenCalled();
-    expect(mockHostCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ dockerPath: "docker" }),
-    );
+    expect(mockHostCreate).toHaveBeenCalledWith({});
     expect(mockEnsureResolversAvailable).toHaveBeenCalled();
     expect(mockRegisterResolverEarly).toHaveBeenCalled();
     expect(mockLoadProductInfo).toHaveBeenCalled();

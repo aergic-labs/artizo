@@ -5,6 +5,14 @@
 
 import { describe, it, expect, vi } from "vitest";
 
+vi.mock("vscode", () => ({
+  workspace: {
+    getConfiguration: vi.fn().mockReturnValue({
+      get: vi.fn().mockImplementation((_k: string, fallback: string) => fallback),
+    }),
+  },
+}));
+
 vi.mock("../../src/utils/logger", () => ({
   getLogger: () => ({
     info: vi.fn(),
@@ -18,8 +26,8 @@ vi.mock("../../src/utils/logger", () => ({
 import {
   withDefaults,
   dotfilesFromConfig,
-  configureApiRuntimeKind,
 } from "../../src/devcontainer/api";
+import { configureRuntimeKind } from "../../src/docker/execPolicy";
 
 describe("devcontainer/api", () => {
   describe("withDefaults", () => {
@@ -120,18 +128,18 @@ describe("devcontainer/api", () => {
     // so the vendored CLI skips its `<dockerPath> buildx version` probe
     // (exits 1 on wslc, dumps ~35 help lines into the build log).
     it("defaults useBuildKit to never when runtime kind is wslc", () => {
-      configureApiRuntimeKind("wslc");
+      configureRuntimeKind("wslc");
       try {
         const log = vi.fn();
         const result = withDefaults({ workspaceFolder: "/ws", log });
         expect(result.useBuildKit).toBe("never");
       } finally {
-        configureApiRuntimeKind("docker");
+        configureRuntimeKind("docker");
       }
     });
 
     it("lets caller override useBuildKit even when runtime kind is wslc", () => {
-      configureApiRuntimeKind("wslc");
+      configureRuntimeKind("wslc");
       try {
         const log = vi.fn();
         const result = withDefaults({
@@ -141,7 +149,7 @@ describe("devcontainer/api", () => {
         });
         expect(result.useBuildKit).toBe("auto");
       } finally {
-        configureApiRuntimeKind("docker");
+        configureRuntimeKind("docker");
       }
     });
   });

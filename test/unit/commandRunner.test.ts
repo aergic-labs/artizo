@@ -91,7 +91,6 @@ function createMockCommandContext(
       show: vi.fn(),
       dispose: vi.fn(),
     } as any,
-    dockerPath: "docker",
     extensionUri: vscode.Uri.file("/test/extension"),
     sidebarProvider: {} as any,
     ...overrides,
@@ -257,7 +256,7 @@ describe("registerCommand", () => {
       registerCommand(context as any, ctx, spec);
       await capturedHandlers["test.docker"]();
 
-      expect(checkDockerAvailable).toHaveBeenCalledWith(ctx.dockerPath);
+      expect(checkDockerAvailable).toHaveBeenCalled();
     });
 
     it("double-guards when both guardLocal and guardDocker are true", async () => {

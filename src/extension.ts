@@ -23,7 +23,6 @@ import {
   createServices,
   createBuildLogTerminal,
   autoDetectDevcontainer,
-  type ExtensionSettings,
 } from "./host/services";
 import { registerCoreCommands, type CommandContext } from "./host/commands";
 import { bootstrapRemoteSideLoad } from "./remote/sideload";
@@ -44,14 +43,9 @@ import {
   type DetectedTier,
 } from "./host/state";
 import {
-  configureDockerPath,
   configureRuntimeKind,
   resolveRuntime,
 } from "./docker/execPolicy";
-import {
-  configureApiDockerPath,
-  configureApiRuntimeKind,
-} from "./devcontainer/api";
 
 /**
  * Called when the extension is activated.
@@ -287,10 +281,7 @@ async function activateInternal(
     wslcPath: rawSettings.wslcPath,
     useWslc: rawSettings.useWslcIfInstalled,
   });
-  configureDockerPath(runtime.path);
   configureRuntimeKind(runtime.kind);
-  configureApiDockerPath(runtime.path);
-  configureApiRuntimeKind(runtime.kind);
   getLogger().info(
     `[activate] runtime=${runtime.kind} path=${runtime.path}`,
   );
@@ -315,12 +306,32 @@ async function activateInternal(
         }
       });
   }
-  // settings.dockerPath is the resolved runtime path for all downstream
-  // consumers (Host, resolver, services, command context).
-  const settings: ExtensionSettings = {
-    ...rawSettings,
-    dockerPath: runtime.path,
-  };
+  // Re-resolve the runtime when the user toggles useWslcIfInstalled or
+  // changes dockerPath/wslcPath. getDockerPath() reads live, but the
+  // runtime kind (docker vs wslc) needs a wslc version probe, so it's
+  // cached and invalidated here.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration("artizo")) return;
+      void (async () => {
+        const s = readSettings();
+        const r = await resolveRuntime({
+          platform: process.platform,
+          dockerPath: s.dockerPath,
+          wslcPath: s.wslcPath,
+          useWslc: s.useWslcIfInstalled,
+        });
+        configureRuntimeKind(r.kind);
+        getLogger().info(
+          `[config] runtime=${r.kind} path=${r.path}`,
+        );
+      })();
+    }),
+  );
+  // settings.dockerPath is no longer captured downstream: every consumer
+  // reads getDockerPath() live, so toggling wslc or swapping docker for
+  // podman takes effect without a reload. Only the runtime kind (docker vs
+  // wslc) is cached because it needs a `wslc version` probe.
 
   // 3. Read product.json for commit and platform info (used by ServerManager)
   const productInfo = await loadProductInfo();
@@ -377,9 +388,7 @@ async function activateInternal(
     }
   }
 
-  const host = Host.create({
-    dockerPath: settings.dockerPath,
-  });
+  const host = Host.create({});
 
   // Set context keys
   // artizo.hasDevContainerConfig: false until a config is detected.
@@ -415,12 +424,11 @@ async function activateInternal(
   }
 
   // 5. Register authority resolver early (before any async work)
-  const resolver = registerResolverEarly(context, settings);
+  const resolver = registerResolverEarly(context);
 
   // 6. Create services with Host
   const services = createServices(
     context,
-    settings,
     resolver,
     productInfo,
     buildLogPty,
@@ -435,7 +443,6 @@ async function activateInternal(
     containerLifecycle: services.containerLifecycle,
     buildLogTerminal,
     buildLogPty,
-    dockerPath: settings.dockerPath,
     host,
     sidebarProvider: services.sidebarProvider,
     extensionUri: context.extensionUri,

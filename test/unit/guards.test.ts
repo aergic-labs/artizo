@@ -5,13 +5,19 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockExecFilePromise } = vi.hoisted(() => ({
+const { mockExecFilePromise, mockConfigGet } = vi.hoisted(() => ({
   mockExecFilePromise: vi.fn(),
+  mockConfigGet: vi.fn(),
 }));
 
 vi.mock("vscode", () => ({
   env: { remoteName: undefined },
   ExtensionKind: { UI: 1, Workspace: 2 },
+  workspace: {
+    getConfiguration: vi.fn().mockReturnValue({
+      get: mockConfigGet,
+    }),
+  },
 }));
 
 vi.mock("../../src/utils/uriUtils", () => ({
@@ -20,6 +26,10 @@ vi.mock("../../src/utils/uriUtils", () => ({
 
 vi.mock("../../src/utils/dockerUtils.js", () => ({
   execFilePromise: mockExecFilePromise,
+}));
+
+vi.mock("../../src/docker/execPolicy.js", () => ({
+  getDockerPath: () => mockConfigGet() ?? "docker",
 }));
 
 import * as vscode from "vscode";
@@ -60,6 +70,8 @@ describe("guards", () => {
   describe("checkDockerAvailable", () => {
     beforeEach(() => {
       mockExecFilePromise.mockReset();
+      mockConfigGet.mockReset();
+      mockConfigGet.mockReturnValue("docker");
     });
 
     it("resolves when docker version exits 0", async () => {
@@ -68,7 +80,7 @@ describe("guards", () => {
         stdout: "Docker version 24.0.0",
         stderr: "",
       });
-      await expect(checkDockerAvailable("docker")).resolves.toBeUndefined();
+      await expect(checkDockerAvailable()).resolves.toBeUndefined();
       expect(mockExecFilePromise).toHaveBeenCalledWith("docker", ["version"]);
     });
 
@@ -78,25 +90,24 @@ describe("guards", () => {
         stdout: "",
         stderr: "docker not found",
       });
-      await expect(checkDockerAvailable("docker")).rejects.toThrow(
+      await expect(checkDockerAvailable()).rejects.toThrow(
         /Docker is not available/,
       );
     });
 
     it("throws when docker version promise rejects", async () => {
       mockExecFilePromise.mockRejectedValue(new Error("ENOENT"));
-      await expect(checkDockerAvailable("/custom/docker")).rejects.toThrow(
-        "ENOENT",
-      );
+      await expect(checkDockerAvailable()).rejects.toThrow("ENOENT");
     });
 
-    it("passes the custom docker path", async () => {
+    it("uses the live getDockerPath() value", async () => {
+      mockConfigGet.mockReturnValue("/usr/local/bin/docker");
       mockExecFilePromise.mockResolvedValue({
         exitCode: 0,
         stdout: "",
         stderr: "",
       });
-      await checkDockerAvailable("/usr/local/bin/docker");
+      await checkDockerAvailable();
       expect(mockExecFilePromise).toHaveBeenCalledWith(
         "/usr/local/bin/docker",
         ["version"],
