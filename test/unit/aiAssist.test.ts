@@ -9,12 +9,16 @@ vi.mock("vscode", () => ({
   commands: {
     executeCommand: vi.fn(),
   },
+  extensions: {
+    getExtension: vi.fn(),
+  },
 }));
 
 import * as vscode from "vscode";
 import { KiroAiAssist } from "../../src/ai/kiro";
 import { TraeAiAssist } from "../../src/ai/trae";
 import { DevinAiAssist } from "../../src/ai/devin";
+import { BobAiAssist } from "../../src/ai/bob";
 import { getAiAssist } from "../../src/ai";
 
 const executeCommand = vscode.commands.executeCommand as ReturnType<
@@ -136,6 +140,43 @@ describe("DevinAiAssist", () => {
     expect(executeCommand).toHaveBeenCalledWith("devin.executeCascadeAction", [
       JSON.stringify({ text: "prompt" }),
     ]);
+  });
+});
+
+describe("BobAiAssist", () => {
+  const getExtension = vscode.extensions.getExtension as ReturnType<
+    typeof vi.fn
+  >;
+
+  it("is available when IBM.bob-code is active", async () => {
+    getExtension.mockReturnValue({ isActive: true });
+    const ai = new BobAiAssist();
+    expect(await ai.isAvailable()).toBe(true);
+  });
+
+  it("is not available when IBM.bob-code is not installed", async () => {
+    getExtension.mockReturnValue(undefined);
+    const ai = new BobAiAssist();
+    expect(await ai.isAvailable()).toBe(false);
+  });
+
+  it("submits via bob-code.sendMessageWithHiddenPrompt with empty mask", async () => {
+    executeCommand.mockReset();
+    executeCommand.mockResolvedValue(undefined);
+    const ai = new BobAiAssist();
+    await ai.submit("create a devcontainer", { files: ["Makefile"] });
+    expect(executeCommand).toHaveBeenCalledWith(
+      "bob-code.sendMessageWithHiddenPrompt",
+      "",
+      "create a devcontainer\n\nFiles: Makefile",
+    );
+  });
+
+  it("throws on command failure (no silent fallback)", async () => {
+    executeCommand.mockReset();
+    executeCommand.mockRejectedValue(new Error("boom"));
+    const ai = new BobAiAssist();
+    await expect(ai.submit("hello")).rejects.toThrow("boom");
   });
 });
 

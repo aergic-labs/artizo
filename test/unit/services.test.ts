@@ -141,7 +141,10 @@ vi.mock("../../src/platform", () => ({
     needsArgvPatch: () => true,
     getArgvDataFolderNames: () => [".kiro"],
     isValidRuntime: () => true,
-    getServerDownloadUrl: () => "https://example.com/server.tar.gz",
+    getServerDownloadUrl: () => ({
+      url: "https://example.com/server.tar.gz",
+      type: "auto" as const,
+    }),
     getAdditionalDockerRunArgs: () => [],
     getServerInstallRoot: () => "/tmp",
     needsHomeSymlink: () => false,

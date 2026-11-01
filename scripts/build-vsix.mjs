@@ -102,7 +102,6 @@ if (
 const basePkgPath = path.join(root, "package.json");
 const vendorDir = path.join(root, "vendor", target);
 const vendorPkgPath = path.join(vendorDir, "package.json");
-const templatePath = path.join(root, "vendor", "README.template.md");
 
 // Read version from package.json
 const basePkg = JSON.parse(fs.readFileSync(basePkgPath, "utf-8"));
@@ -173,19 +172,9 @@ try {
   delete merged.scripts;
   delete merged.devDependencies;
 
-  // Generate vendor README: vscodium ships a bespoke README; kiro uses
-  // the template. Both expand {{section:name}} from README.md; kiro also
-  // substitutes {{NAME}}/{{URL}}.
-  const vendorPkg = JSON.parse(fs.readFileSync(vendorPkgPath, "utf-8"));
-  const platform = vendorPkg.platform;
-  let readme;
-  if (target === "vscodium") {
-    readme = fs.readFileSync(path.join(vendorDir, "README.md"), "utf-8");
-  } else {
-    readme = fs.readFileSync(templatePath, "utf-8");
-    readme = readme.replace(/\{\{NAME\}\}/g, platform.name);
-    readme = readme.replace(/\{\{URL\}\}/g, "https://kiro.dev");
-  }
+  // Generate vendor README: each target ships its own vendor README at
+  // vendor/<target>/README.md; both expand {{section:name}} from README.md.
+  let readme = fs.readFileSync(path.join(vendorDir, "README.md"), "utf-8");
   readme = expandSections(readme);
 
   // Copy project files, skipping dirs that .vscodeignore would exclude anyway

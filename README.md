@@ -1,9 +1,17 @@
 # Artizo Dev Containers
 
+<!-- BEGIN:intro -->
 Open any folder inside a Docker container with a full development environment
 powered by [devcontainer.json](https://containers.dev).
 
 Reduces friction when developing for linux-centric targets on Windows or macOS.
+<!-- END:intro -->
+
+## Supported editors
+
+- Running [Kiro](https://kiro.dev)? Install [Artizo for Kiro](https://open-vsx.org/extension/aergic/artizo-kiro).
+- Anything else? Install [Artizo for VSCodium](https://open-vsx.org/extension/aergic/artizo-vscodium).
+  Supports: VSCodium, code-oss / VSCode-OSS, Trae, Devin, Antigravity, Qoder, IBM Bob, and other VS Code forks.
 
 ## Features
 
@@ -38,12 +46,6 @@ remotes during setup
   connect to devcontainers without a second SSH authentication or
   password prompt
 <!-- END:features-tail -->
-
-## Supported editors
-
-- Running [Kiro](https://kiro.dev)? Install [Artizo for Kiro](https://open-vsx.org/extension/aergic/artizo-kiro).
-- Anything else? Install [Artizo for VSCodium](https://open-vsx.org/extension/aergic/artizo-vscodium).
-  Supports: VSCodium, code-oss / VSCode-OSS, Trae, Devin, Antigravity, Qoder, and other VS Code forks.
 
 ## Why
 

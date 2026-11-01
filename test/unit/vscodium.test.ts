@@ -3,173 +3,129 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { describe, it, expect, vi } from "vitest";
-import vscodeMock from "../__mocks__/vscode";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Stub fetch so Trae CDN detection fails fast (no 5s timeout).
+vi.stubGlobal("fetch", () => Promise.reject(new Error("no network")));
+
+const { mockReadFileSync } = vi.hoisted(() => ({
+  mockReadFileSync: vi.fn(),
+}));
+
+vi.mock("node:fs", () => ({
+  readFileSync: mockReadFileSync,
+  existsSync: vi.fn().mockReturnValue(false),
+}));
+
+vi.mock("vscode", () => ({
+  env: { appRoot: "/mock/app/root", uriScheme: "vscode" },
+}));
+
 import { VSCodiumAdapter } from "../../src/platform/vscodium";
-import type { PlatformConfig } from "../../src/platform/types";
+import { _resetTraeCdnBaseForTest } from "../../src/platform/vscodium";
 
-vi.mock("vscode", () => ({ default: vscodeMock, ...vscodeMock }));
-
-const BASE_CONFIG: PlatformConfig = {
-  name: "VSCodium",
-  dataFolderName: ".vscode-oss",
-  serverApplicationName: "vscodium-server",
-  needsArgvPatch: true,
-  additionalDockerRunArgs: ["--init"],
-};
+/** Mock product.json with the given applicationName and optional fields. */
+function mockProduct(
+  applicationName: string,
+  extra: Record<string, unknown> = {},
+): void {
+  mockReadFileSync.mockImplementation((p: string) => {
+    if (typeof p === "string" && p.endsWith("product.json")) {
+      return JSON.stringify({ applicationName, ...extra });
+    }
+    throw new Error(`unexpected readFileSync(${p})`);
+  });
+}
 
 describe("VSCodiumAdapter", () => {
-  describe("constructor", () => {
-    it("exposes name, dataFolderName, serverApplicationName from config", () => {
-      const adapter = new VSCodiumAdapter(BASE_CONFIG);
-      expect(adapter.name).toBe("VSCodium");
-      expect(adapter.dataFolderName).toBe(".vscode-oss");
-      expect(adapter.serverApplicationName).toBe("vscodium-server");
-    });
+  beforeEach(() => {
+    mockReadFileSync.mockReset();
+    _resetTraeCdnBaseForTest();
   });
 
-  describe("getArgvPath", () => {
-    it("joins homedir + dataFolderName + argv.json", () => {
-      const adapter = new VSCodiumAdapter(BASE_CONFIG);
+  describe("VSCodium fork", () => {
+    it("exposes name, dataFolderName, serverApplicationName", () => {
+      mockProduct("vscodium");
+      const adapter = new VSCodiumAdapter();
+      expect(adapter.name).toBe("VSCodium");
+      expect(adapter.dataFolderName).toBe(".vscode-oss");
+      expect(adapter.serverApplicationName).toBe("codium-server");
+      expect(adapter.serverDataFolderName).toBe(".vscodium-server");
+    });
+
+    it("getArgvPath joins homedir + dataFolderName + argv.json", () => {
+      mockProduct("vscodium");
+      const adapter = new VSCodiumAdapter();
       const p = adapter.getArgvPath();
       expect(p).toContain(".vscode-oss");
       expect(p).toContain("argv.json");
     });
 
-    it("uses hostDataFolderName when provided", () => {
-      const adapter = new VSCodiumAdapter({
-        ...BASE_CONFIG,
-        hostDataFolderName: ".vscodium",
-      });
-      const p = adapter.getArgvPath();
-      expect(p).toContain(".vscodium");
-      expect(p).not.toContain(".vscode-oss");
-      expect(p).toContain("argv.json");
-    });
-  });
-
-  describe("getArgvDataFolderNames", () => {
-    it("prepends dataFolderName and adds default fallbacks", () => {
-      const adapter = new VSCodiumAdapter(BASE_CONFIG);
+    it("getArgvDataFolderNames prepends dataFolderName and adds fallbacks", () => {
+      mockProduct("vscodium");
+      const adapter = new VSCodiumAdapter();
       const names = adapter.getArgvDataFolderNames();
       expect(names[0]).toBe(".vscode-oss");
       expect(names).toContain(".vscodium");
       expect(names).toContain(".code-oss");
       expect(names).toContain(".vscode");
-      // No duplicates of the first entry
       expect(names.filter((n) => n === ".vscode-oss")).toHaveLength(1);
     });
 
-    it("uses hostDataFolderName as the first candidate when provided", () => {
-      const adapter = new VSCodiumAdapter({
-        ...BASE_CONFIG,
-        hostDataFolderName: ".vscodium",
-      });
-      const names = adapter.getArgvDataFolderNames();
-      expect(names[0]).toBe(".vscodium");
+    it("needsArgvPatch returns true", () => {
+      mockProduct("vscodium");
+      expect(new VSCodiumAdapter().needsArgvPatch()).toBe(true);
     });
 
-    it("uses config.argvDataFolderNames when provided instead of defaults", () => {
-      const adapter = new VSCodiumAdapter({
-        ...BASE_CONFIG,
-        argvDataFolderNames: [".custom-one", ".custom-two"],
-      });
-      const names = adapter.getArgvDataFolderNames();
-      expect(names[0]).toBe(".vscode-oss");
-      expect(names).toContain(".custom-one");
-      expect(names).toContain(".custom-two");
-      expect(names).not.toContain(".vscodium");
-    });
-  });
-
-  describe("needsArgvPatch", () => {
-    it("returns config value (true)", () => {
-      const adapter = new VSCodiumAdapter(BASE_CONFIG);
-      expect(adapter.needsArgvPatch()).toBe(true);
+    it("getAdditionalDockerRunArgs returns empty array", () => {
+      mockProduct("vscodium");
+      expect(new VSCodiumAdapter().getAdditionalDockerRunArgs()).toEqual([]);
     });
 
-    it("returns config value (false)", () => {
-      const adapter = new VSCodiumAdapter({
-        ...BASE_CONFIG,
-        needsArgvPatch: false,
-      });
-      expect(adapter.needsArgvPatch()).toBe(false);
-    });
-  });
-
-  describe("getAdditionalDockerRunArgs", () => {
-    it("returns config args", () => {
-      const adapter = new VSCodiumAdapter(BASE_CONFIG);
-      expect(adapter.getAdditionalDockerRunArgs()).toEqual(["--init"]);
-    });
-  });
-
-  describe("getRemoteExtensionsDirCandidates", () => {
-    it("returns vscodium-server and vscode-oss-server candidates", () => {
-      const adapter = new VSCodiumAdapter(BASE_CONFIG);
-      expect(adapter.getRemoteExtensionsDirCandidates()).toEqual([
+    it("getRemoteExtensionsDirCandidates returns vscodium-server and vscode-oss-server", () => {
+      mockProduct("vscodium");
+      expect(new VSCodiumAdapter().getRemoteExtensionsDirCandidates()).toEqual([
         ".vscodium-server/extensions",
         ".vscode-oss-server/extensions",
       ]);
     });
-  });
 
-  describe("getApexExtensionsDir", () => {
-    it("joins homedir + dataFolderName + extensions", () => {
-      const adapter = new VSCodiumAdapter(BASE_CONFIG);
-      const p = adapter.getApexExtensionsDir();
+    it("getApexExtensionsDir joins homedir + dataFolderName + extensions", () => {
+      mockProduct("vscodium");
+      const p = new VSCodiumAdapter().getApexExtensionsDir();
       expect(p).toContain(".vscode-oss");
       expect(p).toContain("extensions");
     });
 
-    it("uses hostDataFolderName when provided", () => {
-      const adapter = new VSCodiumAdapter({
-        ...BASE_CONFIG,
-        hostDataFolderName: ".vscodium",
+    it("getServerInstallRoot defaults to /tmp", () => {
+      mockProduct("vscodium");
+      expect(new VSCodiumAdapter().getServerInstallRoot()).toBe("/tmp");
+    });
+
+    it("needsHomeSymlink defaults to false", () => {
+      mockProduct("vscodium");
+      expect(new VSCodiumAdapter().needsHomeSymlink()).toBe(false);
+    });
+
+    it("readAuthFiles returns empty (VSCodium has no auth files)", () => {
+      mockProduct("vscodium");
+      expect(new VSCodiumAdapter().readAuthFiles()).toEqual([]);
+    });
+
+    it("getChecksumConfig returns sidecar sha256", () => {
+      mockProduct("vscodium");
+      expect(new VSCodiumAdapter().getChecksumConfig()).toEqual({
+        checksumMethod: "sidecar",
+        checksumAlgo: "sha256",
       });
-      const p = adapter.getApexExtensionsDir();
-      expect(p).toContain(".vscodium");
-      expect(p).not.toContain(".vscode-oss");
-      expect(p).toContain("extensions");
     });
   });
 
-  describe("getServerInstallRoot", () => {
-    it("defaults to /tmp when not set", () => {
-      const adapter = new VSCodiumAdapter(BASE_CONFIG);
-      expect(adapter.getServerInstallRoot()).toBe("/tmp");
-    });
-
-    it("returns configured value when set", () => {
-      const adapter = new VSCodiumAdapter({
-        ...BASE_CONFIG,
-        serverInstallRoot: "/opt/vscodium",
-      });
-      expect(adapter.getServerInstallRoot()).toBe("/opt/vscodium");
-    });
-  });
-
-  describe("needsHomeSymlink", () => {
-    it("defaults to false", () => {
-      const adapter = new VSCodiumAdapter(BASE_CONFIG);
-      expect(adapter.needsHomeSymlink()).toBe(false);
-    });
-
-    it("returns configured value when set", () => {
-      const adapter = new VSCodiumAdapter({
-        ...BASE_CONFIG,
-        needsHomeSymlink: true,
-      });
-      expect(adapter.needsHomeSymlink()).toBe(true);
-    });
-  });
-
-  describe("getServerDownloadUrl", () => {
-    it("falls back to version 0.0.0 when product.json is unreadable", () => {
-      // The mock appRoot /mock/app/root has no product.json, so
-      // readVSCodiumVersion() catches and returns undefined -> "0.0.0".
-      const adapter = new VSCodiumAdapter(BASE_CONFIG);
-      const url = adapter.getServerDownloadUrl(
+  describe("getServerDownloadUrl (VSCodium)", () => {
+    it("falls back to version 0.0.0 when product.json has no version", async () => {
+      mockProduct("vscodium");
+      const adapter = new VSCodiumAdapter();
+      const { url } = await adapter.getServerDownloadUrl(
         "deadbeef",
         "stable",
         "linux",
@@ -180,24 +136,25 @@ describe("VSCodiumAdapter", () => {
       );
     });
 
-    it("incorporates targetArch into the URL", () => {
-      const adapter = new VSCodiumAdapter(BASE_CONFIG);
-      const url = adapter.getServerDownloadUrl(
-        "abc",
-        "stable",
-        "linux",
-        "arm64",
-      );
+    it("incorporates targetArch into the URL", async () => {
+      mockProduct("vscodium");
+      const adapter = new VSCodiumAdapter();
+      const { url } = await adapter.getServerDownloadUrl("abc", "stable", "linux", "arm64");
       expect(url).toContain("vscodium-reh-linux-arm64-0.0.0.tar.gz");
+    });
+
+    it("uses version from product.json when present", async () => {
+      mockProduct("vscodium", { version: "1.100.0" });
+      const adapter = new VSCodiumAdapter();
+      const { url } = await adapter.getServerDownloadUrl("c0", "stable", "linux", "x64");
+      expect(url).toContain("vscodium-reh-linux-x64-1.100.0.tar.gz");
     });
   });
 
   describe("isValidRuntime", () => {
-    it("returns true when product.json cannot be read (catch branch)", () => {
-      // Mock appRoot has no product.json -> readFileSync throws -> catch
-      // returns true (permissive when detection is unavailable).
-      const adapter = new VSCodiumAdapter(BASE_CONFIG);
-      expect(adapter.isValidRuntime()).toBe(true);
+    it("returns true (VSCodium build allows any runtime)", () => {
+      mockProduct("vscodium");
+      expect(new VSCodiumAdapter().isValidRuntime()).toBe(true);
     });
   });
 });

@@ -92,7 +92,7 @@ describe("Server connection regression properties", () => {
       const { buildServerDownloadUrl } =
         await import("../../src/remote/productInfo");
 
-      const url = await buildServerDownloadUrl(
+      const { url } = await buildServerDownloadUrl(
         {
           commit: "0000000000000000000000000000000000000000",
           quality: "stable",

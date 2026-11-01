@@ -28,7 +28,7 @@ while ((m = re.exec(readme)) !== null) {
 }
 
 const templates = [
-  path.join(root, "vendor", "README.template.md"),
+  path.join(root, "vendor", "kiro", "README.md"),
   path.join(root, "vendor", "vscodium", "README.md"),
 ];
 

@@ -162,7 +162,6 @@ describe("rebuildContainer", () => {
       configManager: createMockConfigManager(),
       serverManager: createMockServerManager(),
       gitConfigCopier: createMockGitConfigCopier(),
-      dockerPath: "docker",
       folderHistory: {
         addFolders: vi.fn().mockResolvedValue(undefined),
         removeFolder: vi.fn().mockResolvedValue(false),

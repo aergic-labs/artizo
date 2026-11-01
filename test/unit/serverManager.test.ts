@@ -62,8 +62,10 @@ vi.mock("../../src/platform", () => ({
     serverApplicationName: "kiro-server",
     dataFolderName: ".kiro",
     getServerDownloadUrl: vi.fn(
-      (commit: string) =>
-        `https://update.code.visualstudio.com/commit:${commit}/server-linux-x64/stable`,
+      (commit: string) => ({
+        url: `https://update.code.visualstudio.com/commit:${commit}/server-linux-x64/stable`,
+        type: "auto" as const,
+      }),
     ),
   }),
 }));

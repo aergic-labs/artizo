@@ -44,8 +44,10 @@ describe("productInfo", () => {
         quality: string,
         _targetPlatform: string,
         _targetArch: string,
-      ) =>
-        `https://update.code.visualstudio.com/commit:${commit}/server-linux-x64/${quality}`,
+      ) => ({
+        url: `https://update.code.visualstudio.com/commit:${commit}/server-linux-x64/${quality}`,
+        type: "auto" as const,
+      }),
       getAdditionalDockerRunArgs: vi.fn().mockReturnValue([]),
     } as any);
   });
@@ -153,7 +155,7 @@ describe("productInfo", () => {
           "https://cdn.example.com/${quality}/${commit}/server-linux-${platform}.tar.gz",
       };
 
-      const url = await buildServerDownloadUrl(info, "x64");
+      const { url } = await buildServerDownloadUrl(info, "x64");
 
       expect(url).toBe(
         "https://cdn.example.com/stable/abc123/server-linux-x64.tar.gz",
@@ -174,7 +176,7 @@ describe("productInfo", () => {
           "https://example.com/${commit}/${commit}/${quality}/${platform}",
       };
 
-      const url = await buildServerDownloadUrl(info, "arm64");
+      const { url } = await buildServerDownloadUrl(info, "arm64");
 
       expect(url).toBe("https://example.com/deadbeef/deadbeef/insider/arm64");
     });
@@ -191,7 +193,7 @@ describe("productInfo", () => {
         serverDataFolderName: ".kiro-server",
       };
 
-      const url = await buildServerDownloadUrl(info, "x64");
+      const { url } = await buildServerDownloadUrl(info, "x64");
 
       expect(url).toBe(
         "https://update.code.visualstudio.com/commit:abc123def/server-linux-x64/stable",
@@ -210,10 +212,43 @@ describe("productInfo", () => {
         serverDataFolderName: ".kiro-server",
       };
 
-      const url = await buildServerDownloadUrl(info, "arm64");
+      const { url } = await buildServerDownloadUrl(info, "arm64");
 
       expect(url).toBe(
         "https://update.code.visualstudio.com/commit:fedcba987/server-linux-x64/insider",
+      );
+    });
+
+    it("bob auto-path uses the product.json template, not the vscodium fallback", async () => {
+      mockGetPlatformAdapter.mockReturnValue({
+        name: "Bob",
+        dataFolderName: ".bobide",
+        serverApplicationName: "bobide-server",
+        getServerDownloadUrl: () => ({
+          url: "https://wrong.example.com/vscodium-reh.tar.gz",
+          type: "fallback" as const,
+        }),
+        getAdditionalDockerRunArgs: vi.fn().mockReturnValue([]),
+      } as any);
+
+      const product = {
+        applicationName: "bobide",
+        commit: "b48bf62",
+        version: "1.126.0+bob2.3.0",
+        serverApplicationName: "bobide-server",
+        serverDataFolderName: ".bobide-server",
+        serverDownloadUrlTemplate:
+          "https://api.us-east.bob.ibm.com/update/reh/ibm-bob/${os}/${arch}/${version}",
+      };
+
+      vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(product));
+
+      const info = await getProductInfo("/app/root");
+      const result = await buildServerDownloadUrl(info, "x64");
+
+      expect(result.type).toBe("custom");
+      expect(result.url).toBe(
+        "https://api.us-east.bob.ibm.com/update/reh/ibm-bob/linux/x64/1.126.0+bob2.3.0",
       );
     });
   });

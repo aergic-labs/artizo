@@ -9,8 +9,9 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getPlatformAdapter } from "../platform";
 import { mergeServerDownloadConfig, type RawProductFields } from "../platform/mergeConfig";
-import { buildServerDownloadUrl as resolveDownloadUrl } from "./url";
+import { buildServerDownloadUrl as resolveDownloadUrl, downloadUrlLogMessage } from "./url";
 import type { DownloadTemplateInfo, DownloadAdapter } from "../platform/downloadTypes";
+import { getLogger } from "../utils/logger";
 
 /**
  * Product information extracted from product.json, used for server
@@ -114,9 +115,11 @@ export async function getProductInfo(appRoot: string): Promise<ProductInfo> {
 export async function buildServerDownloadUrl(
   info: ProductInfo,
   targetArch: string,
-): Promise<string> {
+): Promise<{ url: string; type: "custom" | "auto" | "fallback" }> {
   const adapter = await getPlatformAdapter();
-  return resolveDownloadUrl(info, adapter as DownloadAdapter, "linux", targetArch);
+  const result = await resolveDownloadUrl(info, adapter as DownloadAdapter, "linux", targetArch);
+  getLogger().info(downloadUrlLogMessage(adapter, result.type));
+  return result;
 }
 
 // Re-exports removed; config panel imports from ./url directly.

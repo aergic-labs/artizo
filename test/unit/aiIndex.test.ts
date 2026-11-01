@@ -16,12 +16,18 @@ vi.mock("node:fs", () => ({
   existsSync: vi.fn().mockReturnValue(false),
 }));
 
+const { mockGetExtension } = vi.hoisted(() => ({
+  mockGetExtension: vi.fn(),
+}));
+
 vi.mock("vscode", () => ({
   env: { appRoot: "/mock/app", uriScheme: "kiro" },
   commands: { executeCommand: vi.fn() },
+  extensions: { getExtension: mockGetExtension },
 }));
 
 import { getAiAssist, _resetForTest } from "../../src/ai/index";
+import { BobAiAssist } from "../../src/ai/bob";
 
 function mockProduct(applicationName: string): void {
   mockReadFileSync.mockImplementation((p: string) => {
@@ -36,6 +42,7 @@ describe("getAiAssist", () => {
   beforeEach(() => {
     _resetForTest();
     mockReadFileSync.mockReset();
+    mockGetExtension.mockReset();
   });
 
   it("returns an AI assist instance", async () => {
@@ -51,6 +58,30 @@ describe("getAiAssist", () => {
     const first = await getAiAssist();
     const second = await getAiAssist();
     expect(first).toBe(second);
+  });
+
+  it("returns BobAiAssist for Bob applicationName", async () => {
+    mockProduct("bobide");
+    const ai = await getAiAssist();
+    expect(ai).toBeInstanceOf(BobAiAssist);
+  });
+
+  it("falls through to GenericAiAssist for Antigravity", async () => {
+    mockProduct("antigravity");
+    const ai = await getAiAssist();
+    expect(ai).toBeDefined();
+    // GenericAiAssist probes extensions; with no extension active it
+    // reports not available.
+    mockGetExtension.mockReturnValue(undefined);
+    expect(await ai.isAvailable()).toBe(false);
+  });
+
+  it("falls through to GenericAiAssist for Qoder", async () => {
+    mockProduct("qoder");
+    const ai = await getAiAssist();
+    expect(ai).toBeDefined();
+    mockGetExtension.mockReturnValue(undefined);
+    expect(await ai.isAvailable()).toBe(false);
   });
 
   it("returns a usable assist for unrecognized IDE (VSCodium fallback)", async () => {

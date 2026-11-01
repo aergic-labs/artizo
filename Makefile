@@ -225,7 +225,7 @@ check-shared-drift:
 
 # ── README section lint ───────────────────────────────────────
 #
-# Verifies vendor README templates (vendor/README.template.md,
+# Verifies vendor README templates (vendor/kiro/README.md,
 # vendor/vscodium/README.md) reference only sections that exist in
 # README.md (<!-- BEGIN:name --> ... <!-- END:name -->). Expansion of
 # {{section:name}} happens at package time in build-vsix.mjs, so shared

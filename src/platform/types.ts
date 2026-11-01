@@ -11,33 +11,14 @@
 /**
  * Platform adapter interface.
  *
- * Each supported IDE (Kiro, Trae, Devin) provides an implementation.
- * Vendor-specific configuration is sourced from vendor/<target>/package.json
- * so each adapter file contains only its own platform's logic.
+ * A single unified adapter (`VSCodiumAdapter`) implements this interface
+ * and handles every supported fork (VSCodium, code-oss, VSCode-OSS, Trae,
+ * Devin, Antigravity, Qoder, Kiro, Bob) via runtime `product.json`
+ * `applicationName` detection. Per-fork behavior is selected inside the
+ * adapter; the interface is the artizo-side surface.
  */
 
-import type { DownloadAdapter } from "./downloadTypes";
-
-/**
- * Platform configuration read from vendor package.json.
- */
-export interface PlatformConfig {
-  name: string;
-  dataFolderName: string;
-  serverApplicationName: string;
-  needsArgvPatch: boolean;
-  additionalDockerRunArgs: string[];
-  serverInstallRoot?: string;
-  needsHomeSymlink?: boolean;
-  /** Host data folder for argv.json. Defaults to dataFolderName. */
-  hostDataFolderName?: string;
-  /**
-   * Candidate data folder names where argv.json may live. Defaults to
-   * [dataFolderName] when absent. VSCodium needs both .vscode-oss and
-   * .vscodium because different builds use different folder names.
-   */
-  argvDataFolderNames?: string[];
-}
+import type { DownloadAdapter, DownloadUrlResult } from "./downloadTypes";
 
 /**
  * Adapter for IDE-specific behavior: server download URLs, argv paths, etc.
@@ -62,7 +43,7 @@ export interface IPlatformAdapter extends DownloadAdapter {
     targetPlatform: string,
     targetArch: string,
     buildId?: string,
-  ): string | Promise<string>;
+  ): DownloadUrlResult | Promise<DownloadUrlResult>;
 
   /** Path to the IDE's argv.json file for proposed API enablement. */
   getArgvPath(): string;

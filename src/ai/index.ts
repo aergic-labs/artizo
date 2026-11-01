@@ -6,10 +6,12 @@
 /**
  * AI assist factory.
  *
- * Selects the correct AiAssist implementation at runtime by reading
- * `product.json` `applicationName`. All four modules are bundled in every
- * VSIX; the factory picks one at first call and caches it. Mirrors
- * platform/index.ts - same detection order, same VSCodium fallback.
+ * Selects the correct AiAssist implementation at runtime via
+ * `detectPlatformName()` (which reads `product.json` `applicationName`).
+ * All modules are bundled in every VSIX; the factory picks one at first
+ * call and caches it. Mirrors platform/index.ts - same detection order,
+ * same VSCodium fallback. Antigravity and Qoder fall through to
+ * GenericAiAssist (no vendor AI chat command).
  */
 
 import { detectPlatformName } from "../platform/index.js";
@@ -25,7 +27,8 @@ export function _resetForTest(): void {
 /**
  * Returns the AI assist implementation for the running IDE. Detected at
  * runtime via `product.json`; cached after first call. GenericAiAssist
- * is the VSCodium/fallback for unrecognized IDEs.
+ * is the VSCodium/fallback for unrecognized IDEs (probes for Cline/Roo
+ * Code/Zoo Code at runtime).
  */
 export async function getAiAssist(): Promise<AiAssist> {
   if (!_ai) {
@@ -39,9 +42,12 @@ export async function getAiAssist(): Promise<AiAssist> {
     } else if (platform === "Devin") {
       const { DevinAiAssist } = await import("./devin.js");
       _ai = new DevinAiAssist();
+    } else if (platform === "Bob") {
+      const { BobAiAssist } = await import("./bob.js");
+      _ai = new BobAiAssist();
     } else {
-      // VSCodium and unrecognized IDEs - generic assist probes for
-      // Cline/Roo Code/Zoo Code extensions at runtime.
+      // VSCodium, Antigravity, Qoder, and unrecognized IDEs - generic
+      // assist probes for Cline/Roo Code/Zoo Code extensions at runtime.
       const { GenericAiAssist } = await import("./generic.js");
       _ai = new GenericAiAssist();
     }

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.11.0
+
+### Added
+
+- IBM Bob IDE support: `bob` in `FORK_TEMPLATES`, `applicationName` detection in the unified `VscodiumAdapter` (`.bobide` / `.bobide-server`, `bobide-server`). `BobAiAssist` calls `bob-code.sendMessageWithHiddenPrompt`.
+- `getProductInfo` reads `serverDownloadUrlTemplate` from `product.json` (top-level + nested `remote.SSH`) for REH download.
+- Download URL type (`custom` / `auto` / `fallback`) logged to the Output channel via shared `downloadUrlLogMessage()`.
+
+### Changed
+
+- Unified `VscodiumAdapter` handles all supported forks (VSCodium, code-oss, VSCode-OSS, Trae, Devin, Antigravity, Qoder, Kiro, Bob); per-fork adapters removed. Trae seccomp, Devin `/tmp` + symlink + `.devin`, Kiro auth sync preserved.
+- README refactored into shared sections inherited by `vendor/<target>/README.md` extenders via `<!-- BEGIN/END -->` markers.
+- Keywords and fork display names updated for supported IDEs.
+
+### Fixed
+
+- Bumped `follow-redirects`, `minimatch`, and `glob` via npm overrides to clear advisories (GHSA-mrwp-f3q8-3g9p, GHSA-g3hv-75wg-m249, GHSA-3g3m-2fjr-6pw4).
+
 ## 0.10.1
 
 ### Fixed

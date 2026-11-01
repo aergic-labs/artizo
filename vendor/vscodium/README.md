@@ -1,11 +1,10 @@
 # Artizo Dev Containers for VSCodium
 
-Open any folder inside a Docker container with a full development environment
-powered by [devcontainer.json](https://containers.dev). Supports VSCodium,
-VSCode-OSS, Trae, Devin, Antigravity, Qoder, Windsurf, and
-other VS Code forks.
+{{section:intro}}
 
-Reduces friction when developing for linux-centric targets on Windows or macOS.
+Supports VSCodium, code-oss, Trae, Devin, Antigravity, Qoder, Windsurf, IBM Bob,
+and other VS Code forks, detected at runtime from `product.json`
+`applicationName`.
 
 Sister project to [Zygos](https://github.com/aergic-labs/zygos), our
 remote-ssh extension. Together they give VSCodium a complete remote

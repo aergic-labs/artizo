@@ -70,6 +70,21 @@ describe("detectPlatformName", () => {
     expect(detectPlatformName()).toBe("Kiro");
   });
 
+  it("detects Antigravity via applicationName", () => {
+    mockProduct("antigravity");
+    expect(detectPlatformName()).toBe("Antigravity");
+  });
+
+  it("detects Qoder via applicationName", () => {
+    mockProduct("qoder");
+    expect(detectPlatformName()).toBe("Qoder");
+  });
+
+  it("detects Bob via applicationName", () => {
+    mockProduct("bobide");
+    expect(detectPlatformName()).toBe("Bob");
+  });
+
   it("falls back to VSCodium for vscodium applicationName", () => {
     mockProduct("vscodium");
     expect(detectPlatformName()).toBe("VSCodium");
@@ -123,6 +138,27 @@ describe("getPlatformAdapter", () => {
     const adapter = await getPlatformAdapter();
     expect(adapter.name).toBe("Devin");
     expect(adapter.dataFolderName).toBe(".devin-server");
+  });
+
+  it("returns the Antigravity adapter when applicationName is antigravity", async () => {
+    mockProduct("antigravity");
+    const adapter = await getPlatformAdapter();
+    expect(adapter.name).toBe("Antigravity");
+    expect(adapter.dataFolderName).toBe(".antigravity-ide");
+  });
+
+  it("returns the Qoder adapter when applicationName is qoder", async () => {
+    mockProduct("qoder");
+    const adapter = await getPlatformAdapter();
+    expect(adapter.name).toBe("Qoder");
+    expect(adapter.dataFolderName).toBe(".qoder");
+  });
+
+  it("returns the Bob adapter when applicationName is bobide", async () => {
+    mockProduct("bobide");
+    const adapter = await getPlatformAdapter();
+    expect(adapter.name).toBe("Bob");
+    expect(adapter.dataFolderName).toBe(".bobide");
   });
 
   it("returns the VSCodium adapter when applicationName is vscodium", async () => {

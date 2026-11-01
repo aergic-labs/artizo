@@ -214,10 +214,9 @@ describe("reopenInContainer", () => {
       configManager: createMockConfigManager(),
       serverManager: createMockServerManager(),
       gitConfigCopier: createMockGitConfigCopier(),
-      dockerPath: "docker",
       folderHistory: {
         addFolders: vi.fn().mockResolvedValue(undefined),
-        removeFolder: vi.fn().mockResolvedValue(false),
+        removeFolder: vi.fn().mockReturnValue(false),
         getFolders: () => [],
         getRemotes: () => [],
       } as any,

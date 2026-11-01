@@ -6,11 +6,15 @@
 /**
  * Platform adapter factory.
  *
- * Selects the correct IPlatformAdapter at runtime by reading `product.json`
- * `applicationName`. All four adapter modules are bundled in every VSIX;
- * the factory picks one at first call and caches it. Detection order is
- * most-specific first, with VSCodium as the catch-all fallback so the
- * extension always works on unrecognized IDEs (best-effort defaults).
+ * One unified `VSCodiumAdapter` handles every supported fork (VSCodium,
+ * code-oss, VSCode-OSS, Trae, Devin, Antigravity, Qoder, Kiro, Bob),
+ * selected at runtime via `product.json` `applicationName`. The adapter
+ * is bundled in every VSIX; detection happens at first call and the
+ * result is cached. VSCodium is the catch-all fallback so the extension
+ * always works on unrecognized IDEs (best-effort defaults).
+ *
+ * `detectPlatformName()` returns the AI-assist axis (decoupled from the
+ * adapter so AI assist can select without instantiating the adapter).
  */
 
 import * as vscode from "vscode";
@@ -25,8 +29,25 @@ export function _resetForTest(): void {
   _adapter = undefined;
 }
 
+/**
+ * Read `product.json` from the running IDE's appRoot synchronously.
+ * Used by the unified adapter for fork detection and per-fork field
+ * overrides. Throws if product.json is missing or unparseable.
+ */
+export function readProductJson(): Record<string, unknown> {
+  const productPath = path.join(vscode.env.appRoot, "product.json");
+  return JSON.parse(readFileSync(productPath, "utf-8"));
+}
+
 /** IDE names returned by detectPlatformName(). */
-export type PlatformName = "Devin" | "Trae" | "Kiro" | "VSCodium";
+export type PlatformName =
+  | "Devin"
+  | "Trae"
+  | "Kiro"
+  | "Antigravity"
+  | "Qoder"
+  | "Bob"
+  | "VSCodium";
 
 /**
  * Read `product.json` `applicationName` from the running IDE and match
@@ -47,6 +68,15 @@ export function detectPlatformName(): PlatformName {
     if (appName.includes("kiro")) {
       return "Kiro";
     }
+    if (appName.includes("antigravity")) {
+      return "Antigravity";
+    }
+    if (appName.includes("qoder")) {
+      return "Qoder";
+    }
+    if (appName.includes("bob")) {
+      return "Bob";
+    }
   } catch {
     // product.json unreadable - fall through to VSCodium.
   }
@@ -55,53 +85,13 @@ export function detectPlatformName(): PlatformName {
 
 /**
  * Returns the platform adapter for the running IDE. Detected at runtime
- * via `product.json`; cached after first call.
+ * via `product.json`; cached after first call. Single unified adapter -
+ * fork selection happens inside the adapter.
  */
 export async function getPlatformAdapter(): Promise<IPlatformAdapter> {
   if (!_adapter) {
-    const platform = detectPlatformName();
-    if (platform === "Trae") {
-      const { TraeAdapter } = await import("./trae.js");
-      _adapter = new TraeAdapter({
-        name: "Trae",
-        dataFolderName: ".trae",
-        serverApplicationName: "trae-server",
-        needsArgvPatch: false,
-        additionalDockerRunArgs: ["--security-opt", "seccomp=unconfined"],
-      });
-    } else if (platform === "Devin") {
-      const { DevinAdapter } = await import("./devin.js");
-      _adapter = new DevinAdapter({
-        name: "Devin",
-        dataFolderName: ".devin-server",
-        serverApplicationName: "devin-server",
-        needsArgvPatch: true,
-        additionalDockerRunArgs: [],
-        serverInstallRoot: "/tmp",
-        needsHomeSymlink: true,
-        hostDataFolderName: ".devin",
-      });
-    } else if (platform === "Kiro") {
-      const { KiroAdapter } = await import("./kiro.js");
-      _adapter = new KiroAdapter({
-        name: "Kiro",
-        dataFolderName: ".kiro",
-        serverApplicationName: "kiro-server",
-        needsArgvPatch: true,
-        additionalDockerRunArgs: [],
-      });
-    } else {
-      const { VSCodiumAdapter } = await import("./vscodium.js");
-      _adapter = new VSCodiumAdapter({
-        name: "VSCodium",
-        dataFolderName: ".vscode-oss",
-        serverApplicationName: "codium-server",
-        needsArgvPatch: true,
-        additionalDockerRunArgs: [],
-        serverInstallRoot: "/tmp",
-        needsHomeSymlink: false,
-      });
-    }
+    const { VSCodiumAdapter } = await import("./vscodium.js");
+    _adapter = new VSCodiumAdapter();
   }
   return _adapter!;
 }

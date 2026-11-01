@@ -1,36 +1,21 @@
 # Artizo Dev Containers for Kiro
 
-A dev containers extension for [Kiro](https://kiro.dev).
+{{section:intro}}
 
-Open any folder or repository inside a Docker container and get a full-featured development environment.
+Built for [Kiro](https://kiro.dev).
 
-Reduces friction when developing for linux-centric targets on Windows or macOS.
+## Features
 
-Isolate the AI agent inside the container. It can only easily touch what you mount, nothing else.
-
-## Why
-
-Microsoft's Dev Containers extension is closed-source and locked to VS Code. 
-
-Artizo Dev Containers provides the same functionality for Kiro by leveraging the open-source `@devcontainers/cli` and reimplementing the IDE integration layer from scratch.
+{{section:features-head}}
+- **AI-assisted setup** - create, update, or repair devcontainer.json with integrated Kiro assist
+{{section:features-tail}}
+- **Kiro credential sync** - automatic sync of credentials
 
 ## Requirements
 
 - [Kiro](https://kiro.dev)
-- Docker CLI client (`docker`)
-  - Alternatives like Podman or Rancher work too, provided their
-    optional Docker CLI compatibility packages are installed and working.
-  - On Windows, [wslc](https://learn.microsoft.com/en-us/windows/wsl/wsl-container)
-    (WSL Containers CLI) runs devcontainers without Docker Desktop.
-    Must be installed and working. Enable **Use Wslc If Installed** in
-    settings to use it.
-
-That's it. Everything else is bundled with the extension.
+{{section:requirements-tail}}
 
 ## License
 
-GNU Affero General Public License v3.0 (AGPL-3.0). See [LICENSE](LICENSE) for the full text.
-
-Commercial licensing: contact@aergic.com
-
-© 2026 Aergic Labs, LLC | [aergic.com](https://aergic.com)
+{{section:license}}

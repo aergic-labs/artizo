@@ -628,7 +628,7 @@ export class ServerManager implements IServerManager {
       );
     }
 
-    const url = await buildServerDownloadUrl(this.productInfo, arch);
+    const { url } = await buildServerDownloadUrl(this.productInfo, arch);
     const installRoot = await this.getServerInstallRoot(containerId);
     const serverDataDir = this.getServerDataDir(installRoot);
 
