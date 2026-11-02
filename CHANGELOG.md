@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.1
+
+### Fixed
+
+- Add missing `ibm bob` keyword to the vscodium VSIX so it surfaces in IBM Bob marketplace searches.
+
 ## 0.11.0
 
 ### Added
