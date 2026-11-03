@@ -232,6 +232,18 @@ describe("rebuildContainer", () => {
     );
   });
 
+  it("skips user lifecycle during up so hooks cannot block a rebuild", async () => {
+    await rebuildContainer(deps, ui, {
+      workspaceFolder: "/workspace",
+      workspaceUri: vscode.Uri.file("/workspace"),
+      reconnect: false,
+    });
+
+    expect(withDefaults).toHaveBeenCalledWith(
+      expect.objectContaining({ postCreateEnabled: false }),
+    );
+  });
+
   it("throws when no devcontainer.json found", async () => {
     deps.configManager = createMockConfigManager({
       readConfig: vi

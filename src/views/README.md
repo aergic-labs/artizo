@@ -19,4 +19,4 @@ Tree view providers for VS Code's built-in Remote Explorer panel.
 
 ## Elsewhere
 
-- `PortViewProvider` (`ports/portView.ts`) - wired from `services.ts`.
+- `PortViewProvider` (`ports/portView.ts`) - registered by `RemoteAuthorityResolver` on first container attach.

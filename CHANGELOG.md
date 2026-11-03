@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.2
+
+### Fixed
+
+- Port forwarding now works: `PortViewProvider.register` was never called and `forwardPorts` created no listener. Registered on attach and the configured ports are forwarded.
+- `forwardPorts` object entries no longer crash the config merge (`Cannot convert object to primitive value`); they are normalized, unknown entries dropped.
+- Provision failures now include the underlying message, stack, and docker cmd/cmdOutput/stderr/stdout instead of the generic setup text.
+- User lifecycle hooks no longer block attach: build/start skip them and attach runs them in the background.
+
 ## 0.11.1
 
 ### Fixed

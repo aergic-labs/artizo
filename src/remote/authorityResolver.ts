@@ -38,6 +38,8 @@ import { resolveConfigVars } from "../devcontainer/readResolvedConfig";
 import { URI } from "vscode-uri";
 import { buildIdentityLabels } from "../workflows/postLaunch";
 import { getPlatformAdapter } from "../platform";
+import { PortForwarder } from "../ports/portForwarder.js";
+import { PortViewProvider } from "../ports/portView.js";
 
 /** File-based logger that works regardless of window state. */
 const LOG_FILE = path.join(os.tmpdir(), "artizo-resolver.log");
@@ -95,6 +97,8 @@ export interface AuthorityResolverOptions {
   serverManager?: IServerManager;
   /** Extension install path - used to locate the askpass scripts. */
   extensionPath?: string;
+  /** Extension context - used to register the Ports view and set the `artizo.connected` context key. */
+  context?: vscode.ExtensionContext;
 }
 
 /**
@@ -114,6 +118,12 @@ export class RemoteAuthorityResolver {
   private readonly forwardConnections: Set<{ socket: net.Socket; child: import("node:child_process").ChildProcess }> = new Set();
   /** Extension install path (for locating bundled askpass scripts). */
   private readonly extensionPath: string | undefined;
+  /** Extension context (for registering the Ports view + `artizo.connected` context key). */
+  private readonly context: vscode.ExtensionContext | undefined;
+  /** Port forwarder for user-app ports declared via `forwardPorts` in devcontainer.json. */
+  private portForwarder: PortForwarder | undefined;
+  /** Ports view provider registered once per extension host. */
+  private portViewProvider: PortViewProvider | undefined;
   /**
    * Active SSH tunnels keyed by the local port returned to VS Code. Allows
    * `dispose()` to tear down tunnels (and stop respawn) on extension
@@ -125,6 +135,7 @@ export class RemoteAuthorityResolver {
     this.dockerPathOverride = options?.dockerPath;
     this.serverManager = options?.serverManager;
     this.extensionPath = options?.extensionPath;
+    this.context = options?.context;
     logToFile("=== RemoteAuthorityResolver created ===");
   }
 
@@ -158,6 +169,13 @@ export class RemoteAuthorityResolver {
       try { conn.socket.destroy(); } catch { /* already closed */ }
     }
     this.forwardConnections.clear();
+    // Tear down the user-app port forwarder and clear the Ports view context
+    // key so the view hides. PortViewProvider is disposed via context.subscriptions.
+    void vscode.commands.executeCommand("setContext", "artizo.connected", false);
+    if (this.portForwarder) {
+      this.portForwarder.dispose();
+      this.portForwarder = undefined;
+    }
   }
 
   /**
@@ -636,14 +654,6 @@ export class RemoteAuthorityResolver {
 
     if (this.serverManager) {
       try {
-        // Run lifecycle hooks (postStartCommand, postAttachCommand) via
-        // the CLI before installing the server. One-time hooks
-        // (onCreateCommand, etc.) are skipped by the CLI's marker logic.
-        // Labels on the container carry the workspace folder + config path,
-        // both local to wherever this resolver runs (apex for local,
-        // remote-ssh host for dual-hop - same side that has Docker).
-        await this.runLifecycleHooks(containerInfo);
-
         // Recover remoteUser (from our label) and containerUser (from
         // Config.User) so re-attach runs install/start as the right user
         // instead of defaulting to root. Both come from the existing
@@ -701,6 +711,64 @@ export class RemoteAuthorityResolver {
           serverInfo.installPath,
         );
         logToFile(`[Resolver] Forwarded to local port ${localPort}`);
+
+        // Port forwarding: one forwarder per resolver, retargeted on re-attach
+        // so PortViewProvider's reference stays valid. The server control
+        // channel (forwardContainerPort above) is separate from the user-app
+        // ports declared via `forwardPorts` in devcontainer.json.
+        const nodePath = `${serverInfo.installPath}/node`;
+        if (this.portForwarder) {
+          await this.portForwarder.retarget(containerId, nodePath);
+        } else {
+          this.portForwarder = new PortForwarder({ containerId, nodePath });
+        }
+        if (!this.portViewProvider && this.context) {
+          this.portViewProvider = PortViewProvider.register(
+            this.context,
+            this.portForwarder,
+          );
+        }
+        // Without this the Ports view (`when: artizo.connected` in package.json)
+        // never renders.
+        void vscode.commands.executeCommand("setContext", "artizo.connected", true);
+
+        // Auto-forward config-declared ports. reattachConfig can be undefined
+        // when the container lacks artizo.config_file / artizo.local_folder labels.
+        const forwardPortsRaw = reattachConfig?.forwardPorts;
+        if (Array.isArray(forwardPortsRaw)) {
+          for (const entry of forwardPortsRaw) {
+            const port =
+              typeof entry === "number"
+                ? entry
+                : entry && typeof entry === "object" && typeof (entry as any).port === "number"
+                  ? (entry as any).port
+                  : NaN;
+            if (!Number.isInteger(port) || port < 1 || port > 65535) {
+              logToFile(`[ports] skipping invalid forwardPorts entry: ${JSON.stringify(entry)}`);
+              continue;
+            }
+            const label =
+              entry && typeof entry === "object" ? (entry as any).label : undefined;
+            try {
+              await this.portForwarder.forwardPort(port, port, label, "config");
+              logToFile(`[ports] forwarded ${port}->${port}${label ? ` (${label})` : ""}`);
+            } catch (err) {
+              // EADDRINUSE on the host, or listen failure; log, don't block resolve.
+              logToFile(
+                `[ports] failed to forward ${port}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+        }
+
+        // Run user lifecycle hooks after the server is up, in the background.
+        // A blocking postAttachCommand must not delay attach. runLifecycleHooks
+        // logs its own failures; the catch guards the early (pre-try) path.
+        void this.runLifecycleHooks(containerInfo).catch((err: unknown) => {
+          logToFile(
+            `[Resolver] Lifecycle hooks rejected: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
 
         return {
           type: "success",

@@ -319,6 +319,194 @@ describe("RemoteAuthorityResolver", () => {
   });
 });
 
+// Mocks for the port-forwarding wiring test. hoisted so they're available
+  // before the resolver module imports its dependencies.
+  const {
+    mockResolveConfigVars,
+    mockForwardPort,
+    mockRetarget,
+    mockPortViewRegister,
+  } = vi.hoisted(() => ({
+    mockResolveConfigVars: vi.fn(),
+    mockForwardPort: vi.fn().mockResolvedValue(undefined),
+    mockRetarget: vi.fn().mockResolvedValue(undefined),
+    mockPortViewRegister: vi.fn(),
+  }));
+  vi.mock("../../src/devcontainer/readResolvedConfig", () => ({
+    resolveConfigVars: mockResolveConfigVars,
+  }));
+  vi.mock("../../src/ports/portForwarder", () => ({
+    PortForwarder: vi.fn().mockImplementation(function () {
+      return {
+        forwardPort: mockForwardPort,
+        retarget: mockRetarget,
+        unforwardPort: vi.fn().mockResolvedValue(undefined),
+        getForwardedPorts: vi.fn().mockReturnValue([]),
+        onDidForwardPort: vi.fn(),
+        onDidUnforwardPort: vi.fn(),
+        dispose: vi.fn(),
+      };
+    }),
+  }));
+  vi.mock("../../src/ports/portView", () => ({
+    PortViewProvider: {
+      register: mockPortViewRegister.mockReturnValue({}),
+    },
+  }));
+
+  import { PortForwarder as PortForwarderCtor } from "../../src/ports/portForwarder";
+
+  /**
+   * Builds a fake IServerManager that resolves `start` to a fixed ServerInfo with
+   * the installPath the resolver uses to derive `nodePath`.
+   */
+  function makeMockServerManager(installPath: string): IServerManagerLike {
+    return {
+      ensureInstalled: vi.fn().mockResolvedValue({ installPath, port: 0 }),
+      start: vi.fn().mockResolvedValue({
+        commit: "abc123",
+        arch: "x64",
+        installPath,
+        port: 40000,
+        connectionToken: "tok",
+      }),
+      stop: vi.fn().mockResolvedValue(undefined),
+      getStatus: vi.fn().mockResolvedValue(null),
+      getCompatibleVersion: vi.fn().mockReturnValue("1.0.0"),
+      getServerDataDir: vi.fn().mockReturnValue("/srv/data"),
+    } as unknown as IServerManagerLike;
+  }
+
+  type IServerManagerLike = {
+    ensureInstalled(containerId: string, remoteUser?: string): Promise<unknown>;
+    start(
+      containerId: string,
+      remoteUser?: string,
+      config?: Record<string, unknown>,
+    ): Promise<{
+      installPath: string;
+      port: number;
+      connectionToken?: string;
+      commit: string;
+      arch: string;
+    }>;
+    stop(containerId: string): Promise<void>;
+    getStatus(containerId: string): Promise<unknown>;
+    getCompatibleVersion(): string;
+    getServerDataDir(installRoot: string): string;
+  };
+
+  describe("RemoteAuthorityResolver - port forwarding wiring", () => {
+    const containerId = "art-container-id";
+    const installPath = "/tmp/.x/bin/abc123";
+    const forwardPorts = [
+      8080,
+      { port: 5432, label: "DB" },
+      "bad",
+      99999,
+    ];
+    let resolver: RemoteAuthorityResolver;
+    let mockContext: any;
+    let mockServerManager: IServerManagerLike;
+    let mockExecuteCommand: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockResolveConfigVars.mockResolvedValue({ forwardPorts });
+      mockServerManager = makeMockServerManager(installPath);
+      mockContext = {
+        extensionPath: "/ext/path",
+        subscriptions: [],
+      };
+      mockExecuteCommand = vi.fn();
+      // Patch the shared vscode mock's executeCommand for this test so we can
+      // observe the setContext calls. Restored via clearAllMocks + the mock
+      // being a method on the shared object.
+      (vscode as any).commands.executeCommand = mockExecuteCommand;
+      resolver = new RemoteAuthorityResolver({
+        serverManager: mockServerManager as any,
+        context: mockContext as any,
+      });
+      // Stub the server-control relay path so it doesn't touch node:net or
+      // node:child_process (not mocked here). The port-forwarding wiring under
+      // test is independent of this path.
+      (resolver as any).forwardContainerPort = vi
+        .fn()
+        .mockResolvedValue(40000);
+    });
+
+    it("forwards config-declared ports with source 'config' and sets artizo.connected", async () => {
+      const containerData = makeContainerData({
+        Id: containerId,
+        Config: {
+          Image: "node:18",
+          Labels: {
+            "artizo.config_file": "/work/cfg.json",
+            "artizo.local_folder": "/work",
+          },
+        },
+      });
+      setupMockForInspect(containerData);
+
+      const authority = encodeAuthority(SCHEME_ATTACHED_CONTAINER, containerId);
+      const result = await resolver.resolve(authority);
+      expect(result.type).toBe("success");
+
+      // forwardPort must be called for 8080 and 5432 with source "config".
+      const forwardCalls = mockForwardPort.mock.calls.map((c) => c);
+      expect(forwardCalls).toContainEqual([8080, 8080, undefined, "config"]);
+      expect(forwardCalls).toContainEqual([5432, 5432, "DB", "config"]);
+      // Invalid entries ("bad" is not a number, 99999 is out of range) must be skipped.
+      expect(forwardCalls).toHaveLength(2);
+      // The view must become visible.
+      expect(mockExecuteCommand).toHaveBeenCalledWith(
+        "setContext",
+        "artizo.connected",
+        true,
+      );
+      // PortViewProvider.register must have been called once with the context + a forwarder.
+      expect(mockPortViewRegister).toHaveBeenCalledTimes(1);
+      expect(mockPortViewRegister).toHaveBeenCalledWith(mockContext, expect.any(Object));
+    });
+
+    it("reuses the same PortForwarder across re-attach via retarget()", async () => {
+      const containerData = makeContainerData({
+        Id: containerId,
+        Config: {
+          Image: "node:18",
+          Labels: {
+            "artizo.config_file": "/work/cfg.json",
+            "artizo.local_folder": "/work",
+          },
+        },
+      });
+      setupMockForInspect(containerData);
+      const authority = encodeAuthority(SCHEME_ATTACHED_CONTAINER, containerId);
+      // First attach: creates a PortForwarder and registers the view.
+      await resolver.resolve(authority);
+      const firstCtorCallCount = (PortForwarderCtor as unknown as any).mock.calls.length;
+      expect(firstCtorCallCount).toBeGreaterThanOrEqual(1);
+      const firstForwarderInstance = (PortForwarderCtor as unknown as any).mock
+        .results[firstCtorCallCount - 1].value;
+      // Second attach (same container, possibly re-opened window): the forwarder
+      // must be retargeted, not recreated.
+      mockForwardPort.mockClear();
+      await resolver.resolve(authority);
+      const secondCtorCallCount = (PortForwarderCtor as unknown as any).mock.calls.length;
+      expect(secondCtorCallCount).toBe(firstCtorCallCount); // no new constructor
+      expect(mockRetarget).toHaveBeenCalledWith(containerId, `${installPath}/node`);
+      // Re-forward config ports on the retargeted forwarder.
+      const forwardCalls = mockForwardPort.mock.calls.map((c) => c);
+      expect(forwardCalls).toContainEqual([8080, 8080, undefined, "config"]);
+      expect(forwardCalls).toContainEqual([5432, 5432, "DB", "config"]);
+      // firstForwarderInstance is the one used by the resolver (stable reference).
+      expect(mockPortViewRegister).toHaveBeenCalledWith(
+        mockContext,
+        firstForwarderInstance,
+      );
+    });
+  });
+
 describe("registerAuthorityResolver", () => {
   let mockContext: any;
   let resolver: RemoteAuthorityResolver;

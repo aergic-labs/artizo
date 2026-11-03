@@ -219,6 +219,19 @@ describe('PortForwarder', () => {
       });
     });
 
+    it('records the source of a forwarded port', async () => {
+      const configPort = await forwarder.forwardPort(3000, 3000, undefined, 'config');
+      expect(configPort.source).toBe('config');
+
+      // Reset for the next forwardPort call.
+      const mockServer2 = createMockServer();
+      mockCreateServer.mockImplementation(() => mockServer2.server);
+      (mockServer2.server.listen as any).mockImplementation((_p, _h, cb) => { setImmediate(cb); return mockServer2.server; });
+
+      const userPort = await forwarder.forwardPort(4000, 4000, undefined, 'user');
+      expect(userPort.source).toBe('user');
+    });
+
     it('rejects if server fails to listen', async () => {
       // Override the mock to emit an error
       mockCreateServer.mockImplementation(() => {
@@ -265,6 +278,41 @@ describe('PortForwarder', () => {
       );
 
       customForwarder.dispose();
+    });
+  });
+
+  describe('retarget', () => {
+    it('unforwards prior ports and sets the new container target', async () => {
+      await forwarder.forwardPort(3000);
+      // Sanity: a connection spawns against the original container.
+      const firstChild = createMockChildProcess();
+      mockSpawn.mockReturnValue(firstChild.process);
+      mockServer.connectionHandler!(createMockSocket());
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'docker',
+        expect.arrayContaining(['exec', '-i', 'test-container', 'node', '-e']),
+        { stdio: ['pipe', 'pipe', 'pipe'] },
+      );
+      mockSpawn.mockClear();
+
+      // No prior unforwardPort mock; PortForwarder calls closeServer (a mock).
+      await forwarder.retarget('new-container', '/srv/bin/node');
+      expect(forwarder.getForwardedPorts()).toEqual([]);
+
+      // Forward a port on the new target and verify the connection uses the
+      // new container id and the provided nodePath.
+      const mockServer2 = createMockServer();
+      await forwarder.forwardPort(4000);
+
+      const secondChild = createMockChildProcess();
+      mockSpawn.mockReturnValue(secondChild.process);
+      mockServer2.connectionHandler!(createMockSocket());
+
+      expect(mockSpawn).toHaveBeenCalledWith(
+        'docker',
+        expect.arrayContaining(['exec', '-i', 'new-container', '/srv/bin/node', '-e', expect.stringContaining('createConnection(4000')]),
+        { stdio: ['pipe', 'pipe', 'pipe'] },
+      );
     });
   });
 

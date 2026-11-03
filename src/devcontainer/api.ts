@@ -45,6 +45,33 @@ export async function launch(...args: any[]): Promise<any> {
 }
 
 /**
+ * Build the human-readable provision failure text. Prefers the underlying
+ * cause (ContainerError.message) over the generic description, and appends
+ * docker cmd/cmdOutput/stderr/stdout when present. Exported for tests.
+ */
+export function formatProvisionFailure(
+  err: unknown,
+  failureMessage: string,
+): string {
+  const orig = (err as any)?.originalError;
+  const description = (err as any)?.description as string | undefined;
+  const message = err instanceof Error ? err.message : String(err);
+  const head =
+    description && description !== message
+      ? `${description}: ${message}`
+      : message;
+  const cmd = orig?.cmd
+    ? `\n[cmd] ${Array.isArray(orig.cmd) ? orig.cmd.join(" ") : orig.cmd}`
+    : "";
+  const cmdOutput = orig?.cmdOutput
+    ? `\n[cmdOutput]\n${String(orig.cmdOutput)}`
+    : "";
+  const stderr = orig?.stderr ? `\n[stderr]\n${String(orig.stderr)}` : "";
+  const stdout = orig?.stdout ? `\n[stdout]\n${String(orig.stdout)}` : "";
+  return `${failureMessage}: ${head}${cmd}${cmdOutput}${stderr}${stdout}`;
+}
+
+/**
  * Run a provision (`launch`) and normalize failures to ProvisionFailedError,
  * carrying the devcontainer.json path.
  */
@@ -57,16 +84,12 @@ export async function launchProvision(
   try {
     return await launch(options, idLabels, []);
   } catch (err: unknown) {
-    const containerErr = err as { description?: string };
-    if (containerErr?.description) {
-      throw new ProvisionFailedError(
-        `${failureMessage}: ${containerErr.description}`,
-        configPath ?? undefined,
-      );
-    }
+    // The original stack rides on the ProvisionFailedError so commandRunner
+    // writes it to the build log TTY and the file appender.
     throw new ProvisionFailedError(
-      `${failureMessage}: ${err instanceof Error ? err.message : String(err)}`,
+      formatProvisionFailure(err, failureMessage),
       configPath ?? undefined,
+      err,
     );
   }
 }

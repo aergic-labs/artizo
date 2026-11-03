@@ -11,5 +11,8 @@
     "declarationMap": false
   },
   "include": ["src/**/*", "test/**/*"],
-  "exclude": ["node_modules", "dist", "spike"]
+  // imageMetadata.test.ts imports the vendored CLI, which does not satisfy this
+  // program's compiler options (it has its own tsconfig). Excluded from the
+  // typecheck program only; vitest still runs it.
+  "exclude": ["node_modules", "dist", "spike", "test/unit/imageMetadata.test.ts"]
 }

@@ -105,6 +105,8 @@ export async function rebuildContainer(
             : undefined,
           buildNoCache: noCache ?? false,
           removeExistingContainer: true,
+          // Build/start only; user lifecycle hooks run on attach.
+          postCreateEnabled: false,
           defaultUserEnvProbe: reconnect ? "loginInteractiveShell" : "none",
           additionalLabels: idLabels,
           log: (text: string) => ui.showBuildLog(text),
@@ -191,6 +193,8 @@ export async function rebuildContainer(
                 ? URI.file(configResult!.configPath)
                 : undefined,
               overrideConfigFile: URI.file(overrideConfigPath),
+              // No user lifecycle during up.
+              postCreateEnabled: false,
               log: (text: string) => ui.showBuildLog(text),
             });
 

@@ -310,6 +310,7 @@ export function registerResolverEarly(
 ): RemoteAuthorityResolver {
   const resolver = new RemoteAuthorityResolver({
     extensionPath: context.extensionPath,
+    context,
   });
   registerAuthorityResolver(context, resolver);
   // Ensure SSH tunnels spawned by the State 4 proxy path are torn down on

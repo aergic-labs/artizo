@@ -133,6 +133,25 @@ const vscode = {
     event = vi.fn();
     fire() {}
   },
+  TreeItem: class {
+    label: string;
+    collapsibleState: number;
+    description?: string;
+    tooltip?: string;
+    contextValue?: string;
+    iconPath?: unknown;
+    constructor(label: string, collapsibleState: number) {
+      this.label = label;
+      this.collapsibleState = collapsibleState;
+    }
+  },
+  TreeItemCollapsibleState: { None: 0, Collapsed: 1, Expanded: 2 },
+  ThemeIcon: class {
+    id: string;
+    constructor(id: string) {
+      this.id = id;
+    }
+  },
   Disposable: {
     from() {
       return { dispose: vi.fn() };

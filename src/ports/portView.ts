@@ -21,6 +21,7 @@ export interface IPortForwarderView {
     containerPort: number,
     localPort?: number,
     label?: string,
+    source?: "user" | "config" | "auto-detected",
   ): Promise<ForwardedPort>;
   unforwardPort(containerPort: number): Promise<void>;
   getForwardedPorts(): ForwardedPort[];

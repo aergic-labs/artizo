@@ -29,7 +29,12 @@ export interface ForwardedPort {
 }
 
 export interface IPortForwarder {
-  forwardPort(containerPort: number, localPort?: number, label?: string): Promise<ForwardedPort>;
+  forwardPort(
+    containerPort: number,
+    localPort?: number,
+    label?: string,
+    source?: "user" | "config" | "auto-detected",
+  ): Promise<ForwardedPort>;
   unforwardPort(containerPort: number): Promise<void>;
   getForwardedPorts(): ForwardedPort[];
   dispose(): void;
@@ -44,13 +49,14 @@ interface ActiveForward {
 export interface PortForwarderOptions {
   containerId: string;
   dockerPath?: string;
-  installPath?: string;
+  /** Path to the bundled node binary in the container (e.g. `<installPath>/node`). */
+  nodePath?: string;
 }
 
 export class PortForwarder implements IPortForwarder {
-  private readonly containerId: string;
-  private readonly dockerPathOverride: string | undefined;
-  private readonly installPath?: string;
+  private containerId: string;
+  private dockerPathOverride: string | undefined;
+  private nodePath: string | undefined;
   private readonly forwards = new Map<number, ActiveForward>();
   private readonly emitter = new EventEmitter();
   private disposed = false;
@@ -58,7 +64,26 @@ export class PortForwarder implements IPortForwarder {
   constructor(options: PortForwarderOptions) {
     this.containerId = options.containerId;
     this.dockerPathOverride = options.dockerPath;
-    this.installPath = options.installPath;
+    this.nodePath = options.nodePath;
+  }
+
+  /**
+   * Re-point the forwarder at a (possibly new) container. Unforwards every
+   * existing port first (they belonged to the prior container), then updates
+   * the target. Reuses the same instance so PortViewProvider's reference stays
+   * valid across re-attach.
+   */
+  async retarget(containerId: string, nodePath?: string): Promise<void> {
+    for (const containerPort of [...this.forwards.keys()]) {
+      await this.unforwardPort(containerPort);
+    }
+    this.containerId = containerId;
+    this.nodePath = nodePath;
+    // Always read getDockerPath() live so a runtime config change (e.g.
+    // Podman users setting artizo.dockerPath after the first attach) takes
+    // effect on the next connection.
+    this.dockerPathOverride = undefined;
+    this.disposed = false;
   }
 
   /**
@@ -68,7 +93,8 @@ export class PortForwarder implements IPortForwarder {
   async forwardPort(
     containerPort: number,
     localPort?: number,
-    label?: string
+    label?: string,
+    source: 'user' | 'config' | 'auto-detected' = 'user',
   ): Promise<ForwardedPort> {
     if (this.disposed) {
       throw new Error('PortForwarder has been disposed');
@@ -91,7 +117,7 @@ export class PortForwarder implements IPortForwarder {
       localPort: resolvedLocalPort,
       label,
       protocol: 'tcp',
-      source: 'user',
+      source,
     };
 
     const activeForward: ActiveForward = {
@@ -177,16 +203,17 @@ export class PortForwarder implements IPortForwarder {
       return;
     }
 
-    // Use bundled node + relay.js if install path is known, fall back to inline script
-    const relayArgs = this.installPath
-      ? [`${this.installPath}/node`, `${this.installPath}/bin/relay.js`, String(containerPort)]
-      : ['node', '-e', tcpRelayScript(containerPort)];
-
+    // Use the bundled node (same one the server control channel uses) with the
+    // inline relay script. relay.js is NOT under installPath; it lives at
+    // /tmp/.artizo/bin/relay.js, so a path-based relay is wrong here.
+    const nodeBin = this.nodePath ?? 'node';
     const child = dockerSpawn(this.dockerPathOverride ?? getDockerPath(), [
       'exec',
       '-i',
       this.containerId,
-      ...relayArgs,
+      nodeBin,
+      '-e',
+      tcpRelayScript(containerPort),
     ], { stdio: ['pipe', 'pipe', 'pipe'] });
 
     const connEntry = { socket, process: child };

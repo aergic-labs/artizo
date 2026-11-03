@@ -15,10 +15,18 @@
  */
 export class ProvisionFailedError extends Error {
   readonly configPath: string | undefined;
+  readonly originalError: unknown;
 
-  constructor(message: string, configPath?: string) {
+  constructor(message: string, configPath?: string, originalError?: unknown) {
     super(message);
     this.name = "ProvisionFailedError";
     this.configPath = configPath;
+    this.originalError = originalError;
+    // commandRunner writes `error.stack` to the build log TTY and file. Keep
+    // the stack from the real failure instead of the throw site here.
+    const stack = (originalError as { stack?: string } | undefined)?.stack;
+    if (stack) {
+      this.stack = stack;
+    }
   }
 }

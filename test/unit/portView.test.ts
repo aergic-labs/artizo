@@ -366,6 +366,19 @@ describe("PortViewProvider", () => {
 
       expect(context.subscriptions.length).toBeGreaterThanOrEqual(4);
     });
+
+    it("holds a stable reference to the forwarder passed in at registration", () => {
+      const context = {
+        subscriptions: [] as vscode.Disposable[],
+      } as unknown as vscode.ExtensionContext;
+
+      const provider = PortViewProvider.register(context, forwarder);
+
+      // The provider must keep the same forwarder instance across retarget() so
+      // the view keeps working when the resolver re-points the forwarder at a
+      // new container on re-attach.
+      expect((provider as any).portForwarder).toBe(forwarder);
+    });
   });
 
   describe("auto-refresh on forwarder events", () => {
