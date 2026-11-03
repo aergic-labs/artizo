@@ -374,6 +374,7 @@ describe("RemoteAuthorityResolver", () => {
       getStatus: vi.fn().mockResolvedValue(null),
       getCompatibleVersion: vi.fn().mockReturnValue("1.0.0"),
       getServerDataDir: vi.fn().mockReturnValue("/srv/data"),
+      getInstallPath: vi.fn().mockResolvedValue(installPath),
     } as unknown as IServerManagerLike;
   }
 
@@ -504,6 +505,56 @@ describe("RemoteAuthorityResolver", () => {
         mockContext,
         firstForwarderInstance,
       );
+    });
+
+    it("registers the Ports view in a connected window where resolve() never ran", async () => {
+      // The attached window is a fresh extension host: the resolver's own
+      // wiring (inside resolveContainerById) never runs there, so activation
+      // calls ensurePortsForAttachedWindow instead.
+      (vscode.env as any).remoteAuthority = encodeAuthority(
+        SCHEME_ATTACHED_CONTAINER,
+        containerId,
+      );
+      setupMockForInspect(
+        makeContainerData({
+          Id: containerId,
+          Config: {
+            Image: "node:18",
+            Labels: {
+              "artizo.config_file": "/work/cfg.json",
+              "artizo.local_folder": "/work",
+            },
+          },
+        }),
+      );
+
+      await resolver.ensurePortsForAttachedWindow();
+
+      // Created (not retargeted): this host never resolved the authority.
+      expect(mockRetarget).not.toHaveBeenCalled();
+      expect(mockPortViewRegister).toHaveBeenCalledTimes(1);
+      expect(mockPortViewRegister).toHaveBeenCalledWith(
+        mockContext,
+        expect.any(Object),
+      );
+      expect(mockExecuteCommand).toHaveBeenCalledWith(
+        "setContext",
+        "artizo.connected",
+        true,
+      );
+      // The forwarder from the resolving window died with that host, so the
+      // configured ports are forwarded again here.
+      const forwardCalls = mockForwardPort.mock.calls;
+      expect(forwardCalls).toContainEqual([8080, 8080, undefined, "config"]);
+      expect(forwardCalls).toContainEqual([5432, 5432, "DB", "config"]);
+    });
+
+    it("ensurePortsForAttachedWindow is a no-op without a remote authority", async () => {
+      (vscode.env as any).remoteAuthority = undefined;
+
+      await resolver.ensurePortsForAttachedWindow();
+
+      expect(mockPortViewRegister).not.toHaveBeenCalled();
     });
   });
 

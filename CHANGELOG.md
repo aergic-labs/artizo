@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.3
+
+### Fixed
+
+- Port commands are now registered in the attached window, where `resolve()` never runs, so `Artizo: Forward a Port` works instead of reporting `command not found`.
+- Forwarding now reports the mapping on success and the error on failure; listener and relay failures are logged.
+
 ## 0.11.2
 
 ### Fixed

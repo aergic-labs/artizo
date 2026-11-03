@@ -39,6 +39,8 @@ vi.mock("vscode", () => {
     window: {
       createTreeView: vi.fn().mockReturnValue({ dispose: vi.fn() }),
       showInputBox: vi.fn(),
+      showInformationMessage: vi.fn(),
+      showErrorMessage: vi.fn(),
     },
     commands: {
       registerCommand: vi.fn().mockReturnValue({ dispose: vi.fn() }),
@@ -53,7 +55,12 @@ import type { IPortForwarderView } from "../../src/ports/portView";
 
 function createMockForwarder(ports: ForwardedPort[] = []): IPortForwarderView {
   return {
-    forwardPort: vi.fn().mockResolvedValue(undefined),
+    forwardPort: vi.fn().mockResolvedValue({
+      containerPort: 3000,
+      localPort: 3000,
+      protocol: "tcp",
+      source: "user",
+    }),
     unforwardPort: vi.fn().mockResolvedValue(undefined),
     getForwardedPorts: vi.fn().mockReturnValue(ports),
     onDidForwardPort: vi.fn(),

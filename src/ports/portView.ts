@@ -146,7 +146,16 @@ export class PortViewProvider implements vscode.TreeDataProvider<ForwardedPort> 
     }
 
     const containerPort = parseInt(input, 10);
-    await this.portForwarder.forwardPort(containerPort);
+    try {
+      const forwarded = await this.portForwarder.forwardPort(containerPort);
+      void vscode.window.showInformationMessage(
+        `Forwarding 127.0.0.1:${forwarded.localPort} to container port ${forwarded.containerPort}`,
+      );
+    } catch (err) {
+      void vscode.window.showErrorMessage(
+        `Failed to forward port ${containerPort}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /** Remove a forwarded port. */

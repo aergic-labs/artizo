@@ -127,6 +127,9 @@ export class PortForwarder implements IPortForwarder {
     };
 
     this.forwards.set(containerPort, activeForward);
+    getLogger().info(
+      `[ports] listening 127.0.0.1:${resolvedLocalPort} -> container ${containerPort} (node: ${this.nodePath ?? "<PATH>"})`,
+    );
     this.emitter.emit('didForwardPort', forwardedPort);
 
     return forwardedPort;
@@ -207,6 +210,7 @@ export class PortForwarder implements IPortForwarder {
     // inline relay script. relay.js is NOT under installPath; it lives at
     // /tmp/.artizo/bin/relay.js, so a path-based relay is wrong here.
     const nodeBin = this.nodePath ?? 'node';
+    getLogger().info(`[ports] relay spawn for ${containerPort} using ${nodeBin}`);
     const child = dockerSpawn(this.dockerPathOverride ?? getDockerPath(), [
       'exec',
       '-i',
@@ -219,10 +223,22 @@ export class PortForwarder implements IPortForwarder {
     const connEntry = { socket, process: child };
     forward.connections.add(connEntry);
 
+    // Relay failures are otherwise invisible: the host listener accepts the
+    // connection, the child dies, and the client just sees an empty reply.
+    child.stderr?.on('data', (chunk: Buffer) => {
+      const text = chunk.toString().trim();
+      if (text) {
+        getLogger().warn(`[ports] relay ${containerPort} stderr: ${text}`);
+      }
+    });
+
     pipeDockerRelay(child, socket);
+
+    let socketClosed = false;
 
     // Clean up on socket close
     socket.on('close', () => {
+      socketClosed = true;
       forward.connections.delete(connEntry);
     });
 
@@ -232,7 +248,12 @@ export class PortForwarder implements IPortForwarder {
     });
 
     // Clean up on process exit
-    child.on('exit', () => {
+    child.on('exit', (code) => {
+      if (code !== 0 && !socketClosed) {
+        getLogger().warn(
+          `[ports] relay ${containerPort} exited with code ${code} before the connection completed (node: ${nodeBin})`,
+        );
+      }
       socket.destroy();
       forward.connections.delete(connEntry);
     });

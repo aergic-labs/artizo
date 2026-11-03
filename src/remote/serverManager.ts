@@ -88,6 +88,11 @@ export interface IServerManager {
    */
   getUserExtensionsDir(containerId: string): Promise<string>;
   /**
+   * Container-side server install directory. The bundled node binary lives at
+   * `<installPath>/node`. Optional so partial mocks stay valid.
+   */
+  getInstallPath?(containerId: string): Promise<string>;
+  /**
    * Check if remoteUser exists in the container. Cached per container.
    * Returns the remoteUser if it exists (or is empty/numeric), undefined
    * if it doesn't (fallback to containerUser). When called without
@@ -400,6 +405,16 @@ export class ServerManager implements IServerManager {
 
     this.resolvedArch = validateArch(result.stdout);
     return this.resolvedArch;
+  }
+
+  /**
+   * Container-side server install directory (`<serverDataDir>/bin/<commit>`).
+   * The bundled node binary lives at `<installPath>/node`.
+   */
+  async getInstallPath(containerId: string): Promise<string> {
+    const installRoot = await this.getServerInstallRoot(containerId);
+    const commit = await this.resolveServerCommit(containerId);
+    return this.getInstallPathWithRoot(installRoot, commit);
   }
 
   // resolveServerCommit gates on the IDE commit, so a stale install

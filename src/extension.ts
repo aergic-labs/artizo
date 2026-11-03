@@ -37,6 +37,7 @@ import type { LogOutputTerminal } from "./workflows/logOutputTerminal";
 import {
   initTier,
   isDevContainerTier,
+  isInDevContainerWindow,
   isAttachedContainerWindow,
   ExecutionTier,
   canDriveDocker,
@@ -434,6 +435,17 @@ async function activateInternal(
     buildLogPty,
     host,
   );
+
+  // 7. Wire the Ports view in a connected window. The resolver's own wiring
+  //    only runs in the host window that opens the container; this window is a
+  //    separate extension host, and without this the palette has no handlers.
+  if (isInDevContainerWindow()) {
+    void resolver.ensurePortsForAttachedWindow().catch((err: unknown) => {
+      getLogger().warn(
+        `Ports view wiring failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  }
 
   // 8. Register commands
   const cmdCtx: CommandContext = {

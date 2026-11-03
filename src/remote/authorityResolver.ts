@@ -734,32 +734,7 @@ export class RemoteAuthorityResolver {
 
         // Auto-forward config-declared ports. reattachConfig can be undefined
         // when the container lacks artizo.config_file / artizo.local_folder labels.
-        const forwardPortsRaw = reattachConfig?.forwardPorts;
-        if (Array.isArray(forwardPortsRaw)) {
-          for (const entry of forwardPortsRaw) {
-            const port =
-              typeof entry === "number"
-                ? entry
-                : entry && typeof entry === "object" && typeof (entry as any).port === "number"
-                  ? (entry as any).port
-                  : NaN;
-            if (!Number.isInteger(port) || port < 1 || port > 65535) {
-              logToFile(`[ports] skipping invalid forwardPorts entry: ${JSON.stringify(entry)}`);
-              continue;
-            }
-            const label =
-              entry && typeof entry === "object" ? (entry as any).label : undefined;
-            try {
-              await this.portForwarder.forwardPort(port, port, label, "config");
-              logToFile(`[ports] forwarded ${port}->${port}${label ? ` (${label})` : ""}`);
-            } catch (err) {
-              // EADDRINUSE on the host, or listen failure; log, don't block resolve.
-              logToFile(
-                `[ports] failed to forward ${port}: ${err instanceof Error ? err.message : String(err)}`,
-              );
-            }
-          }
-        }
+        await this.forwardPortsFromConfig(reattachConfig?.forwardPorts);
 
         // Run user lifecycle hooks after the server is up, in the background.
         // A blocking postAttachCommand must not delay attach. runLifecycleHooks
@@ -856,6 +831,140 @@ export class RemoteAuthorityResolver {
         resolve(addr.port);
       });
     });
+  }
+
+  /**
+   * Forward the ports declared in devcontainer.json. Entries are port numbers
+   * or `{ port, label }` objects; anything else is skipped. Never throws: one
+   * bad port must not block the rest.
+   */
+  private async forwardPortsFromConfig(
+    forwardPortsRaw: unknown,
+  ): Promise<void> {
+    const forwarder = this.portForwarder;
+    if (!forwarder || !Array.isArray(forwardPortsRaw)) return;
+
+    for (const entry of forwardPortsRaw) {
+      const port =
+        typeof entry === "number"
+          ? entry
+          : entry &&
+              typeof entry === "object" &&
+              typeof (entry as { port?: unknown }).port === "number"
+            ? (entry as { port: number }).port
+            : NaN;
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        logToFile(
+          `[ports] skipping invalid forwardPorts entry: ${JSON.stringify(entry)}`,
+        );
+        continue;
+      }
+      const label =
+        entry && typeof entry === "object"
+          ? (entry as { label?: string }).label
+          : undefined;
+      try {
+        await forwarder.forwardPort(port, port, label, "config");
+        logToFile(
+          `[ports] forwarded ${port}->${port}${label ? ` (${label})` : ""}`,
+        );
+      } catch (err) {
+        // EADDRINUSE on the host, or listen failure; log, don't block resolve.
+        logToFile(
+          `[ports] failed to forward ${port}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Wire the Ports view and the `artizo.ports.*` commands in a connected window.
+   *
+   * The registration in resolveContainerById only runs in the extension host
+   * that opens the container. The connected window is a separate extension host
+   * where resolve() never runs, so without this the commands are missing and
+   * the palette reports `command 'artizo.ports.add' not found`.
+   */
+  async ensurePortsForAttachedWindow(): Promise<void> {
+    if (!this.context) return;
+    const authority = (vscode.env as { remoteAuthority?: string })
+      .remoteAuthority;
+    if (!authority) return;
+
+    let scheme: string;
+    let id: string;
+    try {
+      ({ scheme, id } = decodeAuthority(authority));
+    } catch (err) {
+      logToFile(
+        `[ports] authority decode failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+
+    const containerId =
+      scheme === SCHEME_ATTACHED_CONTAINER
+        ? id
+        : await this.findContainerByLabel(id);
+    if (!containerId) {
+      logToFile(`[ports] no container found for ${id}`);
+      return;
+    }
+
+    let nodePath: string | undefined;
+    if (this.serverManager) {
+      try {
+        const installPath = await this.serverManager.getInstallPath?.(containerId);
+        if (installPath) nodePath = `${installPath}/node`;
+      } catch (err) {
+        // Leave undefined: forwarder falls back to `node` on PATH.
+        logToFile(
+          `[ports] install path unavailable: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    logToFile(
+      `[ports] attached container=${containerId} nodePath=${nodePath ?? "<PATH>"}`,
+    );
+
+    if (this.portForwarder) {
+      await this.portForwarder.retarget(containerId, nodePath);
+    } else {
+      this.portForwarder = new PortForwarder({ containerId, nodePath });
+    }
+    if (!this.portViewProvider) {
+      this.portViewProvider = PortViewProvider.register(
+        this.context,
+        this.portForwarder,
+      );
+    }
+    void vscode.commands.executeCommand("setContext", "artizo.connected", true);
+
+    // The forwarder in the window that resolved the authority died with that
+    // extension host, so re-forward the configured ports here.
+    try {
+      const containerInfo = await dockerInspect(containerId, {
+        dockerPath: this.dockerPathOverride ?? getDockerPath(),
+      });
+      const configFilePath =
+        containerInfo.config.labels["artizo.config_file"] ||
+        containerInfo.config.labels["devcontainer.config_file"];
+      const workspaceFolderLabel =
+        containerInfo.config.labels["artizo.local_folder"] ||
+        containerInfo.config.labels["devcontainer.local_folder"];
+      if (configFilePath && workspaceFolderLabel) {
+        const reattachConfig = await resolveConfigVars(
+          workspaceFolderLabel,
+          configFilePath,
+          undefined,
+        );
+        await this.forwardPortsFromConfig(reattachConfig?.forwardPorts);
+      }
+    } catch (err) {
+      logToFile(
+        `[ports] config ports unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /**
