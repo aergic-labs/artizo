@@ -203,7 +203,7 @@ try {
     }
   }
 
-  fs.writeFileSync(path.join(stageDir, "readme.md"), readme);
+  fs.writeFileSync(path.join(stageDir, "README.md"), readme);
 
   // Write merged package.json after copy so it replaces the root one
   fs.writeFileSync(

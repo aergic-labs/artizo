@@ -7,7 +7,7 @@ and other VS Code forks, detected at runtime from `product.json`
 `applicationName`.
 
 Sister project to [Zygos](https://github.com/aergic-labs/zygos), our
-remote-ssh extension. Together they give VSCodium a complete remote
+remote-ssh extension. Together they provide a complete remote
 development stack: SSH host + devcontainer chaining via
 `resolveExecServer`.
 

@@ -202,23 +202,8 @@ export function mergeConfiguration(config: DevContainerConfig, imageMetadata: Im
 function mergeForwardPorts(imageMetadata: ImageMetadataEntry[]): (number | string)[] | undefined {
 	const forwardPorts = [
 		...new Set(
-			([] as unknown[]).concat(...imageMetadata.map(entry => entry.forwardPorts || []))
-				.map(port => {
-					if (typeof port === 'number') {
-						return `localhost:${port}`;
-					}
-					if (typeof port === 'string') {
-						return port;
-					}
-					// Object form ({ port: N }) is not in the spec but Artizo's
-					// resolver accepts it. Normalize so the regex below never
-					// receives a non-string and throws.
-					if (port && typeof port === 'object' && typeof (port as { port?: unknown }).port === 'number') {
-						return `localhost:${(port as { port: number }).port}`;
-					}
-					return undefined;
-				})
-				.filter((port): port is string => typeof port === 'string')
+			([] as (number | string)[]).concat(...imageMetadata.map(entry => entry.forwardPorts || []))
+				.map(port => typeof port === 'number' ? `localhost:${port}` : port)
 		)
 	].map(port => /localhost:\d+/.test(port) ? parseInt(port.substring('localhost:'.length)) : port);
 	return forwardPorts.length ? forwardPorts : undefined;

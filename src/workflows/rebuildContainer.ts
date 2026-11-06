@@ -21,6 +21,7 @@ import {
 } from "./postLaunch";
 import { resolveConfigVars } from "../devcontainer/readResolvedConfig";
 import { warnWslcUnsupportedConfig } from "../devcontainer/wslcDiagnostics";
+import { assertForwardPortsValid } from "../devcontainer/forwardPortsValidation";
 import type { ReadConfigResult } from "../config/configManager";
 
 export interface RebuildContainerParams {
@@ -55,6 +56,10 @@ export async function rebuildContainer(
         .join("\n");
       throw new Error(`devcontainer.json has parse errors:\n${errorMessages}`);
     }
+    assertForwardPortsValid(
+      configResult.config,
+      configResult.configPath,
+    );
 
     perContainerDisable = !!(
       configResult.config as Record<string, unknown> | undefined

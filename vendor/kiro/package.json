@@ -1,7 +1,7 @@
 {
   "name": "artizo-kiro",
   "displayName": "Artizo Dev Containers for Kiro",
-  "description": "Artizo Dev Containers for Kiro: Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
+  "description": "Dev containers for Kiro. Dev environment as code with devcontainer.json.",
   "keywords": [
     "kiro",
     "dev container",
@@ -12,12 +12,5 @@
     "remote",
     "remote development",
     "containers"
-  ],
-  "platform": {
-    "name": "Kiro",
-    "dataFolderName": ".kiro",
-    "serverApplicationName": "kiro-server",
-    "needsArgvPatch": true,
-    "additionalDockerRunArgs": []
-  }
+  ]
 }

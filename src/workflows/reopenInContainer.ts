@@ -23,6 +23,7 @@ import {
   CancelledError,
 } from "./postLaunch";
 import type { ReadConfigResult } from "../config/configManager";
+import { assertForwardPortsValid } from "../devcontainer/forwardPortsValidation";
 
 export interface ReopenInContainerParams {
   workspaceFolder: string;
@@ -67,6 +68,10 @@ export async function reopenInContainer(
           `devcontainer.json has parse errors:\n${errorMessages}`,
         );
       }
+      assertForwardPortsValid(
+        configResult.config,
+        configResult.configPath,
+      );
 
       perContainerDisable = !!(
         configResult.config as Record<string, unknown> | undefined

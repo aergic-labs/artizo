@@ -400,12 +400,10 @@ describe("RemoteAuthorityResolver", () => {
   describe("RemoteAuthorityResolver - port forwarding wiring", () => {
     const containerId = "art-container-id";
     const installPath = "/tmp/.x/bin/abc123";
-    const forwardPorts = [
-      8080,
-      { port: 5432, label: "DB" },
-      "bad",
-      99999,
-    ];
+    // Spec-valid forwardPorts: numbers and "host:port" strings. Object
+    // entries ({ port, label }) are rejected by forwardPortsFromConfig;
+    // labels belong in portsAttributes.
+    const forwardPorts = [8080, 5432, "localhost:3000"];
     let resolver: RemoteAuthorityResolver;
     let mockContext: any;
     let mockServerManager: IServerManagerLike;
@@ -453,12 +451,13 @@ describe("RemoteAuthorityResolver", () => {
       const result = await resolver.resolve(authority);
       expect(result.type).toBe("success");
 
-      // forwardPort must be called for 8080 and 5432 with source "config".
+      // forwardPort must be called for 8080, 5432, and 3000 (parsed from
+      // "localhost:3000") with source "config", no label.
       const forwardCalls = mockForwardPort.mock.calls.map((c) => c);
       expect(forwardCalls).toContainEqual([8080, 8080, undefined, "config"]);
-      expect(forwardCalls).toContainEqual([5432, 5432, "DB", "config"]);
-      // Invalid entries ("bad" is not a number, 99999 is out of range) must be skipped.
-      expect(forwardCalls).toHaveLength(2);
+      expect(forwardCalls).toContainEqual([5432, 5432, undefined, "config"]);
+      expect(forwardCalls).toContainEqual([3000, 3000, undefined, "config"]);
+      expect(forwardCalls).toHaveLength(3);
       // The view must become visible.
       expect(mockExecuteCommand).toHaveBeenCalledWith(
         "setContext",
@@ -499,7 +498,8 @@ describe("RemoteAuthorityResolver", () => {
       // Re-forward config ports on the retargeted forwarder.
       const forwardCalls = mockForwardPort.mock.calls.map((c) => c);
       expect(forwardCalls).toContainEqual([8080, 8080, undefined, "config"]);
-      expect(forwardCalls).toContainEqual([5432, 5432, "DB", "config"]);
+      expect(forwardCalls).toContainEqual([5432, 5432, undefined, "config"]);
+      expect(forwardCalls).toContainEqual([3000, 3000, undefined, "config"]);
       // firstForwarderInstance is the one used by the resolver (stable reference).
       expect(mockPortViewRegister).toHaveBeenCalledWith(
         mockContext,
@@ -546,7 +546,8 @@ describe("RemoteAuthorityResolver", () => {
       // configured ports are forwarded again here.
       const forwardCalls = mockForwardPort.mock.calls;
       expect(forwardCalls).toContainEqual([8080, 8080, undefined, "config"]);
-      expect(forwardCalls).toContainEqual([5432, 5432, "DB", "config"]);
+      expect(forwardCalls).toContainEqual([5432, 5432, undefined, "config"]);
+      expect(forwardCalls).toContainEqual([3000, 3000, undefined, "config"]);
     });
 
     it("ensurePortsForAttachedWindow is a no-op without a remote authority", async () => {
@@ -555,6 +556,57 @@ describe("RemoteAuthorityResolver", () => {
       await resolver.ensurePortsForAttachedWindow();
 
       expect(mockPortViewRegister).not.toHaveBeenCalled();
+    });
+
+    it("skips object forwardPorts entries instead of forwarding them", async () => {
+      // Spec: forwardPorts is numbers or "host:port" strings only. Object
+      // entries (e.g. { port, label }) must be rejected, not normalized.
+      mockResolveConfigVars.mockResolvedValue({
+        forwardPorts: [8080, { port: 5432, label: "DB" }],
+      });
+      const containerData = makeContainerData({
+        Id: containerId,
+        Config: {
+          Image: "node:18",
+          Labels: {
+            "artizo.config_file": "/work/cfg.json",
+            "artizo.local_folder": "/work",
+          },
+        },
+      });
+      setupMockForInspect(containerData);
+      const authority = encodeAuthority(SCHEME_ATTACHED_CONTAINER, containerId);
+      const result = await resolver.resolve(authority);
+      expect(result.type).toBe("success");
+
+      const forwardCalls = mockForwardPort.mock.calls.map((c) => c);
+      expect(forwardCalls).toContainEqual([8080, 8080, undefined, "config"]);
+      // The object entry must not be forwarded under any label.
+      expect(forwardCalls).toHaveLength(1);
+      expect(forwardCalls.some((c) => c[2] === "DB")).toBe(false);
+    });
+
+    it("skips a string entry without a :port suffix", async () => {
+      mockResolveConfigVars.mockResolvedValue({
+        forwardPorts: [8080, "not-a-port"],
+      });
+      const containerData = makeContainerData({
+        Id: containerId,
+        Config: {
+          Image: "node:18",
+          Labels: {
+            "artizo.config_file": "/work/cfg.json",
+            "artizo.local_folder": "/work",
+          },
+        },
+      });
+      setupMockForInspect(containerData);
+      const authority = encodeAuthority(SCHEME_ATTACHED_CONTAINER, containerId);
+      const result = await resolver.resolve(authority);
+      expect(result.type).toBe("success");
+
+      const forwardCalls = mockForwardPort.mock.calls.map((c) => c);
+      expect(forwardCalls).toEqual([[8080, 8080, undefined, "config"]]);
     });
   });
 

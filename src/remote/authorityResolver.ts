@@ -10,9 +10,6 @@
 
 import * as vscode from "vscode";
 import * as net from "node:net";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
 import { decodeAuthority } from "../utils/uriUtils";
 import {
   dockerInspect,
@@ -40,30 +37,9 @@ import { buildIdentityLabels } from "../workflows/postLaunch";
 import { getPlatformAdapter } from "../platform";
 import { PortForwarder } from "../ports/portForwarder.js";
 import { PortViewProvider } from "../ports/portView.js";
+import { getLogger } from "../utils/logger";
 
-/** File-based logger that works regardless of window state. */
-const LOG_FILE = path.join(os.tmpdir(), "artizo-resolver.log");
-const LOG_MAX_BYTES = 5 * 1024 * 1024;
-let logSizeChecked = false;
-function logToFile(msg: string): void {
-  try {
-    // Bound growth: truncate once per process if the file got large across
-    // prior sessions. This is a diagnostic log, not an audit trail.
-    if (!logSizeChecked) {
-      logSizeChecked = true;
-      try {
-        if (fs.statSync(LOG_FILE).size > LOG_MAX_BYTES) {
-          fs.truncateSync(LOG_FILE, 0);
-        }
-      } catch {
-        /* no existing file */
-      }
-    }
-    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${msg}\n`);
-  } catch {
-    /* diagnostics only: never throw from the resolve path */
-  }
-}
+const log = getLogger();
 
 /** Connection details for a resolved container authority. */
 export interface ResolvedAuthority {
@@ -136,12 +112,10 @@ export class RemoteAuthorityResolver {
     this.serverManager = options?.serverManager;
     this.extensionPath = options?.extensionPath;
     this.context = options?.context;
-    logToFile("=== RemoteAuthorityResolver created ===");
   }
 
   setServerManager(sm: IServerManager): void {
     this.serverManager = sm;
-    logToFile("[Resolver] serverManager set");
   }
 
   /**
@@ -185,8 +159,6 @@ export class RemoteAuthorityResolver {
    * @returns Resolve result with connection info or error
    */
   async resolve(authority: string): Promise<ResolveResult> {
-    logToFile(`[Resolver] resolve() called with authority: ${authority}`);
-
     let decoded: { scheme: string; id: string };
     try {
       decoded = decodeAuthority(authority);
@@ -256,33 +228,23 @@ export class RemoteAuthorityResolver {
   private async tryGetExecServer(
     sshAuthority: string,
   ): Promise<ExecServerLike | undefined> {
-    logToFile(`[Resolver] trying getRemoteExecServer for authority: ${sshAuthority}`);
     try {
       const getExecServer = (vscode.workspace as unknown as {
         getRemoteExecServer?: (authority: string) => Promise<ExecServerLike | undefined>;
       }).getRemoteExecServer;
       if (typeof getExecServer !== "function") {
-        logToFile("[Resolver] getRemoteExecServer API not available (not a function)");
         return undefined;
       }
       const execServer = await getExecServer.call(vscode.workspace, sshAuthority);
       if (execServer) {
-        const hasSpawn = typeof execServer.spawn === "function";
-        const hasTcpConnect = typeof execServer.tcpConnect === "function";
-        const hasFs = !!execServer.fs;
-        logToFile(
-          `[Resolver] ExecServer available: spawn=${hasSpawn} tcpConnect=${hasTcpConnect} fs=${hasFs}`,
-        );
-        if (!hasTcpConnect) {
-          logToFile("[Resolver] ExecServer has no tcpConnect, cannot use for bridge");
+        if (typeof execServer.tcpConnect !== "function") {
           return undefined;
         }
         return execServer;
       }
-      logToFile("[Resolver] getRemoteExecServer returned undefined (resolver does not implement resolveExecServer)");
     } catch (err: unknown) {
-      logToFile(
-        `[Resolver] getRemoteExecServer threw: ${err instanceof Error ? err.message : String(err)}`,
+      log.error(
+        `getRemoteExecServer threw: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
     return undefined;
@@ -304,31 +266,26 @@ export class RemoteAuthorityResolver {
       );
       // Find the container by the host workspace folder label.
       if (!proxy.hostWorkspacePath) {
-        logToFile("[remote-check] no hostWorkspacePath in payload, skipping");
         return "ok";
       }
       const { remoteFindContainer } = await import("./configCheckRemote.js");
       const containerId = await remoteFindContainer(
         execServer,
         proxy.hostWorkspacePath,
-        logToFile,
+        (m) => log.debug(m),
       );
       if (!containerId) {
-        logToFile("[remote-check] no container found on host, skipping");
         return "ok";
       }
       const outcome = await checkContainerConfigRemote(
         execServer,
         containerId,
-        logToFile,
+        (m) => log.debug(m),
       );
       if (outcome.kind === "changed") {
-        const action = await vscode.window.showWarningMessage(
+        await vscode.window.showWarningMessage(
           `Container config has changed: ${outcome.files.join(", ")}. To rebuild, open the folder on the SSH host and run 'Artizo: Rebuild Container'.`,
           "Continue anyway",
-        );
-        logToFile(
-          `[remote-check] user chose ${action === "Continue anyway" ? "Continue anyway" : "dismissed"} (mismatch)`,
         );
         return "ok";
       }
@@ -340,12 +297,12 @@ export class RemoteAuthorityResolver {
         return "ok";
       }
       if (outcome.kind === "skip") {
-        logToFile(`[remote-check] skipped: ${outcome.reason}`);
+        log.info(`Config drift check skipped: ${outcome.reason}`);
       }
       return "ok";
     } catch (err: unknown) {
-      logToFile(
-        `[remote-check] failed: ${err instanceof Error ? err.message : String(err)}`,
+      log.error(
+        `Config drift check failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       return "ok"; // never block resolve on a check failure
     }
@@ -369,10 +326,6 @@ export class RemoteAuthorityResolver {
   private async resolveViaProxy(
     proxy: ProxyAuthorityInfo,
   ): Promise<ResolveResult> {
-    logToFile(
-      `[Resolver] proxy payload: ssh=${proxy.sshUser}@${proxy.sshHost} relayPort=${proxy.relayPort} token=${proxy.connectionToken} workspace=${proxy.workspacePath}`,
-    );
-
     // Try ExecServer first. When the SSH resolver implements
     // resolveExecServer (zygos does), we get an already-authenticated
     // connection. No ssh -L tunnel, no askpass, no password prompt.
@@ -398,12 +351,9 @@ export class RemoteAuthorityResolver {
       if (proxy.containerId && proxy.containerPort && proxy.installPath) {
         const { probeRelayPort, healRelay } = await import("./relayHeal.js");
         const alive = await probeRelayPort(execServer, relayPort, (m) =>
-          logToFile(m),
+          log.debug(m),
         );
         if (!alive) {
-          logToFile(
-            `[Resolver] relay ${relayPort} unreachable, healing on SSH host...`,
-          );
           const heal = await healRelay(
             execServer,
             {
@@ -412,25 +362,20 @@ export class RemoteAuthorityResolver {
               installPath: proxy.installPath,
               hostWorkspacePath: proxy.hostWorkspacePath,
             },
-            (m) => logToFile(m),
+            (m) => log.debug(m),
           );
           if (heal.kind === "ok") {
             relayPort = heal.relayPort;
-            logToFile(`[Resolver] relay healed, new port ${relayPort}`);
           } else if (heal.kind === "container-missing") {
-            logToFile(`[Resolver] heal aborted: ${heal.message}`);
             return { type: "error", message: heal.message };
           } else if (heal.kind === "error") {
-            logToFile(`[Resolver] heal failed: ${heal.message}`);
+            log.error(`Relay heal failed: ${heal.message}`);
             // Fall through to bridge attempt against the original port;
             // today's behavior is the timeout, no regression.
           }
         }
-      } else {
-        logToFile("[Resolver] payload missing container identity, skipping relay heal");
       }
 
-      logToFile(`[Resolver] using ExecServer bridge for relayPort=${relayPort}`);
       try {
         const controller = await startExecServerBridge(
           execServer,
@@ -439,9 +384,6 @@ export class RemoteAuthorityResolver {
         );
         const localPort = controller.localPort;
         this.tunnels.set(localPort, controller);
-        logToFile(
-          `[Resolver] execServer bridge up: 127.0.0.1:${localPort} -> 127.0.0.1:${relayPort} (via ExecServer)`,
-        );
         return {
           type: "success",
           authority: {
@@ -452,7 +394,6 @@ export class RemoteAuthorityResolver {
         };
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        logToFile(`[Resolver] execServer bridge failed: ${message}`);
         const action = await vscode.window.showErrorMessage(
           `Artizo remote setup failed: ${message}`,
           "Retry",
@@ -470,7 +411,6 @@ export class RemoteAuthorityResolver {
     }
 
     // Fallback: ssh -L tunnel with askpass.
-    logToFile("[Resolver] ExecServer unavailable, falling back to ssh -L tunnel");
     let askpassOwned = false;
     let askpass: Awaited<ReturnType<typeof startAskpass>>;
     try {
@@ -503,9 +443,6 @@ export class RemoteAuthorityResolver {
           };
         }
         this.tunnels.set(localPort, controller);
-        logToFile(
-          `[Resolver] tunnel up: 127.0.0.1:${localPort} -> ${proxy.sshUser}@${proxy.sshHost}:127.0.0.1:${proxy.relayPort}`,
-        );
         return {
           type: "success",
           authority: {
@@ -516,11 +453,9 @@ export class RemoteAuthorityResolver {
         };
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        logToFile(`[Resolver] proxy tunnel failed: ${message}`);
         // Evict host passwords so a retry re-prompts instead of reusing
         // a bad password.
         if (askpass?.server.usedHostPassword) {
-          logToFile("[Resolver] evicting host password cache entries");
           await askpass.server.evictHostPasswords();
         }
         const action = await vscode.window.showErrorMessage(
@@ -565,9 +500,6 @@ export class RemoteAuthorityResolver {
       containerInfo.config.labels["devcontainer.config_file"];
 
     if (!workspaceFolder) {
-      logToFile(
-        "[Resolver] No workspace folder label; skipping lifecycle hooks",
-      );
       return;
     }
 
@@ -588,26 +520,35 @@ export class RemoteAuthorityResolver {
         configFile: configPath ? URI.file(configPath) : undefined,
         expectExistingContainer: true,
         removeExistingContainer: false,
-        log: (text: string) => logToFile(`[Resolver] [lifecycle] ${text}`),
+        log: (text: string) => log.info(text),
       });
 
-      logToFile(`[Resolver] Running lifecycle hooks via CLI...`);
       const result = await launchProvision(
         options,
         configPath,
         undefined,
         idLabels,
       );
-      logToFile(`[Resolver] Lifecycle hooks complete`);
       // Finish any background tasks the CLI started (e.g. non-blocking hooks).
       if (result?.finishBackgroundTasks) {
         await result.finishBackgroundTasks();
       }
     } catch (err: unknown) {
       // Best-effort: don't block the resolve if hooks fail. The server
-      // can still start without them.
+      // can still start without them - but the user must know their
+      // postStart/postAttach hooks did not run.
       const message = err instanceof Error ? err.message : String(err);
-      logToFile(`[Resolver] Lifecycle hooks failed (non-blocking): ${message}`);
+      log.error(`Lifecycle hooks failed: ${message}`);
+      void vscode.window
+        .showWarningMessage(
+          `Artizo: devcontainer lifecycle hooks failed and were skipped: ${message}`,
+          "Open Output",
+        )
+        .then((action) => {
+          if (action === "Open Output") {
+            log.show();
+          }
+        });
     }
   }
 
@@ -618,16 +559,13 @@ export class RemoteAuthorityResolver {
     containerId: string,
     options?: { checkConfig?: boolean },
   ): Promise<ResolveResult> {
-    logToFile(`[Resolver] resolveContainerById: ${containerId}`);
     let containerInfo: ContainerInfo;
     try {
       containerInfo = await dockerInspect(containerId, {
         dockerPath: this.dockerPathOverride ?? getDockerPath(),
       });
-      logToFile(`[Resolver] Container state: ${containerInfo.state.status}`);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      logToFile(`[Resolver] ERROR inspecting container: ${message}`);
       return {
         type: "error",
         message: `Failed to inspect container "${containerId}": ${message}`,
@@ -635,7 +573,6 @@ export class RemoteAuthorityResolver {
     }
 
     if (!containerInfo.state.running) {
-      logToFile(`[Resolver] Container not running`);
       return {
         type: "error",
         message: `Container "${containerId}" is not running (status: ${containerInfo.state.status})`,
@@ -686,31 +623,24 @@ export class RemoteAuthorityResolver {
             undefined,
           );
           if (!reattachConfig) {
-            logToFile(
-              `[Resolver] devcontainer.json not readable at ${configFilePath}; using probe defaults`,
+            log.warn(
+              `devcontainer.json not readable at ${configFilePath}; using probe defaults`,
             );
           }
         }
 
-        logToFile(`[Resolver] Ensuring server is installed...`);
         await this.serverManager.ensureInstalled(containerId, user);
-        logToFile(`[Resolver] Starting server...`);
         const serverInfo = await this.serverManager.start(
           containerId,
           user,
           reattachConfig,
         );
-        logToFile(
-          `[Resolver] Server started on container port ${serverInfo.port}`,
-        );
 
-        logToFile(`[Resolver] Forwarding port...`);
         const localPort = await this.forwardContainerPort(
           containerId,
           serverInfo.port,
           serverInfo.installPath,
         );
-        logToFile(`[Resolver] Forwarded to local port ${localPort}`);
 
         // Port forwarding: one forwarder per resolver, retargeted on re-attach
         // so PortViewProvider's reference stays valid. The server control
@@ -740,8 +670,8 @@ export class RemoteAuthorityResolver {
         // A blocking postAttachCommand must not delay attach. runLifecycleHooks
         // logs its own failures; the catch guards the early (pre-try) path.
         void this.runLifecycleHooks(containerInfo).catch((err: unknown) => {
-          logToFile(
-            `[Resolver] Lifecycle hooks rejected: ${err instanceof Error ? err.message : String(err)}`,
+          log.error(
+            `Lifecycle hooks rejected: ${err instanceof Error ? err.message : String(err)}`,
           );
         });
 
@@ -755,7 +685,6 @@ export class RemoteAuthorityResolver {
         };
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        logToFile(`[Resolver] ERROR: ${message}`);
         return {
           type: "error",
           message: `Failed to start server in container "${containerId}": ${message}`,
@@ -763,7 +692,6 @@ export class RemoteAuthorityResolver {
       }
     }
 
-    logToFile(`[Resolver] No serverManager, returning fallback`);
     // Fallback when no server manager is provided (e.g., in tests)
     return {
       type: "success",
@@ -816,7 +744,7 @@ export class RemoteAuthorityResolver {
       // promise is already settled, so reject is a no-op and we just log
       // rather than swallowing the error silently.
       server.on("error", (err) => {
-        logToFile(`[Resolver] forward server error: ${err.message}`);
+        log.error(`Forward server error: ${err.message}`);
         reject(err);
       });
 
@@ -834,9 +762,10 @@ export class RemoteAuthorityResolver {
   }
 
   /**
-   * Forward the ports declared in devcontainer.json. Entries are port numbers
-   * or `{ port, label }` objects; anything else is skipped. Never throws: one
-   * bad port must not block the rest.
+   * Forward the ports declared in devcontainer.json. Entries are port
+   * numbers or "host:port" strings; object entries are rejected (labels
+   * belong in portsAttributes). Never throws: one bad port must not block
+   * the rest.
    */
   private async forwardPortsFromConfig(
     forwardPortsRaw: unknown,
@@ -845,33 +774,44 @@ export class RemoteAuthorityResolver {
     if (!forwarder || !Array.isArray(forwardPortsRaw)) return;
 
     for (const entry of forwardPortsRaw) {
-      const port =
-        typeof entry === "number"
-          ? entry
-          : entry &&
-              typeof entry === "object" &&
-              typeof (entry as { port?: unknown }).port === "number"
-            ? (entry as { port: number }).port
-            : NaN;
-      if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        logToFile(
-          `[ports] skipping invalid forwardPorts entry: ${JSON.stringify(entry)}`,
+      // Spec: forwardPorts entries are numbers or "host:port" strings.
+      // Object entries (e.g. { port, label }) are rejected here; labels
+      // belong in portsAttributes.
+      let port: number;
+      if (typeof entry === "number") {
+        port = entry;
+      } else if (typeof entry === "string") {
+        // "host:port" — extract the port suffix. The host part names the
+        // container interface to bind; Artizo's listener forwards to the
+        // container port regardless of host, so only the port is used.
+        const match = entry.match(/:(\d+)$/);
+        if (!match) {
+          log.warn(
+            `Skipping forwardPorts entry without :port: ${JSON.stringify(entry)}`,
+          );
+          continue;
+        }
+        port = Number(match[1]);
+      } else {
+        log.warn(
+          `Skipping invalid forwardPorts entry (must be a number or "host:port" string): ${JSON.stringify(entry)}`,
         );
         continue;
       }
-      const label =
-        entry && typeof entry === "object"
-          ? (entry as { label?: string }).label
-          : undefined;
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        log.warn(`Skipping out-of-range forwardPorts port: ${port}`);
+        continue;
+      }
       try {
-        await forwarder.forwardPort(port, port, label, "config");
-        logToFile(
-          `[ports] forwarded ${port}->${port}${label ? ` (${label})` : ""}`,
-        );
+        await forwarder.forwardPort(port, port, undefined, "config");
       } catch (err) {
-        // EADDRINUSE on the host, or listen failure; log, don't block resolve.
-        logToFile(
-          `[ports] failed to forward ${port}: ${err instanceof Error ? err.message : String(err)}`,
+        // EADDRINUSE on the host, or listen failure; surface it so the
+        // user knows a configured port is not forwarded, but don't block
+        // resolve.
+        const message = err instanceof Error ? err.message : String(err);
+        log.error(`Failed to forward port ${port}: ${message}`);
+        void vscode.window.showWarningMessage(
+          `Artizo: could not forward port ${port}: ${message}`,
         );
       }
     }
@@ -896,8 +836,8 @@ export class RemoteAuthorityResolver {
     try {
       ({ scheme, id } = decodeAuthority(authority));
     } catch (err) {
-      logToFile(
-        `[ports] authority decode failed: ${err instanceof Error ? err.message : String(err)}`,
+      log.error(
+        `Failed to decode remote authority for port setup: ${err instanceof Error ? err.message : String(err)}`,
       );
       return;
     }
@@ -907,7 +847,6 @@ export class RemoteAuthorityResolver {
         ? id
         : await this.findContainerByLabel(id);
     if (!containerId) {
-      logToFile(`[ports] no container found for ${id}`);
       return;
     }
 
@@ -918,14 +857,11 @@ export class RemoteAuthorityResolver {
         if (installPath) nodePath = `${installPath}/node`;
       } catch (err) {
         // Leave undefined: forwarder falls back to `node` on PATH.
-        logToFile(
-          `[ports] install path unavailable: ${err instanceof Error ? err.message : String(err)}`,
+        log.warn(
+          `Install path unavailable, falling back to node on PATH: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
-    logToFile(
-      `[ports] attached container=${containerId} nodePath=${nodePath ?? "<PATH>"}`,
-    );
 
     if (this.portForwarder) {
       await this.portForwarder.retarget(containerId, nodePath);
@@ -961,8 +897,8 @@ export class RemoteAuthorityResolver {
         await this.forwardPortsFromConfig(reattachConfig?.forwardPorts);
       }
     } catch (err) {
-      logToFile(
-        `[ports] config ports unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      log.error(
+        `Could not load config-declared ports for forwarding: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
@@ -1093,24 +1029,17 @@ export function registerAuthorityResolver(
   context: vscode.ExtensionContext,
   resolver: RemoteAuthorityResolver,
 ): void {
-  logToFile("[Register] Registering remote authority resolvers");
-
   const disposable = (vscode.workspace as any).registerRemoteAuthorityResolver(
     "artizo-container",
     {
       resolve(authority: string): Thenable<any> {
-        logToFile(`[Resolver] resolve() called, authority=${authority}`);
         return resolver.resolve(authority).then((result) => {
           if (result.type === "error") {
-            logToFile(`[Resolver] error: ${result.message}`);
             throw (vscode as any).RemoteAuthorityResolverError.NotAvailable(
               result.message,
               true,
             );
           }
-          logToFile(
-            `[Resolver] success: ${result.authority.host}:${result.authority.port}`,
-          );
           return new (vscode as any).ResolvedAuthority(
             result.authority.host,
             result.authority.port,
@@ -1130,20 +1059,13 @@ export function registerAuthorityResolver(
     "attached-container",
     {
       resolve(authority: string): Thenable<any> {
-        logToFile(
-          `[Resolver] resolve() called for attached-container, authority=${authority}`,
-        );
         return resolver.resolve(authority).then((result) => {
           if (result.type === "error") {
-            logToFile(`[Resolver] error: ${result.message}`);
             throw (vscode as any).RemoteAuthorityResolverError.NotAvailable(
               result.message,
               true,
             );
           }
-          logToFile(
-            `[Resolver] success: ${result.authority.host}:${result.authority.port}`,
-          );
           return new (vscode as any).ResolvedAuthority(
             result.authority.host,
             result.authority.port,
@@ -1158,5 +1080,4 @@ export function registerAuthorityResolver(
   );
 
   context.subscriptions.push(disposable2);
-  logToFile("[Register] Both resolvers registered OK");
 }

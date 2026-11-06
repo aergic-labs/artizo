@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.4
+
+### Fixed
+
+- `forwardPorts` object entries (`{ port, label }`) are rejected at the Artizo boundary with an error naming the entry; the vendored `mergeForwardPorts` is restored to upstream. Labels in `portsAttributes`. Build/rebuild/reopen abort before provision on invalid `forwardPorts`; re-attach skips invalid entries with a warning.
+- `forwardPortsFromConfig` parses `"host:port"` strings (spec-valid) instead of silently dropping them on re-attach.
+- Resolver diagnostics moved from `%TEMP%\artizo-resolver.log` to the Artizo Output channel; failures surface as warnings/errors. Trace lines dropped.
+- Open VSX listing descriptions now name the supported IDEs (Kiro build; VSCodium build lists VSCodium, code-oss, Trae, Devin, Antigravity, Qoder, IBM Bob).
+- VSIX ships `README.md` (uppercase) to match marketplace convention and the zygos build.
+
 ## 0.11.3
 
 ### Fixed
