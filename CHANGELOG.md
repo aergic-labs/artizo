@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.11.5
+
+### Added
+
+- `artizo.fileLog` (default `false`) appends logs to `~/.artizo/artizo.log` so they survive an SSH window close.
+
+### Fixed
+
+- Askpass cache master-key migration now persists to SecretStorage. Previously it re-migrated every restart, so `artizo.sessionKeyRotationDays` never started for migrated users.
+- Activation and `getHostWorkspaceFolder` no longer log the `artizo-container` authority, which carries the devcontainer REH server's `connectionToken`.
+- Show Container Logs streams `docker logs -f` into an Output channel on the apex side, instead of opening a terminal. Works in every state, including State 4 (apex -> SSH -> devcontainer). Reopening logs for the same container replaces the prior stream.
+
 ## 0.11.4
 
 ### Fixed

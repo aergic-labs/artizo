@@ -22,7 +22,6 @@
 #   make package-kiro     Build a single VSIX for Kiro
 #   make release VERSION=x.y.z   Bump version, check, package, tag
 #   make publish          Publish all VSIX files to Open VSX
-#   make docs            Regenerate vendor README templates from README.md
 #   make vscodium-versions  Refresh bundled VSCodium release list
 #   make sync-shared     Copy shared files from ../zygos
 #   make clean            Remove build artifacts (safe, no re-setup needed)
@@ -38,7 +37,7 @@
 #   OVSX_PAT environment variable (Personal Access Token from open-vsx.org)
 #   Publisher namespace claimed on Open VSX (one-time setup)
 
-.PHONY: setup check lint typecheck test test-all test-coverage coverage build package package-kiro package-vscodium release publish clean distclean sync-shared docs vscodium-versions
+.PHONY: setup check lint typecheck test test-all test-coverage coverage build package package-kiro package-vscodium release publish clean distclean sync-shared vscodium-versions
 
 # ── Sentinel files ─────────────────────────────────────────────
 
@@ -115,7 +114,7 @@ setup: $(VENDOR_CLI)
 
 # ── Quality gates ──────────────────────────────────────────────
 
-check: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift docs lint test-all
+check: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift lint test-all
 	@echo "=== All checks passed ==="
 
 lint:
@@ -150,14 +149,14 @@ build: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) typecheck
 	npm run build
 	@echo "Bundle built in dist/. Run 'make package' to create VSIX files."
 
-package: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift docs
+package: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift
 	npm run package:kiro
 	npm run package:vscodium
 
-package-kiro: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift docs
+package-kiro: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift
 	npm run package:kiro
 
-package-vscodium: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift docs
+package-vscodium: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift
 	npm run package:vscodium
 
 # ── Release ────────────────────────────────────────────────────
@@ -222,17 +221,6 @@ check-shared-drift:
       echo "Shared files out of sync with ../zygos." >&2; \
     fi; \
   fi
-
-# ── README section lint ───────────────────────────────────────
-#
-# Verifies vendor README templates (vendor/kiro/README.md,
-# vendor/vscodium/README.md) reference only sections that exist in
-# README.md (<!-- BEGIN:name --> ... <!-- END:name -->). Expansion of
-# {{section:name}} happens at package time in build-vsix.mjs, so shared
-# content lives once in README.md. Edit README.md sections there.
-
-docs:
-	@node scripts/build-readme.mjs
 
 # ── VSCodium version feed ──────────────────────────────────────
 #

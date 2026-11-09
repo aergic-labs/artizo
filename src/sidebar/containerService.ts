@@ -83,6 +83,7 @@ export class ContainerService {
     containerId: string,
     containerName?: string,
   ): Promise<void> {
+    // connect actions don't touch docker; everything else does.
     const docker = getDockerPath();
 
     switch (action) {

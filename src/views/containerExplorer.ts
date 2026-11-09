@@ -6,7 +6,8 @@
 /** Container Explorer tree view for the Remote Explorer panel. */
 
 import * as vscode from "vscode";
-import { dockerExecPolicy, listJsonFormat } from "../docker/execPolicy.js";
+import { dockerExecPolicy, getDockerPath, listJsonFormat } from "../docker/execPolicy.js";
+import { dockerSpawn } from "../utils/dockerUtils";
 import { MANAGED_LABEL } from "../utils/constants";
 import { parseContainerList, isDevContainer } from "../devcontainer/labels";
 import {
@@ -383,13 +384,53 @@ async function removeContainer(target: ContainerTarget): Promise<void> {
   vscode.commands.executeCommand("artizo.explorer.refresh");
 }
 
+// Track the active logs stream per container id so reopening logs replaces
+// the old stream instead of leaking a forever-tail docker process.
+const activeLogStreams = new Map<string, vscode.Disposable>();
+
+/**
+ * Stream `docker logs -f` for a container into an Output channel.
+ *
+ * The exec runs on the apex side (where the container's daemon lives and
+ * `getDockerPath()` resolves), and the channel is UI-side, so this works
+ * in every state - including State 4 (apex -> SSH -> devcontainer), where a
+ * terminal would open inside the devcontainer on the SSH host and couldn't
+ * reach the apex's docker/wslc.
+ *
+ * Reopening logs for the same container kills the prior stream and replaces
+ * it, so `docker logs -f` doesn't pile up forever-tail processes.
+ */
 async function showContainerLogs(target: ContainerTarget): Promise<void> {
-  if (!target.containerId) return;
-  const terminal = vscode.window.createTerminal(`logs: ${target.label}`);
-  terminal.show(true);
-  // Allow the shell to initialize.
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  terminal.sendText(`docker logs -f ${target.containerId}`);
+  const containerId = target.containerId;
+  if (!containerId) return;
+  const existing = activeLogStreams.get(containerId);
+  if (existing) {
+    existing.dispose();
+    activeLogStreams.delete(containerId);
+  }
+  const docker = getDockerPath();
+  const channel = vscode.window.createOutputChannel(`logs: ${target.label}`);
+  channel.show(true);
+  const child = dockerSpawn(docker, ["logs", "-f", containerId], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout?.on("data", (d: Buffer) => channel.append(d.toString()));
+  child.stderr?.on("data", (d: Buffer) => channel.append(d.toString()));
+  const dispose: vscode.Disposable = {
+    dispose: () => {
+      try {
+        child.kill();
+      } catch {
+        // already exited
+      }
+      channel.dispose();
+    },
+  };
+  child.on("exit", () => {
+    activeLogStreams.delete(containerId);
+    channel.appendLine("\n[logs stream ended]");
+  });
+  activeLogStreams.set(containerId, dispose);
 }
 
 async function inspectVolume(target: ContainerTarget): Promise<void> {

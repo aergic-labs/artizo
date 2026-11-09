@@ -157,18 +157,11 @@ export function getHostWorkspaceFolder(): string | undefined {
     return undefined;
   }
 
-  getLogger().info(
-    `getHostWorkspaceFolder: authority="${folder.authority}", scheme="${folder.scheme}", fsPath="${folder.fsPath}", path="${folder.path}"`,
-  );
-
   if (
     folder.authority?.startsWith("artizo-container") ||
     folder.authority?.startsWith("attached-container")
   ) {
     const decoded = decodeAuthority(folder.authority).id;
-    getLogger().info(
-      `getHostWorkspaceFolder: decoded authority -> "${decoded}"`,
-    );
 
     // State 4 proxy payload: the decoded id is a JSON object with
     // `proxy: true`, not a filesystem path. "Reopen in Host" should reopen

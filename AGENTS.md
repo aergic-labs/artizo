@@ -1,4 +1,6 @@
-# Artizo Agent Instructions ## Critical: Stop means stop
+# Artizo Agent Instructions
+
+## Critical: Stop means stop
 
 When the user says "stop", "STOP", "wait", "hold on", or any similar
 interruption; stop immediately. Do not finish your thought. Do not run one
@@ -12,12 +14,9 @@ without explicit permission. This includes `git checkout -- <file>` and
 `git checkout HEAD -- <file>`. If a file is broken, explain the situation
 and ask before reverting.
 
-## Critical: NO EMDASHES ANYWHERE
+## Critical: No emdashes anywhere
 
-Do not use emdashes (—) or endashes (–) anywhere in code, comments, changelog
-entries, commit messages, docs, or any other text you write in this repo. Use a
-colon, semicolon, comma, parenthetical, or plain rewording instead. This is a
-hard rule; do not insert emdashes for emphasis or rhythm.
+No emdashes or endashes anywhere. Use a comma, colon, semicolon, dash, or reword.
 
 ## Critical: Comments and docs are ultra-terse, not LLM-like
 

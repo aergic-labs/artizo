@@ -10,6 +10,13 @@ const { mockHostExec } = vi.hoisted(() => ({
 }));
 
 vi.mock("vscode", () => ({
+  env: {
+    remoteName: undefined,
+  },
+  ExtensionKind: {
+    UI: 1,
+    Workspace: 2,
+  },
   window: {
     showErrorMessage: vi.fn(),
     showWarningMessage: vi.fn(),

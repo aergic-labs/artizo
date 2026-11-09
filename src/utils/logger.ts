@@ -9,9 +9,16 @@
  * no pseudo-terminal, no renderer-attach guessing, works during early
  * activation and the remote side-load bootstrap. Docker build output is
  * mirrored to a pty terminal separately (see logOutputTerminal.ts).
+ *
+ * When `artizo.fileLog` is on, every line is also appended to
+ * `~/.artizo/artizo.log` so logs survive an SSH window close and from
+ * multiple windows appear in one tailable file.
  */
 
 import * as vscode from "vscode";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 /** Log levels matching the official extension. */
 export enum LogLevel {
@@ -20,37 +27,65 @@ export enum LogLevel {
   Trace = 2,
 }
 
+function sharedLogPath(): string {
+  const dir = path.join(os.homedir(), ".artizo");
+  try { fs.mkdirSync(dir, { recursive: true }); } catch { /* best effort */ }
+  return path.join(dir, "artizo.log");
+}
+
 export class Logger {
   private channel: vscode.LogOutputChannel;
   /** Gates debug/trace per the `artizo.logLevel` setting. */
   private level: LogLevel = LogLevel.Info;
+  private readonly logPath: string;
+  private readonly fileLogging: boolean;
 
   constructor(channel: vscode.LogOutputChannel) {
     this.channel = channel;
+    this.logPath = sharedLogPath();
+    try {
+      this.fileLogging = vscode.workspace
+        .getConfiguration("artizo")
+        .get<boolean>("fileLog", false);
+    } catch {
+      // vscode.workspace may be unavailable during early activation or in
+      // unit tests; default to no file logging in that case.
+      this.fileLogging = false;
+    }
   }
 
   setLevel(level: LogLevel): void {
     this.level = level;
   }
 
+  private toFile(level: string, msg: string): void {
+    if (!this.fileLogging) return;
+    const line = `[${new Date().toISOString()}] [${level}] ${msg}\n`;
+    try { fs.appendFileSync(this.logPath, line); } catch { /* best effort */ }
+  }
+
   debug(message: string): void {
     if (this.level >= LogLevel.Debug) {
       this.channel.debug(message);
+      this.toFile("debug", message);
     }
   }
 
   trace(message: string): void {
     if (this.level >= LogLevel.Trace) {
       this.channel.trace(message);
+      this.toFile("trace", message);
     }
   }
 
   info(message: string): void {
     this.channel.info(message);
+    this.toFile("info", message);
   }
 
   warn(message: string): void {
     this.channel.warn(message);
+    this.toFile("warn", message);
   }
 
   error(message: string, errorOrContext?: Error | string): void {
@@ -61,6 +96,7 @@ export class Logger {
       formatted += ` ${errorOrContext}`;
     }
     this.channel.error(formatted);
+    this.toFile("error", formatted);
   }
 
   show(): void {
@@ -74,6 +110,9 @@ export class Logger {
    */
   append(text: string): void {
     this.channel.append(text);
+    if (this.fileLogging) {
+      try { fs.appendFileSync(this.logPath, text); } catch { /* best effort */ }
+    }
   }
 }
 

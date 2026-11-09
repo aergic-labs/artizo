@@ -2,7 +2,7 @@
   "name": "artizo",
   "displayName": "Artizo Dev Containers",
   "description": "Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
-  "version": "0.11.4",
+  "version": "0.11.5",
   "publisher": "aergic",
   "productName": "Artizo",
   "license": "AGPL-3.0-only",
@@ -516,6 +516,11 @@
           ],
           "default": "info",
           "description": "Logging verbosity level for the Dev Containers extension."
+        },
+        "artizo.fileLog": {
+          "type": "boolean",
+          "default": false,
+          "description": "Append logs to ~/.artizo/artizo.log so logs survive an SSH window close and from multiple windows appear in one tailable file."
         },
         "artizo.remote.ssh.mirrorExtensions": {
           "type": "boolean",

@@ -270,3 +270,5 @@ export function canDriveDocker(): boolean {
   const t = getTier();
   return t.owner === "workspace" || t.owner === "ui";
 }
+
+

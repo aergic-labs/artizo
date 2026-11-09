@@ -135,8 +135,7 @@ export async function activate(
     `activate enter tier=${detected.tier} ` +
       `owner=${detected.owner} ` +
       `remoteName=${detected.remoteName ?? "none"} ` +
-      `kind=${detected.extensionKind ?? "none"} ` +
-      `authority=${detected.remoteAuthority ?? "none"}`,
+      `kind=${detected.extensionKind ?? "none"}`,
   );
 
   // Set artizo.hostContext as early as possible so the sidebar icon renders
