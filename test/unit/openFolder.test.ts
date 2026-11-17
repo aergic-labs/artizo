@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("vscode", () => ({
   window: {
@@ -64,6 +64,7 @@ vi.mock("../../src/devcontainer/api", async () => {
 });
 
 import { launch } from "../../src/devcontainer/api";
+import * as vscode from "vscode";
 import {
   openFolderInContainer,
   type OpenFolderUI,
@@ -73,6 +74,7 @@ import { BRAND } from "../../src/utils/constants";
 import type { IConfigManager } from "../../src/config/configManager";
 import type { IServerManager } from "../../src/remote/serverManager";
 import type { IGitConfigCopier } from "../../src/credentials/gitConfigCopier";
+import { initTier } from "../../src/host/state";
 
 function createMockConfigManager(
   overrides?: Partial<IConfigManager>,
@@ -288,5 +290,56 @@ describe("openFolderInContainer", () => {
 
     expect(deps.configManager.getConfigPath).not.toHaveBeenCalled();
     expect(launch).toHaveBeenCalled();
+  });
+
+  it("opens the window at the container workspace, not the host path", async () => {
+    await openFolderInContainer(deps, ui, { folder: "/project" });
+
+    const url = (ui.openWindow as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as string;
+    // CLI reported /workspaces/project; the host path /project must not be
+    // used as the container path.
+    expect(url.endsWith("/workspaces/project")).toBe(true);
+  });
+
+  describe("Remote SSH (UI-only)", () => {
+    beforeEach(() => {
+      (vscode.env as any).remoteName = "ssh-remote";
+      (vscode.env as any).remoteAuthority = "ssh-remote+abc";
+      initTier(vscode.ExtensionKind.UI);
+    });
+
+    afterEach(() => {
+      (vscode.env as any).remoteName = undefined;
+      (vscode.env as any).remoteAuthority = undefined;
+      initTier(vscode.ExtensionKind.Workspace);
+    });
+
+    it("never opens the apex folder dialog", async () => {
+      deps.serverManager = createMockServerManager({
+        start: vi.fn().mockRejectedValue(new Error("stop here")),
+      });
+
+      await expect(
+        openFolderInContainer(deps, ui, {
+          folderUri: { fsPath: "/home/u/project" } as any,
+        }),
+      ).rejects.toThrow("stop here");
+
+      expect(ui.pickFolder).not.toHaveBeenCalled();
+      // The host path (not an apex path) is what the build used.
+      expect(launch).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceFolder: "/home/u/project" }),
+        undefined,
+        [],
+      );
+    });
+
+    it("errors instead of browsing the apex when no folder is known", async () => {
+      await expect(openFolderInContainer(deps, ui, {})).rejects.toThrow(
+        "Open the folder over SSH",
+      );
+      expect(ui.pickFolder).not.toHaveBeenCalled();
+    });
   });
 });

@@ -23,7 +23,6 @@
  */
 
 import * as vscode from "vscode";
-import * as path from "node:path";
 import { execFilePromise } from "../utils/dockerUtils";
 import { decodeAuthority } from "../utils/uriUtils";
 import { isInDevContainer } from "./state";
@@ -45,31 +44,21 @@ export interface ExecResult {
 
 export class Host {
   readonly kind: HostKind;
-  readonly platform: NodeJS.Platform;
-  readonly path: typeof path.posix | typeof path.win32;
   readonly workspace: string | undefined;
   private readonly dockerPathOverride: string | undefined;
 
   private constructor(
     kind: HostKind,
-    platform: NodeJS.Platform,
     workspace: string | undefined,
     dockerPathOverride: string | undefined,
   ) {
     this.kind = kind;
-    this.platform = platform;
-    this.path = platform === "win32" ? path.win32 : path.posix;
     this.workspace = workspace;
     this.dockerPathOverride = dockerPathOverride;
   }
 
   get isManaged(): boolean {
     return this.kind === "managed";
-  }
-
-  async homedir(): Promise<string> {
-    const os = await import("node:os");
-    return os.homedir();
   }
 
   /**
@@ -114,43 +103,6 @@ export class Host {
     return this.exec({ cmd: this.dockerPathOverride ?? getDockerPath(), args });
   }
 
-  async readFile(
-    filePath: string,
-    encoding: "utf-8" | "base64" = "utf-8",
-  ): Promise<string> {
-    const fs = await import("node:fs/promises");
-    return fs.readFile(filePath, encoding);
-  }
-
-  async writeFile(filePath: string, content: string): Promise<void> {
-    const fs = await import("node:fs/promises");
-    await fs.writeFile(filePath, content, "utf-8");
-  }
-
-  async stat(filePath: string): Promise<{
-    size: number;
-    mode: number;
-    mtime: number;
-    isDirectory: boolean;
-    isFile: boolean;
-  }> {
-    const fs = await import("node:fs/promises");
-    const stats = await fs.stat(filePath);
-    return {
-      size: stats.size,
-      mode: stats.mode,
-      mtime: stats.mtimeMs,
-      isDirectory: stats.isDirectory(),
-      isFile: stats.isFile(),
-    };
-  }
-
-  async readdir(dirPath: string): Promise<string[]> {
-    const fs = await import("node:fs/promises");
-    const result = await fs.readdir(dirPath, { withFileTypes: true });
-    return result.map((entry) => entry.name);
-  }
-
   // Factory
   static create(params: { dockerPath?: string }): Host {
     // Managed container - workspace-side trapped inside a devcontainer.
@@ -166,7 +118,7 @@ export class Host {
       if (folder) {
         workspace = decodeAuthority(folder.authority).id;
       }
-      return new Host("managed", "linux", workspace, params.dockerPath);
+      return new Host("managed", workspace, params.dockerPath);
     }
 
     // Local - the activating side has Docker. Covers:
@@ -175,6 +127,6 @@ export class Host {
     //   - LocalDevContainer / RemoteSSHDevContainer (UI-side on the parent host)
     const folder = vscode.workspace.workspaceFolders?.[0];
     const workspace = folder ? folder.uri.fsPath : undefined;
-    return new Host("local", process.platform, workspace, params.dockerPath);
+    return new Host("local", workspace, params.dockerPath);
   }
 }

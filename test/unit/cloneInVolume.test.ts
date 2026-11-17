@@ -202,6 +202,14 @@ describe("cloneInVolume", () => {
     expect(deps.serverManager.ensureInstalled).toHaveBeenCalledWith("abc123", "vscode");
     expect(deps.serverManager.start).toHaveBeenCalledWith("abc123", undefined, undefined);
     expect(ui.openWindow).toHaveBeenCalled();
+
+    // The authority id must be the volume name: the resolver finds clone
+    // containers by the `*_volume_name` label, not by the repo URL.
+    const url = (ui.openWindow as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as string;
+    const hex = url.split("artizo-container+")[1].split("@")[0].split("/")[0];
+    expect(Buffer.from(hex, "hex").toString("utf-8")).toBe(result!.volumeName);
+    expect(url.endsWith("/workspace")).toBe(true);
   });
 
   it("returns undefined when user cancels repo prompt", async () => {

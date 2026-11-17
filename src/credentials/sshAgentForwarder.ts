@@ -10,10 +10,13 @@
  * the SSH agent socket into the container. Skips gracefully if not set.
  */
 
-import type { ChildProcess } from "node:child_process";
 import { createConnection } from "node:net";
 import type { Host } from "../host/host";
-import { dockerSpawn, childPipes } from "../utils/dockerUtils";
+import {
+  dockerSpawn,
+  childPipes,
+  type DockerProcess,
+} from "../utils/dockerUtils";
 import { getDockerPath } from "../docker/execPolicy.js";
 
 export interface ISshAgentForwarder {
@@ -61,7 +64,7 @@ export class SshAgentForwarder implements ISshAgentForwarder {
   private readonly dockerPathOverride: string | undefined;
   private readonly host: Host;
   private readonly hostSshAuthSock: string | undefined;
-  private relayProcess: ChildProcess | null = null;
+  private relayProcess: DockerProcess | null = null;
   private hostConn: import("node:net").Socket | null = null;
 
   constructor(options: SshAgentForwarderOptions) {
@@ -100,16 +103,19 @@ export class SshAgentForwarder implements ISshAgentForwarder {
     await this.startRelay(containerId, `${installPath}/node`);
   }
 
-  private startRelay(containerId: string, nodePath: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const child = dockerSpawn(
-        this.dockerPathOverride ?? getDockerPath(),
-        ["exec", "-i", containerId, nodePath, "-e", CONTAINER_RELAY_SCRIPT],
-        { stdio: ["pipe", "pipe", "pipe"] },
-      );
+  private async startRelay(
+    containerId: string,
+    nodePath: string,
+  ): Promise<void> {
+    const child = await dockerSpawn(
+      this.dockerPathOverride ?? getDockerPath(),
+      ["exec", "-i", containerId, nodePath, "-e", CONTAINER_RELAY_SCRIPT],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
 
-      this.relayProcess = child;
+    this.relayProcess = child;
 
+    return new Promise<void>((resolve, reject) => {
       let settled = false;
 
       child.on("error", (err) => {

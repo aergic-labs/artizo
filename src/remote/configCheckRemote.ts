@@ -4,9 +4,9 @@
  */
 
 /**
- * Container-config drift check executed on the SSH host from the Windows
+ * Container-config drift check executed on the SSH host from the apex
  * resolver, through the zygos ExecServer (already-authenticated SSH
- * connection - no new SSH process, no askpass).
+ * connection - no new SSH process).
  *
  * Used when a container window on an SSH host resolves: the resolver has
  * no local Docker, but the ExecServer can run `docker inspect` and read

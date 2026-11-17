@@ -4,49 +4,49 @@
  */
 
 /**
- * Apex-side relay heal for State 4 (devcontainer over SSH).
+ * Apex-side relay heal for devcontainer-over-SSH.
  *
  * When a container window is reloaded after the relay daemon on the SSH host
- * has died (30-min idle timeout, ssh-host reboot, crash), the cached
- * `relayPort` in the authority payload points at nothing. The resolver gets
- * `Connection refused` and times out.
+ * has died (30-min idle timeout, ssh-host reboot, crash), nothing listens on
+ * the relay's port and the resolver's probe fails.
  *
- * This module re-spawns the relay through the zygos ExecServer, then returns
- * the new port so the resolver can bridge to it. Gated on the ExecServer
- * path (zygos experimental transport); the default `ssh -L` fallback is
- * unchanged.
+ * This module re-spawns the relay through the ExecServer. The relay writes
+ * `{nodePath, installPath, dockerPath, port, daemonHash, logFile, containerId,
+ * containerPort}` to its meta file at startup, keyed by the workspace's stable
+ * identity, so the apex can re-spawn it without those fields being in the
+ * authority.
  */
 
 import * as path from "node:path";
 import type { ExecServer } from "./execServerBridge";
 import {
-  buildRelayScript,
+  stableMetaPath,
+  stablePidPath,
+  readRelayMeta,
   IDLE_TIMEOUT_MS,
   MAX_CONSECUTIVE_FAILURES,
+  type StableWorkspaceIdentity,
 } from "./containerProxy";
 
 export type HealResult =
-  | { kind: "ok"; relayPort: number }
+  | { kind: "ok" }
   | { kind: "container-missing"; message: string }
   | { kind: "no-heal-info" }
   | { kind: "error"; message: string };
 
 export interface HealParams {
-  /** SSH host container ID (from the authority payload). */
-  containerId: string;
-  /** Port server-main.js listens on inside the container. */
-  containerPort: number;
-  /** Server install path inside the container; `<installPath>/node` is exec'd. */
-  installPath: string;
-  /** Friendly workspace path for error messages (e.g. /home/ubuntu/foo). */
-  hostWorkspacePath: string;
-  /** Max wait for the relay to write its meta file. Default 10s. */
+  /** Stable workspace identity; keys the meta and pid paths. */
+  identity: StableWorkspaceIdentity;
+  /** Max wait for the relay to report a port. Default 10s. */
   metaFileTimeoutMs?: number;
 }
 
 type LogFn = (msg: string) => void;
 
 const REMOTE_TMP = "/tmp";
+
+/** Where the extension copies the relay daemon on the SSH host. */
+const REMOTE_SCRIPT_PATH = `${REMOTE_TMP}/artizo-relay.cjs`;
 
 /** Run a command on the SSH host via ExecServer spawn; capture stdout. */
 async function remoteExec(
@@ -58,11 +58,7 @@ async function remoteExec(
   if (typeof execServer.spawn !== "function") {
     throw new Error("ExecServer has no spawn");
   }
-  const spawned = (await execServer.spawn(command, args)) as {
-    stdout: { onDidReceiveMessage(cb: (d: Uint8Array) => void): void };
-    stderr: { onDidReceiveMessage(cb: (d: Uint8Array) => void): void };
-    onExit: Promise<{ status: number; message?: string }>;
-  };
+  const spawned = await execServer.spawn(command, args);
   const outChunks: Uint8Array[] = [];
   const errChunks: Uint8Array[] = [];
   spawned.stdout.onDidReceiveMessage((d) => outChunks.push(d));
@@ -77,10 +73,10 @@ async function remoteExec(
 }
 
 /**
- * Quick liveness probe for the cached relay port via the ExecServer's
- * tcpConnect. Returns true if the port accepted a connection.
+ * Quick liveness probe for the relay port via the ExecServer's tcpConnect.
+ * Returns false when nothing is listening.
  */
-export async function probeRelayPort(
+export async function probeRelaySocket(
   execServer: ExecServer,
   port: number,
   log: LogFn,
@@ -90,16 +86,23 @@ export async function probeRelayPort(
     setTimeout(() => resolve(false), timeoutMs),
   );
   try {
-    const connect = Promise.race([
+    const result = await Promise.race([
       execServer.tcpConnect("127.0.0.1", port).then(({ stream, done }) => {
-        try { stream.end(); } catch { /* best effort */ }
-        void done.catch(() => { /* expected on refused */ });
+        try {
+          stream.end();
+        } catch {
+          /* best effort */
+        }
+        void done.catch(() => {
+          /* expected on refused */
+        });
         return true;
       }),
       timer,
     ]);
-    const result = await connect;
-    log(`[relay-heal] probe 127.0.0.1:${port} -> ${result ? "alive" : "no-response"}`);
+    log(
+      `[relay-heal] probe 127.0.0.1:${port} -> ${result ? "alive" : "no-response"}`,
+    );
     return result;
   } catch (err: unknown) {
     log(
@@ -110,34 +113,57 @@ export async function probeRelayPort(
 }
 
 /**
- * Re-spawn the relay daemon on the SSH host. Returns the new port on success
- * or a typed error. Does NOT touch `execServer.tcpConnect`; the caller
- * probes first and bridges after.
+ * Re-spawn the relay daemon on the SSH host from the heal info in its meta
+ * file. Returns a typed result; the caller probes before and bridges after.
  */
 export async function healRelay(
   execServer: ExecServer,
   params: HealParams,
   log: LogFn,
 ): Promise<HealResult> {
-  const {
-    containerId,
-    containerPort,
-    installPath,
-    hostWorkspacePath,
-    metaFileTimeoutMs = 10_000,
-  } = params;
+  const { identity, metaFileTimeoutMs = 10_000 } = params;
+  const metaFile = stableMetaPath(identity);
+  const pidFile = stablePidPath(identity);
 
-  const friendly = friendlyName(hostWorkspacePath, containerId);
-
-  if (typeof execServer.spawn !== "function") {
-    return { kind: "error", message: "ExecServer has no spawn; cannot heal relay" };
+  if (typeof execServer.spawn !== "function" || !execServer.fs) {
+    return {
+      kind: "error",
+      message: "ExecServer has no spawn/fs; cannot heal relay",
+    };
   }
 
-  // 1. Verify the container is still present and running.
+  // 1. Read the heal info the relay wrote at startup.
+  const relayMeta = await readRelayMeta(execServer, metaFile);
+  if (!relayMeta) {
+    return { kind: "no-heal-info" };
+  }
+  if (
+    typeof relayMeta.hostNodePath !== "string" ||
+    !relayMeta.hostNodePath.trim() ||
+    typeof relayMeta.nodePath !== "string" ||
+    !relayMeta.nodePath.trim() ||
+    typeof relayMeta.containerId !== "string" ||
+    !relayMeta.containerId.trim() ||
+    typeof relayMeta.containerPort !== "number" ||
+    relayMeta.containerPort <= 0
+  ) {
+    return {
+      kind: "error",
+      message: `Relay meta file at ${metaFile} is incomplete; cannot re-spawn. Rebuild the container.`,
+    };
+  }
+  log(`[relay-heal] using host node from meta: ${relayMeta.hostNodePath}`);
+
+  const friendly = friendlyName(
+    identity.hostWorkspacePath,
+    relayMeta.containerId,
+  );
+
+  // 2. Verify the container is still present and running.
   const inspect = await remoteExec(
     execServer,
     "docker",
-    ["inspect", containerId, "--format", "{{.State.Running}}"],
+    ["inspect", relayMeta.containerId, "--format", "{{.State.Running}}"],
     log,
   );
   if (inspect.status !== 0 || inspect.stdout.trim() !== "true") {
@@ -147,139 +173,68 @@ export async function healRelay(
     };
   }
 
-  // 2. Build the relay script content (same generator the workspace side uses).
-  //    We re-use the meta file from the prior daemon: it holds {port, nodePath}
-  //    and nodePath is the exact binary (process.execPath of the prior workspace
-  //    extension host) that can re-spawn the relay. The SSH host's bundled node
-  //    is NOT on PATH, so bare `node` fails. If the meta file is missing or
-  //    unparseable we error clearly instead of guessing - the user said no
-  //    training wheels.
-  const scriptPath = `${REMOTE_TMP}/artizo-relay.mjs`;
-  const pidFile = `${REMOTE_TMP}/artizo-relay-${containerId}.pid`;
-  const metaFile = `${REMOTE_TMP}/artizo-relay-${containerId}.meta.json`;
-
-  // Read nodePath from the meta file. Required: the SSH host has no `node` on
-  // PATH, and `<installPath>/node` is a container path that doesn't exist on
-  // the host. No fallback.
-  const meta = await remoteExec(execServer, "cat", [metaFile], log);
-  if (meta.status !== 0 || !meta.stdout.trim()) {
-    return {
-      kind: "error",
-      message: `Relay meta file missing at ${metaFile}; cannot determine nodePath to re-spawn. Rebuild the container.`,
-    };
-  }
-  let nodePath: string;
-  try {
-    const parsed = JSON.parse(meta.stdout) as { nodePath?: unknown; port?: unknown };
-    if (typeof parsed.nodePath !== "string" || !parsed.nodePath.trim()) {
-      return {
-        kind: "error",
-        message: `Relay meta file at ${metaFile} has no nodePath; cannot re-spawn. Rebuild the container.`,
-      };
-    }
-    nodePath = parsed.nodePath.trim();
-  } catch (e) {
-    return {
-      kind: "error",
-      message: `Relay meta file at ${metaFile} is unparseable: ${e instanceof Error ? e.message : String(e)}. Rebuild the container.`,
-    };
-  }
-  log(`[relay-heal] using nodePath from meta: ${nodePath}`);
-
-  const script = buildRelayScript({
-    containerId,
-    containerPort,
-    nodePath: `${installPath}/node`,
-    dockerPath: "docker",
+  // 3. Re-spawn the daemon the extension already copied to the host.
+  const config = {
+    containerId: relayMeta.containerId,
+    containerPort: relayMeta.containerPort,
+    nodePath: relayMeta.nodePath,
+    dockerPath: relayMeta.dockerPath ?? "docker",
+    port: 0,
     pidFile,
     metaFile,
-    hostNodePath: nodePath,
+    hostNodePath: relayMeta.hostNodePath,
     idleTimeoutMs: IDLE_TIMEOUT_MS,
     maxFailures: MAX_CONSECUTIVE_FAILURES,
-  });
-
-  // 3. Ship the script to the SSH host via stdin.
-  if (typeof execServer.spawn !== "function") {
-    return { kind: "error", message: "ExecServer has no spawn; cannot ship relay script" };
-  }
-  const writeProc = (await execServer.spawn("sh", [
-    "-c",
-    `cat > ${shQuote(scriptPath)} && chmod +x ${shQuote(scriptPath)}`,
-  ])) as {
-    stdin: { write(data: Uint8Array): void; end(): void };
-    stderr: { onDidReceiveMessage(cb: (d: Uint8Array) => void): void };
-    onExit: Promise<{ status: number; message?: string }>;
+    logFile: relayMeta.logFile ?? `${REMOTE_TMP}/artizo-relay.log`,
+    spawnedBy: "heal",
+    daemonHash: relayMeta.daemonHash ?? "",
   };
-  const writeErr: Uint8Array[] = [];
-  writeProc.stderr.onDidReceiveMessage((d) => writeErr.push(d));
-  const scriptBytes = Buffer.from(script, "utf-8");
-  writeProc.stdin.write(new Uint8Array(scriptBytes.buffer, scriptBytes.byteOffset, scriptBytes.byteLength));
-  writeProc.stdin.end();
-  const writeExit = await writeProc.onExit;
-  if (writeExit.status !== 0) {
-    const stderr = Buffer.concat(writeErr).toString("utf-8").trim();
-    log(`[relay-heal] script write failed: status=${writeExit.status} stderr=${stderr.slice(0, 200)}`);
-    return {
-      kind: "error",
-      message: `Failed to ship relay script to SSH host: ${stderr || `exit ${writeExit.status}`}`,
-    };
-  }
-  log(`[relay-heal] relay script shipped (${scriptBytes.length}b)`);
 
-  // 4. Clean stale pid file, spawn the daemon detached with the nodePath
-  //    from the meta file (NOT bare `node` - that's not on PATH on the SSH
-  //    host). We do NOT delete the meta file: if the spawn fails, the meta
-  //    file must survive so a retry can read nodePath again ("reload always
-  //    works"). To detect the new daemon's write, we create a marker file
-  //    after spawn and poll for the meta file to be newer than the marker.
-  //    This handles the rare race where the new daemon picks the same port as
-  //    the dead one (meta content would be identical, so a content compare
-  //    would never fire).
-  const pollTicks = Math.max(10, Math.floor(metaFileTimeoutMs / 100));
-  const marker = `${REMOTE_TMP}/artizo-relay-heal-marker.${Date.now()}.${Math.random().toString(36).slice(2)}`;
-  // Build the spawn command as a single string. Use newlines instead of `;`
-  // between the backgrounded nohup and the marker creation: `&;` is a syntax
-  // error in dash (which is /usr/bin/sh on Ubuntu), and the apex's ExecServer
-  // spawn runs `sh -c`. `&` is itself a command separator, so `nohup ... &\n:`
-  // works in both bash and dash.
-  const spawnCmd = [
-    `rm -f ${shQuote(pidFile)}`,
-    `nohup ${shQuote(nodePath)} ${shQuote(scriptPath)} >${shQuote(`${REMOTE_TMP}/artizo-relay.log`)} 2>&1 &`,
-    `: > ${shQuote(marker)}`,
-    `for i in $(seq 1 ${pollTicks}); do`,
-    `  [ ${shQuote(metaFile)} -nt ${shQuote(marker)} ] && cat ${shQuote(metaFile)} && rm -f ${shQuote(marker)} && exit 0`,
-    `  sleep 0.1`,
-    `done`,
-    `rm -f ${shQuote(marker)}`,
-    `echo TIMEOUT >&2`,
-    `exit 1`,
-  ].join("\n");
-  const spawn = await remoteExec(execServer, "sh", ["-c", spawnCmd], log);
-  if (spawn.status !== 0) {
-    return {
-      kind: "error",
-      message: `Relay daemon did not report a port within ${metaFileTimeoutMs}ms (stderr: ${spawn.stderr || "none"})`,
-    };
-  }
-  // The shell's stdout is the contents of the meta file (JSON). Parse it.
-  let port: number;
+  // Delete the pid file first so its reappearance is the readiness signal.
   try {
-    const parsed = JSON.parse(spawn.stdout.trim()) as { port?: unknown };
-    port = Number(parsed.port);
-  } catch (e) {
+    await execServer.fs.rm(pidFile);
+  } catch {
+    /* missing */
+  }
+
+  const spawned = await execServer.spawn(relayMeta.hostNodePath, [
+    REMOTE_SCRIPT_PATH,
+    JSON.stringify(config),
+  ]);
+  spawned.stdout.onDidReceiveMessage(() => {});
+  spawned.stderr.onDidReceiveMessage(() => {});
+  void spawned.onExit.catch(() => {});
+
+  // 4. Wait for the relay to write its pid file (it does so once listening).
+  const ok = await waitForPidFile(execServer, pidFile, metaFileTimeoutMs);
+  if (!ok) {
     return {
       kind: "error",
-      message: `Relay reported unparseable meta: ${JSON.stringify(spawn.stdout)} (${e instanceof Error ? e.message : String(e)})`,
+      message: `Relay did not start within ${metaFileTimeoutMs}ms`,
     };
   }
-  if (!Number.isFinite(port) || port <= 0) {
-    return {
-      kind: "error",
-      message: `Relay reported invalid port: ${JSON.stringify(spawn.stdout)}`,
-    };
+  log(`[relay-heal] relay respawned`);
+  return { kind: "ok" };
+}
+
+async function waitForPidFile(
+  execServer: ExecServer,
+  pidFile: string,
+  timeoutMs: number,
+): Promise<boolean> {
+  const remoteFs = execServer.fs;
+  if (!remoteFs) return false;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await remoteFs.stat(pidFile);
+      return true;
+    } catch {
+      /* not yet */
+    }
+    await new Promise((r) => setTimeout(r, 100));
   }
-  log(`[relay-heal] relay respawned on 127.0.0.1:${port}`);
-  return { kind: "ok", relayPort: port };
+  return false;
 }
 
 function friendlyName(hostWorkspacePath: string, containerId: string): string {
@@ -290,9 +245,4 @@ function friendlyName(hostWorkspacePath: string, containerId: string): string {
     return trimmed;
   }
   return containerId.slice(0, 12);
-}
-
-/** Single-quote a path for safe shell interpolation. */
-function shQuote(s: string): string {
-  return `'${s.replace(/'/g, `'"'"'`)}'`;
 }

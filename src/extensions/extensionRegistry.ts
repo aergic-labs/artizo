@@ -6,10 +6,8 @@
 /**
  * Shared utilities for building extensions.json entries.
  *
- * Used by both the SSH side-load bootstrap (sideload.ts) and the
- * devcontainer extension installer (extensionInstaller.ts). Both
- * produce the same entry shape so the server's scanner recognizes
- * the extension.
+ * Used by the devcontainer extension installer (extensionInstaller.ts)
+ * so entries match the shape the server's scanner expects.
  *
  * Fields only the MS marketplace provides (real extension/publisher
  * UUIDs) are derived via `stableExtensionUuid` so they stay stable

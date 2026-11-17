@@ -70,26 +70,6 @@ export interface IPlatformAdapter extends DownloadAdapter {
   needsHomeSymlink?(): boolean;
 
   /**
-   * Candidate remote server extensions directories, relative to the
-   * remote home (POSIX, no leading slash). Probed in order by the
-   * side-load bootstrap. The first that exists wins.
-   *
-   * Returns just the current platform's own server dir - the side-load
-   * runs from inside the target IDE, so cross-platform fallbacks would
-   * only probe irrelevant dirs. One entry per adapter.
-   */
-  getRemoteExtensionsDirCandidates(): string[];
-
-  /**
-   * Absolute path to the apex (client) extensions directory. Used by
-   * the SSH side-load mirror to enumerate locally-installed extensions
-   * on disk - vscode.extensions.all on the UI-side exthost doesn't
-   * include workspace-kind extensions that aren't loaded into that
-   * process, so we read the disk ledger directly.
-   */
-  getApexExtensionsDir(): string;
-
-  /**
    * Read auth files from the host filesystem for forwarding to the
    * remote. Each entry is a path relative to the remote HOME and the
    * file content (text). Returns empty if no auth files exist.

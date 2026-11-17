@@ -66,6 +66,25 @@ vi.mock("../../src/devcontainer/api", async () => {
 
 import { launch, withDefaults } from "../../src/devcontainer/api";
 import { rebuildContainer } from "../../src/workflows/rebuildContainer";
+import { initTier } from "../../src/host/state";
+
+const { mockDecodeSshAuthority, mockStartRelayDaemon } = vi.hoisted(() => ({
+  mockDecodeSshAuthority: vi.fn(),
+  mockStartRelayDaemon: vi.fn(),
+}));
+vi.mock("../../src/remote/containerProxy", () => ({
+  decodeSshAuthority: mockDecodeSshAuthority,
+  startRelayDaemon: mockStartRelayDaemon,
+  stableMetaPath: vi.fn(),
+  readRelayMeta: vi.fn(),
+  isRelayLive: vi.fn(),
+}));
+vi.mock("../../src/remote/productInfo", () => ({
+  getProductInfo: vi.fn().mockResolvedValue({
+    serverDataFolderName: ".kiro-server",
+    commit: "abc123",
+  }),
+}));
 import type {
   WorkflowDependencies,
   WorkflowUI,
@@ -218,6 +237,75 @@ describe("rebuildContainer", () => {
     expect(withDefaults).toHaveBeenCalledWith(
       expect.objectContaining({ buildNoCache: true }),
     );
+  });
+
+  it("Remote SSH: rebuilds here and opens no window", async () => {
+    (vscode.env as any).remoteName = "ssh-remote";
+    (vscode.env as any).remoteAuthority = "ssh-remote+abc";
+    initTier(vscode.ExtensionKind.UI);
+
+    try {
+      await rebuildContainer(deps, ui, {
+        workspaceFolder: "/workspace",
+        workspaceUri: vscode.Uri.file("/workspace"),
+        noCache: true,
+        reconnect: false,
+      });
+
+      // "Rebuild Container" rebuilds the container. Nothing else.
+      expect(launch).toHaveBeenCalledTimes(1);
+      expect(deps.serverManager.start).not.toHaveBeenCalled();
+      expect(ui.openWindow).not.toHaveBeenCalled();
+      expect(ui.showInfo).toHaveBeenCalledWith(
+        expect.stringContaining("rebuilt successfully"),
+      );
+    } finally {
+      (vscode.env as any).remoteName = undefined;
+      (vscode.env as any).remoteAuthority = undefined;
+      initTier(vscode.ExtensionKind.Workspace);
+    }
+  });
+
+  it("Remote SSH: rebuild-and-reopen builds first, then opens the window", async () => {
+    (vscode.env as any).remoteName = "ssh-remote";
+    (vscode.env as any).remoteAuthority = "ssh-remote+abc";
+    initTier(vscode.ExtensionKind.UI);
+    mockDecodeSshAuthority.mockReturnValue({
+      sshHost: "h",
+      sshUser: "u",
+      sshPort: 22,
+    });
+    mockStartRelayDaemon.mockResolvedValue({ port: 4444 });
+    (vscode.workspace as any).getRemoteExecServer = vi.fn().mockResolvedValue({
+      env: async () => ({ env: { HOME: "/home/u" }, osPlatform: "linux" }),
+    });
+    deps.serverManager = createMockServerManager({
+      start: vi.fn().mockResolvedValue({
+        version: "1.96.0",
+        arch: "x64",
+        installPath: "/tmp/.kiro-server",
+        socketPath: "/tmp/artizo-server.sock",
+        pid: 1234,
+        port: 38517,
+        connectionToken: "token-xyz",
+      }),
+    });
+
+    try {
+      await rebuildContainer(deps, ui, {
+        workspaceFolder: "/workspace",
+        workspaceUri: vscode.Uri.file("/workspace"),
+        reconnect: true,
+      });
+
+      expect(launch).toHaveBeenCalledTimes(1);
+      expect(deps.serverManager.start).toHaveBeenCalled();
+      expect(ui.openWindow).toHaveBeenCalledTimes(1);
+    } finally {
+      (vscode.env as any).remoteName = undefined;
+      (vscode.env as any).remoteAuthority = undefined;
+      initTier(vscode.ExtensionKind.Workspace);
+    }
   });
 
   it("defaults buildNoCache to false", async () => {

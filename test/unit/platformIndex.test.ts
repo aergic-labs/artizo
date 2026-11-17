@@ -190,6 +190,5 @@ describe("getPlatformAdapter", () => {
     expect(Array.isArray(adapter.getAdditionalDockerRunArgs())).toBe(true);
     expect(typeof adapter.needsArgvPatch()).toBe("boolean");
     expect(typeof adapter.isValidRuntime()).toBe("boolean");
-    expect(adapter.getApexExtensionsDir().endsWith("extensions")).toBe(true);
   });
 });

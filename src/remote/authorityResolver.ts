@@ -10,7 +10,8 @@
 
 import * as vscode from "vscode";
 import * as net from "node:net";
-import { decodeAuthority } from "../utils/uriUtils";
+import * as path from "node:path";
+import { buildRemoteAuthority, decodeAuthority } from "../utils/uriUtils";
 import {
   dockerInspect,
   type ContainerInfo,
@@ -18,13 +19,22 @@ import {
   dockerSpawn,
   tcpRelayScript,
   pipeDockerRelay,
+  type DockerProcess,
 } from "../utils/dockerUtils";
 import { getDockerPath } from "../docker/execPolicy.js";
 import type { IServerManager } from "./serverManager";
-import type { ProxyAuthorityInfo } from "./containerProxy";
-import { startManagedSshTunnel, type TunnelController } from "./sshTunnel";
-import { startExecServerBridge, type ExecServer as ExecServerLike } from "./execServerBridge";
-import { startAskpass } from "../ssh/askpass";
+import {
+  stableMetaPath,
+  readRelayMeta,
+  isRelayLive,
+  type StableWorkspaceIdentity,
+} from "./containerProxy";
+import { type TunnelController } from "./sshTunnel";
+import {
+  startExecServerBridge,
+  type ExecServer as ExecServerLike,
+} from "./execServerBridge";
+
 import { checkContainerConfig } from "./configCheck";
 import {
   launchProvision,
@@ -32,7 +42,7 @@ import {
   dotfilesFromConfig,
 } from "../devcontainer/api";
 import { resolveConfigVars } from "../devcontainer/readResolvedConfig";
-import { URI } from "vscode-uri";
+import { cliFileUri } from "../devcontainer/cliUri";
 import { buildIdentityLabels } from "../workflows/postLaunch";
 import { getPlatformAdapter } from "../platform";
 import { PortForwarder } from "../ports/portForwarder.js";
@@ -48,10 +58,21 @@ export interface ResolvedAuthority {
   connectionToken?: string;
 }
 
+/** Stable identity payload encoded into a State 4 authority. */
+interface StableProxyPayload extends StableWorkspaceIdentity {
+  proxy: true;
+}
+
 /** Result of resolving an authority: success or error. */
 export type ResolveResult =
   | { type: "success"; authority: ResolvedAuthority }
   | { type: "error"; message: string };
+
+/** Context VS Code passes to `resolve` for a chained authority. */
+interface ResolveContext {
+  resolveAttempt: number;
+  execServer?: ExecServerLike;
+}
 
 /** The two supported remote authority schemes. */
 export const SCHEME_DEV_CONTAINER = "artizo-container";
@@ -64,6 +85,9 @@ export const SCHEME_ATTACHED_CONTAINER = "attached-container";
  */
 const LABEL_LOCAL_FOLDER_ARTIZO = "artizo.local_folder";
 const LABEL_LOCAL_FOLDER_SPEC = "devcontainer.local_folder";
+/** Clone-in-volume containers carry the volume, not a local folder. */
+const LABEL_VOLUME_NAME_ARTIZO = "artizo.volume_name";
+const LABEL_VOLUME_NAME_SPEC = "devcontainer.volume_name";
 
 /**
  * Options for the authority resolver.
@@ -71,8 +95,6 @@ const LABEL_LOCAL_FOLDER_SPEC = "devcontainer.local_folder";
 export interface AuthorityResolverOptions {
   dockerPath?: string;
   serverManager?: IServerManager;
-  /** Extension install path - used to locate the askpass scripts. */
-  extensionPath?: string;
   /** Extension context - used to register the Ports view and set the `artizo.connected` context key. */
   context?: vscode.ExtensionContext;
 }
@@ -91,9 +113,7 @@ export class RemoteAuthorityResolver {
   private serverManager: IServerManager | undefined;
   private forwardServer: net.Server | undefined;
   /** Active sockets + docker exec children from forwardContainerPort. */
-  private readonly forwardConnections: Set<{ socket: net.Socket; child: import("node:child_process").ChildProcess }> = new Set();
-  /** Extension install path (for locating bundled askpass scripts). */
-  private readonly extensionPath: string | undefined;
+  private readonly forwardConnections: Set<{ socket: net.Socket; child: DockerProcess }> = new Set();
   /** Extension context (for registering the Ports view + `artizo.connected` context key). */
   private readonly context: vscode.ExtensionContext | undefined;
   /** Port forwarder for user-app ports declared via `forwardPorts` in devcontainer.json. */
@@ -110,13 +130,13 @@ export class RemoteAuthorityResolver {
   constructor(options?: AuthorityResolverOptions) {
     this.dockerPathOverride = options?.dockerPath;
     this.serverManager = options?.serverManager;
-    this.extensionPath = options?.extensionPath;
     this.context = options?.context;
   }
 
   setServerManager(sm: IServerManager): void {
     this.serverManager = sm;
   }
+
 
   /**
    * Tear down all SSH tunnels spawned by the proxy path and stop their
@@ -158,7 +178,10 @@ export class RemoteAuthorityResolver {
    * @param authority - The full authority string (e.g., "artizo-container+7265706f")
    * @returns Resolve result with connection info or error
    */
-  async resolve(authority: string): Promise<ResolveResult> {
+  async resolve(
+    authority: string,
+    context?: ResolveContext,
+  ): Promise<ResolveResult> {
     let decoded: { scheme: string; id: string };
     try {
       decoded = decodeAuthority(authority);
@@ -172,16 +195,16 @@ export class RemoteAuthorityResolver {
 
     const { scheme, id } = decoded;
 
-    // Production State 4: a bare `artizo-container+<hex>` or
+    // Devcontainer-over-SSH: a `artizo-container+<hex>` or
     // `attached-container+<hex>` authority whose hex decodes to a JSON payload
-    // with `proxy: true`. The workspace-side extension (running on the SSH
-    // host after side-load) encodes the SSH endpoint + relay port + container
-    // token. The Windows-side resolver opens an `ssh -L` tunnel to the SSH
-    // host's relay daemon and returns `127.0.0.1:<local_port>` so VS Code
-    // connects through the tunnel. No Docker lookup happens on the apex host.
+    // with `proxy: true`, chained to the parent SSH authority. The payload
+    // carries the workspace's stable identity only; the resolver reaches the
+    // SSH host's relay through the parent's ExecServer and returns
+    // `127.0.0.1:<local_port>` so VS Code connects through the bridge. No
+    // Docker lookup happens on the apex host.
     const proxy = tryParseProxyPayload(id);
     if (proxy) {
-      return this.resolveViaProxy(proxy);
+      return this.resolveViaProxy(proxy, context);
     }
 
     if (scheme === SCHEME_DEV_CONTAINER) {
@@ -258,7 +281,7 @@ export class RemoteAuthorityResolver {
    */
   private async checkRemoteConfig(
     execServer: ExecServerLike,
-    proxy: ProxyAuthorityInfo,
+    proxy: StableProxyPayload,
   ): Promise<"ok" | "abort"> {
     try {
       const { checkContainerConfigRemote } = await import(
@@ -309,177 +332,127 @@ export class RemoteAuthorityResolver {
   }
 
   /**
-   * State 4 proxy path. The authority was encoded by the workspace-side
-   * extension (running on the SSH host) with the relay daemon's listener
-   * port, the container's connection token, and the SSH endpoint. The apex
-   * host (Windows/macOS) opens an `ssh -L` tunnel from a free local port to
-   * the relay on the SSH host, then returns `127.0.0.1:<local_port>` so VS
-   * Code connects through the tunnel. No Docker lookup happens here.
+   * Devcontainer-over-SSH path. The authority carries only the workspace's
+   * stable identity (SSH endpoint, host workspace path, container workspace
+   * path). The relay's meta path is derived from that identity, so it is
+   * stable across reopens and container rebuilds.
    *
-   * When the SSH resolver implements resolveExecServer (zygos), an
-   * ExecServer bridge is used instead of ssh -L. No ssh process spawned,
-   * no askpass, no password prompt.
-   *
-   * Tunnels and bridges are tracked in `this.tunnels` for cleanup on
+   * The relay is reached through the parent's ExecServer: read its port from
+   * the meta file, probe it with `tcpConnect`, heal it if it died, then bridge
+   * a local port to it. Tunnels are tracked in `this.tunnels` for cleanup on
    * `dispose()`.
    */
   private async resolveViaProxy(
-    proxy: ProxyAuthorityInfo,
+    proxy: StableProxyPayload,
+    context?: ResolveContext,
   ): Promise<ResolveResult> {
-    // Try ExecServer first. When the SSH resolver implements
-    // resolveExecServer (zygos does), we get an already-authenticated
-    // connection. No ssh -L tunnel, no askpass, no password prompt.
-    const execServer = await this.tryGetExecServer(proxy.sshAuthority);
-    if (execServer) {
-      // Config drift check on the SSH host via the ExecServer. Runs before
-      // the bridge is established; a mismatch prompt may abort the resolve.
-      const checkOutcome = await this.checkRemoteConfig(execServer, proxy);
-      if (checkOutcome === "abort") {
-        return {
-          type: "error",
-          message: "Container configuration changed; rebuild requested.",
-        };
-      }
+    const identity: StableWorkspaceIdentity = {
+      sshHost: proxy.sshHost,
+      sshUser: proxy.sshUser,
+      sshPort: proxy.sshPort,
+      hostWorkspacePath: proxy.hostWorkspacePath,
+      workspacePath: proxy.workspacePath,
+    };
+    const metaFile = stableMetaPath(identity);
 
-      // Self-heal: if the relay daemon on the SSH host died (laptop slept
-      // past the 30-min idle timeout, ssh-host reboot, crash), the cached
-      // relayPort points at nothing. Probe it; on failure re-spawn the relay
-      // through the ExecServer. Only possible when the payload carries the
-      // container identity (newer payloads); older payloads skip the heal
-      // and fall through to the bridge attempt (today's behavior).
-      let relayPort = proxy.relayPort;
-      if (proxy.containerId && proxy.containerPort && proxy.installPath) {
-        const { probeRelayPort, healRelay } = await import("./relayHeal.js");
-        const alive = await probeRelayPort(execServer, relayPort, (m) =>
-          log.debug(m),
-        );
-        if (!alive) {
-          const heal = await healRelay(
-            execServer,
-            {
-              containerId: proxy.containerId,
-              containerPort: proxy.containerPort,
-              installPath: proxy.installPath,
-              hostWorkspacePath: proxy.hostWorkspacePath,
-            },
-            (m) => log.debug(m),
-          );
-          if (heal.kind === "ok") {
-            relayPort = heal.relayPort;
-          } else if (heal.kind === "container-missing") {
-            return { type: "error", message: heal.message };
-          } else if (heal.kind === "error") {
-            log.error(`Relay heal failed: ${heal.message}`);
-            // Fall through to bridge attempt against the original port;
-            // today's behavior is the timeout, no regression.
-          }
-        }
-      }
-
-      try {
-        const controller = await startExecServerBridge(
-          execServer,
-          "127.0.0.1",
-          relayPort,
-        );
-        const localPort = controller.localPort;
-        this.tunnels.set(localPort, controller);
-        return {
-          type: "success",
-          authority: {
-            host: "127.0.0.1",
-            port: localPort,
-            connectionToken: proxy.connectionToken,
-          },
-        };
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        const action = await vscode.window.showErrorMessage(
-          `Artizo remote setup failed: ${message}`,
-          "Retry",
-        );
-        if (action === "Retry") {
-          await vscode.commands.executeCommand(
-            "workbench.action.reloadWindow",
-          );
-        }
-        return {
-          type: "error",
-          message: `Artizo execServer bridge failed: ${message}`,
-        };
-      }
+    // Chained authority: VS Code passes the parent's ExecServer in the
+    // resolve context. Old bare payloads have no context, so fall back to
+    // getRemoteExecServer once during the transition.
+    const execServer =
+      context?.execServer ??
+      (await this.tryGetExecServer(encodeSshAuthority(identity)));
+    if (!execServer) {
+      return {
+        type: "error",
+        message:
+          "Artizo needs an ExecServer from the SSH resolver. Update zygos and reopen the folder over SSH.",
+      };
     }
 
-    // Fallback: ssh -L tunnel with askpass.
-    let askpassOwned = false;
-    let askpass: Awaited<ReturnType<typeof startAskpass>>;
+    // Config drift check on the SSH host via the ExecServer. Runs before the
+    // bridge is established; a mismatch prompt may abort the resolve.
+    const checkOutcome = await this.checkRemoteConfig(execServer, proxy);
+    if (checkOutcome === "abort") {
+      return {
+        type: "error",
+        message: "Container configuration changed; rebuild requested.",
+      };
+    }
+
+    // Read the relay's port from its meta file. If nothing is listening, heal
+    // the relay (idle timeout, reboot, crash) and re-read.
+    let meta = await readRelayMeta(execServer, metaFile);
+    let port = meta?.port;
+    if (!port || !(await isRelayLive(execServer, port))) {
+      const { healRelay } = await import("./relayHeal.js");
+      const heal = await healRelay(execServer, { identity }, (m) =>
+        log.debug(m),
+      );
+      if (heal.kind === "container-missing") {
+        return { type: "error", message: heal.message };
+      }
+      if (heal.kind === "error") {
+        log.error(`Relay heal failed: ${heal.message}`);
+      } else if (heal.kind === "no-heal-info") {
+        log.info("Relay heal skipped: no meta file on the SSH host");
+      }
+      meta = await readRelayMeta(execServer, metaFile);
+      port = meta?.port;
+    }
+
+    if (!port) {
+      return {
+        type: "error",
+        message:
+          "The container relay is not running and could not be started. Reopen the folder over SSH and try again.",
+      };
+    }
+
+    // The relay is a dumb byte pipe, so the client must send the container's
+    // real token. Read it from the container through the ExecServer.
+    const token = await readContainerToken(
+      execServer,
+      meta?.containerId,
+      meta?.nodePath,
+      (m) => log.debug(m),
+    );
+    if (!token) {
+      return {
+        type: "error",
+        message:
+          "Could not read the container's connection token. Reopen the folder over SSH and try again.",
+      };
+    }
+
     try {
-      askpass = this.extensionPath
-        ? await startAskpass(this.extensionPath, {
-            title: `Artizo: SSH password for ${proxy.sshHost}`,
-            modalPrompt: true,
-          })
-        : undefined;
-      try {
-        const controller = await startManagedSshTunnel({
-          sshHost: proxy.sshHost,
-          sshUser: proxy.sshUser,
-          sshPort: proxy.sshPort,
-          remotePort: proxy.relayPort,
-          askpass,
-        });
-        const localPort = controller.localPort;
-        // Tear down the askpass server alongside the tunnel so we don't
-        // leave a listening socket/pipe orphaned on extension deactivation.
-        if (askpass) {
-          askpassOwned = true;
-          const askpassServer = askpass.server;
-          const originalStop = controller.stop.bind(controller);
-          controller.stop = () => {
-            originalStop();
-            void askpassServer.stop().catch(() => {
-              /* best effort */
-            });
-          };
-        }
-        this.tunnels.set(localPort, controller);
-        return {
-          type: "success",
-          authority: {
-            host: "127.0.0.1",
-            port: localPort,
-            connectionToken: proxy.connectionToken,
-          },
-        };
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        // Evict host passwords so a retry re-prompts instead of reusing
-        // a bad password.
-        if (askpass?.server.usedHostPassword) {
-          await askpass.server.evictHostPasswords();
-        }
-        const action = await vscode.window.showErrorMessage(
-          `Artizo SSH tunnel failed: ${message}`,
-          "Retry",
-        );
-        if (action === "Retry") {
-          await vscode.commands.executeCommand(
-            "workbench.action.reloadWindow",
-          );
-        }
-        return {
-          type: "error",
-          message: `Artizo SSH tunnel failed: ${message}`,
-        };
+      const controller = await startExecServerBridge(
+        execServer,
+        "127.0.0.1",
+        port,
+      );
+      const localPort = controller.localPort;
+      this.tunnels.set(localPort, controller);
+      return {
+        type: "success",
+        authority: {
+          host: "127.0.0.1",
+          port: localPort,
+          connectionToken: token,
+        },
+      };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      const action = await vscode.window.showErrorMessage(
+        `Artizo remote setup failed: ${message}`,
+        "Retry",
+      );
+      if (action === "Retry") {
+        await vscode.commands.executeCommand("workbench.action.reloadWindow");
       }
-    } finally {
-      // Stop the askpass server only if the controller didn't take
-      // ownership of its lifecycle (i.e. the tunnel failed).
-      if (askpass && !askpassOwned) {
-        await askpass.server.stop().catch(() => {
-          /* best effort */
-        });
-      }
+      return {
+        type: "error",
+        message: `Artizo execServer bridge failed: ${message}`,
+      };
     }
   }
 
@@ -517,7 +490,7 @@ export class RemoteAuthorityResolver {
         ...dotfilesFromConfig(vscode.workspace.getConfiguration()),
         workspaceFolder,
         additionalLabels: idLabels,
-        configFile: configPath ? URI.file(configPath) : undefined,
+        configFile: configPath ? cliFileUri(configPath) : undefined,
         expectExistingContainer: true,
         removeExistingContainer: false,
         log: (text: string) => log.info(text),
@@ -715,19 +688,28 @@ export class RemoteAuthorityResolver {
 
       const server = net.createServer(
         { pauseOnConnect: true },
-        (localSocket) => {
-          const child = dockerSpawn(
-            this.dockerPathOverride ?? getDockerPath(),
-            [
-              "exec",
-              "-i",
-              containerId,
-              nodePath,
-              "-e",
-              tcpRelayScript(containerPort),
-            ],
-            { stdio: ["pipe", "pipe", "pipe"] },
-          );
+        async (localSocket) => {
+          let child: DockerProcess;
+          try {
+            child = await dockerSpawn(
+              this.dockerPathOverride ?? getDockerPath(),
+              [
+                "exec",
+                "-i",
+                containerId,
+                nodePath,
+                "-e",
+                tcpRelayScript(containerPort),
+              ],
+              { stdio: ["pipe", "pipe", "pipe"] },
+            );
+          } catch (err: unknown) {
+            log.error(
+              `Forward spawn failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            localSocket.destroy();
+            return;
+          }
 
           const conn = { socket: localSocket, child };
           this.forwardConnections.add(conn);
@@ -904,7 +886,9 @@ export class RemoteAuthorityResolver {
   }
 
   /**
-   * Find a container by its local-folder label.
+   * Find a container by its workspace identity label: the local folder for
+   * folder-based containers, or the volume name for clone-in-volume
+   * containers (whose authority id is the volume name).
    *
    * Docker's --filter is AND-only, so we can't OR the artizo.* and
    * devcontainer.* labels in one call. Query each, dedup by ID.
@@ -918,6 +902,8 @@ export class RemoteAuthorityResolver {
       for (const label of [
         LABEL_LOCAL_FOLDER_ARTIZO,
         LABEL_LOCAL_FOLDER_SPEC,
+        LABEL_VOLUME_NAME_ARTIZO,
+        LABEL_VOLUME_NAME_SPEC,
       ]) {
         const result = await execFilePromise(this.dockerPathOverride ?? getDockerPath(), [
           "ps",
@@ -939,31 +925,63 @@ export class RemoteAuthorityResolver {
   }
 
   /**
-   * Get the canonical URI for a remote authority.
-   * Returns the URI unchanged. The authority already encodes the target.
+   * Canonical URI for trust persistence.
+   *
+   * VS Code keys workspace trust on the canonical URI, not the resolve-time
+   * authority (workspaceTrust.ts: getCanonicalUri -> setUrisTrust ->
+   * doGetUriTrustInfo). State 4 authorities carry volatile fields
+   * (relayPort, connectionToken, containerId) that change across relay
+   * restarts and container rebuilds, so trust would prompt every reopen.
+   * Strip them here; keep only identity fields. Resolve-time authority
+   * stays volatile.
+   *
+   * Non-State-4 authorities (direct apex->devcontainer) are already stable;
+   * pass through unchanged.
    */
   getCanonicalURI(uri: vscode.Uri): vscode.Uri {
-    return uri;
+    let decoded;
+    try {
+      decoded = decodeAuthority(uri.authority);
+    } catch {
+      return uri;
+    }
+    const proxy = tryParseProxyPayload(decoded.id);
+    if (!proxy) {
+      return uri;
+    }
+    const stablePayload = {
+      sshHost: proxy.sshHost,
+      sshUser: proxy.sshUser,
+      sshPort: proxy.sshPort,
+      hostWorkspacePath: proxy.hostWorkspacePath,
+      workspacePath: proxy.workspacePath,
+    };
+    const stableAuthority = buildRemoteAuthority(
+      decoded.scheme,
+      JSON.stringify(stablePayload),
+    );
+    // Preserve the chained parent (e.g. `@ssh-remote+<hex>`).
+    const atIdx = uri.authority.indexOf("@");
+    const parent = atIdx === -1 ? "" : uri.authority.substring(atIdx);
+    return uri.with({ authority: `${stableAuthority}${parent}` });
   }
 }
 
 // execFilePromise is now imported from ../utils/dockerUtils.js
 
 /**
- * Parse the production State 4 proxy payload from an authority id.
+ * Parse the State 4 proxy payload from an authority id.
  *
  * The id is the hex-decoded JSON object produced by the workspace-side
- * extension (running on the SSH host) when it starts the relay daemon and
- * builds the authority for the new container window. Returns undefined if the
- * id isn't a JSON object with `proxy: true` and the required SSH/relay/token
- * fields, so the resolver can fall through to the local Docker path for
- * States 1-3.
+ * extension (running on the SSH host) when it builds the authority for the
+ * new container window. It carries only the workspace's stable identity; the
+ * relay's socket path is derived from it (see `stableSocketPath`).
  *
- * Field names match `ProxyAuthorityInfo` (src/remote/containerProxy.ts) so
- * the workspace-side serialization and apex-side deserialization share one
- * typed contract.
+ * Returns undefined if the id isn't a JSON object with `proxy: true` and the
+ * required fields, so the resolver falls through to the local Docker path for
+ * States 1-3.
  */
-function tryParseProxyPayload(id: string): ProxyAuthorityInfo | undefined {
+function tryParseProxyPayload(id: string): StableProxyPayload | undefined {
   if (!id.startsWith("{")) return undefined;
   let parsed: Record<string, unknown>;
   try {
@@ -974,45 +992,72 @@ function tryParseProxyPayload(id: string): ProxyAuthorityInfo | undefined {
   if (parsed.proxy !== true) return undefined;
   if (typeof parsed.sshHost !== "string") return undefined;
   if (typeof parsed.sshUser !== "string") return undefined;
-  if (typeof parsed.relayPort !== "number") return undefined;
-  if (typeof parsed.connectionToken !== "string") return undefined;
   if (typeof parsed.workspacePath !== "string") return undefined;
-  // sshPort defaults to 22 for payloads encoded before this field existed.
   const sshPort =
     typeof parsed.sshPort === "number" && parsed.sshPort > 0
       ? parsed.sshPort
       : 22;
-  // hostWorkspacePath + sshAuthority are optional (added later).
   const hostWorkspacePath =
     typeof parsed.hostWorkspacePath === "string"
       ? parsed.hostWorkspacePath
       : "";
-  const sshAuthority =
-    typeof parsed.sshAuthority === "string" ? parsed.sshAuthority : "";
-  // containerId / containerPort / installPath are optional (added with the
-  // apex-side relay heal). Older payloads omit them; the heal is a no-op.
-  const containerId =
-    typeof parsed.containerId === "string" ? parsed.containerId : undefined;
-  const containerPort =
-    typeof parsed.containerPort === "number" && parsed.containerPort > 0
-      ? parsed.containerPort
-      : undefined;
-  const installPath =
-    typeof parsed.installPath === "string" ? parsed.installPath : undefined;
   return {
     proxy: true,
     sshHost: parsed.sshHost,
     sshUser: parsed.sshUser,
     sshPort,
-    relayPort: parsed.relayPort,
-    connectionToken: parsed.connectionToken,
-    workspacePath: parsed.workspacePath,
     hostWorkspacePath,
-    sshAuthority,
-    containerId,
-    containerPort,
-    installPath,
+    workspacePath: parsed.workspacePath,
   };
+}
+
+/**
+ * Read the container's connection token through the ExecServer. The token
+ * lives at `<installPath>/connection-token`, and `installPath` is the parent
+ * of the container node path.
+ */
+async function readContainerToken(
+  execServer: ExecServerLike,
+  containerId: string | undefined,
+  nodePath: string | undefined,
+  log: (msg: string) => void,
+): Promise<string | undefined> {
+  if (!containerId || !nodePath) return undefined;
+  if (typeof execServer.spawn !== "function") {
+    log("[resolve] ExecServer has no spawn; cannot read token");
+    return undefined;
+  }
+  const tokenFile = `${path.posix.dirname(nodePath)}/connection-token`;
+  try {
+    const spawned = await execServer.spawn("docker", [
+      "exec",
+      containerId,
+      "cat",
+      tokenFile,
+    ]);
+    const chunks: Uint8Array[] = [];
+    spawned.stdout.onDidReceiveMessage((d) => chunks.push(d));
+    spawned.stderr.onDidReceiveMessage(() => {});
+    const exit = await spawned.onExit;
+    const token = Buffer.concat(chunks).toString("utf-8").trim();
+    log(`[resolve] token read status=${exit.status} len=${token.length}`);
+    return exit.status === 0 && token ? token : undefined;
+  } catch (err: unknown) {
+    log(
+      `[resolve] token read failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return undefined;
+  }
+}
+
+/** Inverse of `decodeSshAuthority`: build the SSH resolver authority. */
+function encodeSshAuthority(identity: StableWorkspaceIdentity): string {
+  const json = JSON.stringify({
+    hostName: identity.sshHost,
+    user: identity.sshUser,
+    port: identity.sshPort,
+  });
+  return `ssh-remote+${Buffer.from(json, "utf-8").toString("hex")}`;
 }
 
 /**
@@ -1029,11 +1074,12 @@ export function registerAuthorityResolver(
   context: vscode.ExtensionContext,
   resolver: RemoteAuthorityResolver,
 ): void {
+
   const disposable = (vscode.workspace as any).registerRemoteAuthorityResolver(
     "artizo-container",
     {
-      resolve(authority: string): Thenable<any> {
-        return resolver.resolve(authority).then((result) => {
+      resolve(authority: string, context?: ResolveContext): Thenable<any> {
+        return resolver.resolve(authority, context).then((result) => {
           if (result.type === "error") {
             throw (vscode as any).RemoteAuthorityResolverError.NotAvailable(
               result.message,
@@ -1048,7 +1094,7 @@ export function registerAuthorityResolver(
         });
       },
       getCanonicalURI(uri: vscode.Uri): vscode.Uri {
-        return uri;
+        return resolver.getCanonicalURI(uri);
       },
     },
   );
@@ -1058,8 +1104,8 @@ export function registerAuthorityResolver(
   const disposable2 = (vscode.workspace as any).registerRemoteAuthorityResolver(
     "attached-container",
     {
-      resolve(authority: string): Thenable<any> {
-        return resolver.resolve(authority).then((result) => {
+      resolve(authority: string, context?: ResolveContext): Thenable<any> {
+        return resolver.resolve(authority, context).then((result) => {
           if (result.type === "error") {
             throw (vscode as any).RemoteAuthorityResolverError.NotAvailable(
               result.message,
@@ -1074,7 +1120,7 @@ export function registerAuthorityResolver(
         });
       },
       getCanonicalURI(uri: vscode.Uri): vscode.Uri {
-        return uri;
+        return resolver.getCanonicalURI(uri);
       },
     },
   );

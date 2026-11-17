@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock vscode module
 vi.mock("vscode", () => {
@@ -45,6 +45,8 @@ vi.mock("vscode", () => {
     window: {
       createTreeView: vi.fn().mockReturnValue({ dispose: vi.fn() }),
     },
+    env: { remoteName: undefined, remoteAuthority: undefined },
+    ExtensionKind: { UI: 1, Workspace: 2 },
     commands: {
       registerCommand: vi.fn().mockReturnValue({ dispose: vi.fn() }),
       executeCommand: vi.fn().mockResolvedValue(undefined),
@@ -67,6 +69,7 @@ vi.mock("../../src/docker/execPolicy.js", () => ({
 }));
 
 import * as vscode from "vscode";
+import { getTier, initTier } from "../../src/host/state";
 import { dockerExecPolicy } from "../../src/docker/execPolicy.js";
 import { ContainerExplorerProvider } from "../../src/views/containerExplorer";
 import {
@@ -401,6 +404,77 @@ describe("ContainerExplorerProvider", () => {
       ContainerExplorerProvider.register(context, history);
 
       expect(context.subscriptions.length).toBeGreaterThanOrEqual(4);
+    });
+
+    describe("connect (running container)", () => {
+      function connectHandler(): (item: unknown) => Promise<void> {
+        ContainerExplorerProvider.register(
+          {
+            subscriptions: [] as vscode.Disposable[],
+            globalState: createMockGlobalState(),
+          } as unknown as vscode.ExtensionContext,
+          history,
+        );
+        const call = vi
+          .mocked(vscode.commands.registerCommand)
+          .mock.calls.find(
+            ([id]) => id === "artizo.explorer.connectCurrentWindow",
+          );
+        return call![1] as (item: unknown) => Promise<void>;
+      }
+
+      const item = () =>
+        new ContainerTreeItem({
+          type: "running-container",
+          label: "my-container",
+          containerId: "abc123",
+          status: "running",
+        });
+
+      afterEach(() => {
+        (vscode.env as any).remoteName = undefined;
+        (vscode.env as any).remoteAuthority = undefined;
+        initTier(vscode.ExtensionKind.Workspace);
+      });
+
+      it("opens a bare attached-container authority on the local host", async () => {
+        initTier(vscode.ExtensionKind.Workspace);
+
+        await connectHandler()(item());
+
+        expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+          "vscode.openFolder",
+          expect.anything(),
+          { forceNewWindow: false },
+        );
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+          "artizo.attachToRunningContainer",
+          expect.anything(),
+          expect.anything(),
+        );
+      });
+
+      it("delegates to the attach workflow on RemoteSSH", async () => {
+        (vscode.env as any).remoteName = "ssh-remote";
+        (vscode.env as any).remoteAuthority = "ssh-remote+abc";
+        initTier(vscode.ExtensionKind.UI);
+        expect(getTier().tier).toBe("RemoteSSH");
+
+        await connectHandler()(item());
+
+        // The response window must use the relay + chained authority the
+        // attach workflow builds, not a bare authority resolved in this window.
+        expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+          "artizo.attachToRunningContainer",
+          "abc123",
+          false,
+        );
+        expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith(
+          "vscode.openFolder",
+          expect.anything(),
+          expect.anything(),
+        );
+      });
     });
   });
 });

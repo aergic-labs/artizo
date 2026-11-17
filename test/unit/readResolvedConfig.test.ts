@@ -3,7 +3,18 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+vi.mock("vscode", () => ({
+  window: {
+    createOutputChannel: vi.fn(() => ({
+      appendLine: vi.fn(),
+      show: vi.fn(),
+      dispose: vi.fn(),
+    })),
+  },
+  workspace: { getConfiguration: vi.fn(() => ({ get: vi.fn() })) },
+}));
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";

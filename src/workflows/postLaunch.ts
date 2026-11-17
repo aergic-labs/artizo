@@ -18,8 +18,14 @@ import { getPlatformAdapter } from "../platform";
 import { getLogger } from "../utils/logger";
 import { getTier, ExecutionTier } from "../host/state";
 import { buildContainerAuthority } from "../remote/state4Authority";
+import { getProductInfo, type ProductInfo } from "../remote/productInfo";
+import { readConfigFileText, writeTempConfigFile } from "../config/configFileIO";
+import type { ExecServer } from "../remote/execServerBridge";
 import { getDockerPath } from "../docker/execPolicy.js";
 import { FolderDescriptor } from "../remote/folderHistory";
+
+import { assertForwardPortsValid } from "../devcontainer/forwardPortsValidation";
+import type { ReadConfigResult } from "../config/configManager";
 import {
   computeConfigHashes,
   serializeConfigHashes,
@@ -154,20 +160,17 @@ export async function writeOverrideConfig(
   config: Record<string, unknown>,
   extraRunArgs: string[],
 ): Promise<string> {
-  const fs = await import("node:fs/promises");
-  const path = await import("node:path");
-  const os = await import("node:os");
   const { modify, applyEdits } = await import("jsonc-parser");
-  const content = await fs.readFile(originalPath, "utf-8");
+  // Read the original and write the patched copy on the target (remote) side
+  // when an ExecServer is active, so the CLI can read it via RemoteCliHost.
+  const content = await readConfigFileText(originalPath);
   const existing = (config.runArgs as string[]) || [];
   const value = [...extraRunArgs, ...existing];
   const edits = modify(content, ["runArgs"], value, {
     formattingOptions: { eol: "\n", insertSpaces: true, tabSize: 4 },
   });
   const patched = applyEdits(content, edits);
-  const tmpPath = path.join(os.tmpdir(), `artizo-override-${Date.now()}.json`);
-  await fs.writeFile(tmpPath, patched);
-  return tmpPath;
+  return writeTempConfigFile(`artizo-override-${Date.now()}.json`, patched);
 }
 
 /**
@@ -247,6 +250,96 @@ export async function finishBackgroundTasks(
 }
 
 /**
+ * Get the parent SSH resolver's ExecServer via the proposed API. Returns
+ * undefined when the API is unavailable or the resolver doesn't implement it.
+ */
+async function getRemoteExecServer(
+  authority: string | undefined,
+): Promise<ExecServer | undefined> {
+  if (!authority) return undefined;
+  const get = (
+    vscode.workspace as unknown as {
+      getRemoteExecServer?: (a: string) => Promise<ExecServer | undefined>;
+    }
+  ).getRemoteExecServer;
+  if (typeof get !== "function") return undefined;
+  try {
+    return await get.call(vscode.workspace, authority);
+  } catch (err: unknown) {
+    getLogger().warn(
+      `getRemoteExecServer failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return undefined;
+  }
+}
+
+/**
+ * Read and validate the workspace's devcontainer.json before a launch.
+ * Returns undefined when the user declined to create a missing config.
+ */
+export async function readLaunchConfig(params: {
+  deps: WorkflowDependencies;
+  ui: WorkflowUI;
+  workspaceUri: vscode.Uri;
+  promptCreate?: boolean;
+}): Promise<ReadConfigResult | undefined> {
+  const { deps, ui, workspaceUri, promptCreate } = params;
+  const configResult = await deps.configManager.readConfig(workspaceUri);
+
+  if (!configResult.config) {
+    if (!promptCreate) {
+      throw new Error("No devcontainer.json found in workspace");
+    }
+    const shouldCreate = await ui.promptCreateConfig();
+    if (!shouldCreate) {
+      throw new Error("No devcontainer.json. User cancelled");
+    }
+    throw new Error("No devcontainer.json. Awaiting creation");
+  }
+
+  if (configResult.parseErrors.length > 0) {
+    const errorMessages = configResult.parseErrors
+      .map((e) => `Line ${e.line}: ${e.message}`)
+      .join("\n");
+    throw new Error(`devcontainer.json has parse errors:\n${errorMessages}`);
+  }
+  assertForwardPortsValid(configResult.config, configResult.configPath);
+  return configResult;
+}
+
+/**
+ * The container-side workspace folder for a config, computed without running
+ * the CLI. Must match what the CLI resolves, because it is baked into the
+ * window URI before the resolver runs.
+ *
+ * Mirrors `getWorkspaceConfiguration` (spec-node/utils.ts):
+ * - `config.workspaceFolder` wins.
+ * - compose configs use `getRemoteWorkspaceFolder` = `workspaceFolder || '/'`.
+ * - otherwise `/workspaces/<basename>`. `mountWorkspaceGitRoot` is always
+ *   false here (see `api.ts`), so the host mount folder is the workspace
+ *   folder itself and there is no relative suffix. `workspaceFromPath` treats
+ *   a `.code-workspace` path as its directory, so do the same.
+ */
+export function containerWorkspacePath(
+  config: Record<string, unknown> | undefined,
+  hostWorkspaceFolder: string,
+): string {
+  const configured = config?.["workspaceFolder"];
+  if (typeof configured === "string" && configured.trim()) {
+    return configured.startsWith("/") ? configured : `/${configured}`;
+  }
+  if (config && "dockerComposeFile" in config) {
+    return "/";
+  }
+  const hostFolder = hostWorkspaceFolder.endsWith(".code-workspace")
+    ? hostWorkspaceFolder.replace(/[\\/][^\\/]*$/, "")
+    : hostWorkspaceFolder;
+  const basename = hostFolder.split(/[\\/]/).filter(Boolean).pop() ?? "workspace";
+  return `/workspaces/${basename}`;
+}
+
+
+/**
  * Build the container remote authority for the current execution tier and open
  * the window. Centralizes the tier lookup + buildContainerAuthority assembly +
  * openWindow tail shared by every launch workflow. Callers compute `uriPath`
@@ -257,9 +350,9 @@ export async function buildAuthorityAndOpen(params: {
   ui: WorkflowUI;
   scheme: "artizo-container" | "attached-container";
   id: string;
-  containerId: string;
-  containerPort: number;
-  installPath: string;
+  containerId?: string;
+  containerPort?: number;
+  installPath?: string;
   connectionToken: string | undefined;
   workspaceFolder: string;
   workspacePath: string;
@@ -267,6 +360,22 @@ export async function buildAuthorityAndOpen(params: {
   windowOptions?: { forceNewWindow?: boolean; forceReuseWindow?: boolean };
 }): Promise<void> {
   const tier = getTier();
+  const isRemoteSsh =
+    tier.tier === ExecutionTier.RemoteSSH && tier.owner === "ui";
+
+  // Reveal the output channel: the build is done and the window is about to
+  // open, which is the wait where live output matters.
+  getLogger().show();
+
+  // Remote SSH: the relay is spawned through the parent's ExecServer, and the
+  // SSH host's node path comes from product.json. Both are apex-side.
+  let execServer: ExecServer | undefined;
+  let productInfo: ProductInfo | undefined;
+  if (isRemoteSsh) {
+    execServer = await getRemoteExecServer(tier.remoteAuthority);
+    productInfo = await getProductInfo(vscode.env.appRoot);
+  }
+
   const authority = await buildContainerAuthority({
     scheme: params.scheme,
     id: params.id,
@@ -281,6 +390,8 @@ export async function buildAuthorityAndOpen(params: {
     workspacePath: params.workspacePath,
     dockerPath: getDockerPath(),
     ui: params.ui,
+    execServer,
+    productInfo,
   });
   const url = `vscode-remote://${authority}${params.uriPath}`;
   if (params.windowOptions) {
@@ -291,13 +402,10 @@ export async function buildAuthorityAndOpen(params: {
   getLogger().info(`[postLaunch] openWindow returned: ${url}`);
 
   // Capture the folder we just opened for the Recent Folders list. Skip
-  // State 4 (tier RemoteSSH + owner "workspace"): the authority built
-  // there is the opaque `{ proxy: true, ... }` relay payload (ephemeral
-  // relay port), not a stable reopenable key. The shared module's keyPrefix
+  // Remote SSH: the authority built there is the opaque `{ proxy: true, ... }`
+  // relay payload, not a stable reopenable key. The shared module's keyPrefix
   // keeps this history separate from zygos's SSH history.
-  const isState4 =
-    tier.tier === ExecutionTier.RemoteSSH && tier.owner === "workspace";
-  if (!isState4) {
+  if (!isRemoteSsh) {
     try {
       const d = FolderDescriptor.fromUri(vscode.Uri.parse(url));
       if (d) await params.deps.folderHistory.addFolders([d]);

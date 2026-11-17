@@ -186,16 +186,18 @@ export async function cloneInVolume(
 
       ui.showInfo(`${BRAND_PREFIX} Container ready, opening workspace.`);
 
+      // The volume is the workspace's identity for a clone: there is no local
+      // folder, and the resolver looks the container up by `*_volume_name`.
       await buildAuthorityAndOpen({
         deps,
         ui,
         scheme: "artizo-container",
-        id: repoUrl,
+        id: volumeName,
         containerId: buildResult.containerId,
         containerPort: connectInfo.port,
         installPath: connectInfo.installPath,
         connectionToken: connectInfo.connectionToken,
-        workspaceFolder: repoUrl,
+        workspaceFolder: volumeName,
         workspacePath: "/workspace",
         uriPath: "/workspace",
       });

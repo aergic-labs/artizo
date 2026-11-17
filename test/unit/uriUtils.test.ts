@@ -149,11 +149,21 @@ describe("uriUtils", () => {
       expect(getHostWorkspaceFolder()).toBe("/home/user/project");
     });
 
-    it("returns fsPath for foreign authority (ssh-remote)", () => {
+    it("returns the POSIX URI path for a remote window (ssh-remote)", () => {
+      // On Windows, fsPath for a vscode-remote URI comes back with
+      // backslashes. The host is the SSH machine, so the path must stay POSIX;
+      // using fsPath sends "\\home\\ubuntu\\foo" to the host's docker.
       (vscode.workspace as any).workspaceFolders = [
-        { uri: { fsPath: "/remote/path", authority: "ssh-remote+host" } },
+        {
+          uri: {
+            scheme: "vscode-remote",
+            path: "/home/ubuntu/foo",
+            fsPath: "\\home\\ubuntu\\foo",
+            authority: "ssh-remote+host",
+          },
+        },
       ];
-      expect(getHostWorkspaceFolder()).toBe("/remote/path");
+      expect(getHostWorkspaceFolder()).toBe("/home/ubuntu/foo");
     });
 
     it("decodes authority for artizo-container", () => {

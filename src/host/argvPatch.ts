@@ -4,11 +4,9 @@
  */
 
 /**
- * argv.json patch core, shared by the apex-local patch path
- * (ensureArgvProposedApi in services.ts) and the remote patch script
- * (argvPatchRemoteMain.ts, bundled and pushed over ssh stdin). This
- * module is intentionally free of any `vscode` import so it can be
- * bundled into a standalone Node script that runs on the SSH remote.
+ * argv.json patch core. Used by `ensureArgvProposedApi` in services.ts to add
+ * the extension's ID to `enable-proposed-api`. Free of any `vscode` import so
+ * it stays a pure transform over file content.
  */
 
 import * as fs from "node:fs";

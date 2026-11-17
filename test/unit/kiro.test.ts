@@ -70,18 +70,6 @@ describe("Kiro fork (via VSCodiumAdapter)", () => {
     expect(p).toContain("argv.json");
   });
 
-  it("getApexExtensionsDir returns path under .kiro/extensions", () => {
-    const p = new VSCodiumAdapter().getApexExtensionsDir();
-    expect(p).toContain(".kiro");
-    expect(p).toContain("extensions");
-  });
-
-  it("getRemoteExtensionsDirCandidates returns .kiro-server/extensions", () => {
-    expect(new VSCodiumAdapter().getRemoteExtensionsDirCandidates()).toEqual([
-      ".kiro-server/extensions",
-    ]);
-  });
-
   it("getChecksumConfig returns empty (Kiro has no checksum source)", () => {
     expect(new VSCodiumAdapter().getChecksumConfig()).toEqual({});
   });

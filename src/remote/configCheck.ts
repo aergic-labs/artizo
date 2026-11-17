@@ -15,13 +15,13 @@
  */
 
 import * as vscode from "vscode";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   computeConfigHashes,
   compareConfigHashes,
   deserializeConfigHashes,
 } from "../config/configHash";
+import { readConfigFileText } from "../config/configFileIO";
 import { getLogger } from "../utils/logger";
 import type { ContainerInfo } from "../utils/dockerUtils";
 
@@ -30,17 +30,28 @@ const LABEL_CONFIG_HASH = "artizo.config_hash";
 
 export type ConfigCheckResult = "ok" | "rebuild";
 
+export interface CheckContainerConfigOptions {
+  /**
+   * When the user chooses Rebuild, run `artizo.rebuildAndReopenInContainer`
+   * here. Callers that own the launch (the resolver) pass false and act on
+   * the returned "rebuild" instead.
+   */
+  executeRebuildCommand?: boolean;
+}
+
 /**
  * Compare the container's stored config hashes against the current config
  * files. Prompts on mismatch or missing label.
  *
- * Returns "ok" to proceed or "rebuild" if the user chose to rebuild (the
- * rebuild command opens its own window; the caller should abort its
- * current flow).
+ * Returns "ok" to proceed or "rebuild" if the user chose to rebuild. By
+ * default the rebuild command is started here and the caller should abort its
+ * current flow.
  */
 export async function checkContainerConfig(
   info: ContainerInfo,
+  options: CheckContainerConfigOptions = {},
 ): Promise<ConfigCheckResult> {
+  const executeRebuildCommand = options.executeRebuildCommand !== false;
   const log = getLogger();
   const configPath = info.config.labels[LABEL_CONFIG_FILE];
   if (!configPath) {
@@ -62,7 +73,11 @@ export async function checkContainerConfig(
     );
     if (action === "Rebuild") {
       log.info("[config-hash] user chose Rebuild (predates tracking)");
-      await vscode.commands.executeCommand("artizo.rebuildAndReopenInContainer");
+      if (executeRebuildCommand) {
+        await vscode.commands.executeCommand(
+          "artizo.rebuildAndReopenInContainer",
+        );
+      }
       return "rebuild";
     }
     log.info("[config-hash] user chose Continue anyway (predates tracking)");
@@ -72,7 +87,7 @@ export async function checkContainerConfig(
   let current;
   try {
     const { parse } = await import("jsonc-parser");
-    const content = await fs.promises.readFile(configPath, "utf-8");
+    const content = await readConfigFileText(configPath);
     const config = parse(content) as Record<string, unknown>;
     current = await computeConfigHashes(
       config,
@@ -103,7 +118,9 @@ export async function checkContainerConfig(
   );
   if (action === "Rebuild") {
     log.info("[config-hash] user chose Rebuild (mismatch)");
-    await vscode.commands.executeCommand("artizo.rebuildAndReopenInContainer");
+    if (executeRebuildCommand) {
+      await vscode.commands.executeCommand("artizo.rebuildAndReopenInContainer");
+    }
     return "rebuild";
   }
   log.info("[config-hash] user chose Continue anyway (mismatch)");

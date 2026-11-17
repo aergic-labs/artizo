@@ -7,8 +7,8 @@
  * Diagnostic logger. Routes all output through a vscode LogOutputChannel
  * (the "Output" panel), which is the authoritative, always-available sink -
  * no pseudo-terminal, no renderer-attach guessing, works during early
- * activation and the remote side-load bootstrap. Docker build output is
- * mirrored to a pty terminal separately (see logOutputTerminal.ts).
+ * activation. Docker build output is mirrored to a pty terminal separately
+ * (see logOutputTerminal.ts).
  *
  * When `artizo.fileLog` is on, every line is also appended to
  * `~/.artizo/artizo.log` so logs survive an SSH window close and from

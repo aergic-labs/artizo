@@ -22,6 +22,8 @@ import {
   CancelledError,
 } from "./postLaunch";
 import { getDockerPath } from "../docker/execPolicy.js";
+import { getActiveExecServer } from "../remote/execServerCache";
+import { readConfigFileBuffer } from "../config/configFileIO";
 
 /**
  * Information about a running container for selection.
@@ -61,32 +63,76 @@ export interface DockerListDependency {
   listRunningContainers(): Promise<RunningContainer[]>;
 }
 
-export function getAttachConfigDir(): string {
+/**
+ * Attach configs belong to the machine that owns Docker. artizo is UI-only, so
+ * on an SSH host that is the remote side: the config has to follow the host,
+ * not the apex. Returns undefined when there is no ExecServer.
+ */
+async function remoteAttachConfigDir(): Promise<string | undefined> {
+  const execServer = getActiveExecServer();
+  if (!execServer?.fs) return undefined;
+  const home = (await execServer.env?.())?.env.HOME;
+  return home ? path.posix.join(home, ".config", "artizo", "attachConfigs") : undefined;
+}
+
+function localAttachConfigDir(): string {
   return path.join(os.homedir(), ".config", "artizo", "attachConfigs");
 }
 
-export function getAttachConfigPath(containerName: string): string {
-  // Sanitize container name for use as filename
-  const safeName = containerName.replace(/[^a-zA-Z0-9_-]/g, "_");
-  return path.join(getAttachConfigDir(), `${safeName}.json`);
+export async function getAttachConfigDir(): Promise<string> {
+  return (await remoteAttachConfigDir()) ?? localAttachConfigDir();
 }
 
-export function loadAttachConfig(containerName: string): AttachConfig | null {
-  const configPath = getAttachConfigPath(containerName);
+function attachConfigFileName(containerName: string): string {
+  // Sanitize container name for use as filename
+  const safeName = containerName.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return `${safeName}.json`;
+}
+
+export async function getAttachConfigPath(
+  containerName: string,
+): Promise<string> {
+  const remoteDir = await remoteAttachConfigDir();
+  return remoteDir
+    ? path.posix.join(remoteDir, attachConfigFileName(containerName))
+    : path.join(localAttachConfigDir(), attachConfigFileName(containerName));
+}
+
+export async function loadAttachConfig(
+  containerName: string,
+): Promise<AttachConfig | null> {
   try {
-    const content = fs.readFileSync(configPath, "utf-8");
-    return JSON.parse(content) as AttachConfig;
+    const content = await readConfigFileBuffer(
+      await getAttachConfigPath(containerName),
+    );
+    return JSON.parse(content.toString("utf-8")) as AttachConfig;
   } catch {
     return null;
   }
 }
 
-export function saveAttachConfig(config: AttachConfig): void {
-  const configDir = getAttachConfigDir();
-  fs.mkdirSync(configDir, { recursive: true });
+export async function saveAttachConfig(config: AttachConfig): Promise<void> {
+  const body = JSON.stringify(config, null, 2);
+  const execServer = getActiveExecServer();
 
-  const configPath = getAttachConfigPath(config.containerName);
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+  if (execServer?.fs) {
+    await execServer.fs.mkdirp(await getAttachConfigDir());
+    const { stream, done } = await execServer.fs.write(
+      await getAttachConfigPath(config.containerName),
+    );
+    stream.write(new Uint8Array(Buffer.from(body, "utf-8")));
+    stream.end();
+    await done;
+    return;
+  }
+
+  const configDir = localAttachConfigDir();
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, attachConfigFileName(config.containerName)),
+    body,
+    "utf-8",
+  );
 }
 
 /**
@@ -154,7 +200,7 @@ export async function attachToContainer(
       }
     }
 
-    const existingConfig = loadAttachConfig(selectedContainer.name);
+    const existingConfig = await loadAttachConfig(selectedContainer.name);
     const workspaceFolder = existingConfig?.workspaceFolder ?? "/";
 
     // Captured from the progress callback so we can build the authority
@@ -209,7 +255,7 @@ export async function attachToContainer(
       }),
       ...(existingConfig?.settings && { settings: existingConfig.settings }),
     };
-    saveAttachConfig(attachConfig);
+    await saveAttachConfig(attachConfig);
 
     // Build the container authority. In State 4 (workspace-side on SSH host),
     // this starts the relay daemon and encodes a proxy payload so the apex

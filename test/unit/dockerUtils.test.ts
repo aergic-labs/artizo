@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 vi.mock('vscode', () => ({
   workspace: {
     getConfiguration: vi.fn().mockReturnValue({
@@ -12,7 +12,8 @@ vi.mock('vscode', () => ({
   },
 }));
 
-import { dockerExec, dockerInspect, isContainerRunning } from '../../src/utils/dockerUtils';
+import { dockerExec, dockerInspect, isContainerRunning, execFilePromise } from '../../src/utils/dockerUtils';
+import { setActiveExecServer } from '../../src/remote/execServerCache';
 
 // We mock child_process.execFile to avoid needing a real Docker daemon
 vi.mock('node:child_process', () => ({
@@ -42,6 +43,43 @@ function setupExecFileMock(stdout: string, stderr = '', exitCode = 0) {
 }
 
 describe('dockerUtils', () => {
+  describe('execFilePromise (remote)', () => {
+    afterEach(() => setActiveExecServer(undefined));
+
+    it('runs through the ExecServer when one is cached', async () => {
+      const spawn = vi.fn(async () => ({
+        stdin: { write: vi.fn(), end: vi.fn() },
+        stdout: {
+          onDidReceiveMessage: (cb: (d: Uint8Array) => void) => {
+            cb(new Uint8Array(Buffer.from('hello\n')));
+          },
+          onEnd: Promise.resolve(),
+        },
+        stderr: { onDidReceiveMessage: vi.fn(), onEnd: Promise.resolve() },
+        onExit: Promise.resolve({ status: 0 }),
+      }));
+      setActiveExecServer({ tcpConnect: vi.fn(), spawn } as any);
+
+      const result = await execFilePromise('docker', ['ps']);
+
+      expect(spawn).toHaveBeenCalledWith('docker', ['ps'], undefined);
+      expect(result).toEqual({ exitCode: 0, stdout: 'hello\n', stderr: '' });
+      expect(mockExecFile).not.toHaveBeenCalled();
+    });
+
+    it('returns exitCode 1 when the remote spawn throws', async () => {
+      setActiveExecServer({
+        tcpConnect: vi.fn(),
+        spawn: vi.fn(async () => {
+          throw new Error('boom');
+        }),
+      } as any);
+
+      const result = await execFilePromise('docker', ['ps']);
+      expect(result).toEqual({ exitCode: 1, stdout: '', stderr: 'boom' });
+    });
+  });
+
   describe('dockerExec', () => {
     it('executes a command in a container', async () => {
       setupExecFileMock('hello world\n');

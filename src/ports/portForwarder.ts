@@ -13,8 +13,12 @@
  * 3. Pipes the local socket and docker exec stdio bidirectionally
  */
 
-import type { ChildProcess } from 'node:child_process';
-import { dockerSpawn, tcpRelayScript, pipeDockerRelay } from '../utils/dockerUtils.js';
+import {
+  dockerSpawn,
+  tcpRelayScript,
+  pipeDockerRelay,
+  type DockerProcess,
+} from '../utils/dockerUtils.js';
 import { getLogger } from '../utils/logger.js';
 import { createServer, type Server, type Socket } from 'node:net';
 import { EventEmitter } from 'node:events';
@@ -43,7 +47,7 @@ export interface IPortForwarder {
 interface ActiveForward {
   port: ForwardedPort;
   server: Server;
-  connections: Set<{ socket: Socket; process: ChildProcess }>;
+  connections: Set<{ socket: Socket; process: DockerProcess }>;
 }
 
 export interface PortForwarderOptions {
@@ -107,7 +111,12 @@ export class PortForwarder implements IPortForwarder {
     const resolvedLocalPort = localPort ?? containerPort;
 
     const server = createServer((socket: Socket) => {
-      this.handleConnection(containerPort, socket);
+      void this.handleConnection(containerPort, socket).catch((err: unknown) => {
+        getLogger().error(
+          `[ports] relay setup failed for ${containerPort}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        socket.destroy();
+      });
     });
 
     await this.listenOnPort(server, resolvedLocalPort);
@@ -199,7 +208,10 @@ export class PortForwarder implements IPortForwarder {
    * Spawns a Node.js relay inside the container via docker exec that connects
    * to the target port and pipes stdin/stdout bidirectionally.
    */
-  private handleConnection(containerPort: number, socket: Socket): void {
+  private async handleConnection(
+    containerPort: number,
+    socket: Socket,
+  ): Promise<void> {
     const forward = this.forwards.get(containerPort);
     if (!forward) {
       socket.destroy();
@@ -211,7 +223,7 @@ export class PortForwarder implements IPortForwarder {
     // /tmp/.artizo/bin/relay.js, so a path-based relay is wrong here.
     const nodeBin = this.nodePath ?? 'node';
     getLogger().info(`[ports] relay spawn for ${containerPort} using ${nodeBin}`);
-    const child = dockerSpawn(this.dockerPathOverride ?? getDockerPath(), [
+    const child = await dockerSpawn(this.dockerPathOverride ?? getDockerPath(), [
       'exec',
       '-i',
       this.containerId,

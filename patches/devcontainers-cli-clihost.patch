@@ -1,0 +1,43 @@
+diff --git a/vendor/devcontainers-cli/src/spec-common/cliHost.ts b/vendor/devcontainers-cli/src/spec-common/cliHost.ts
+index 294f8be..418eeb6 100644
+--- a/vendor/devcontainers-cli/src/spec-common/cliHost.ts
++++ b/vendor/devcontainers-cli/src/spec-common/cliHost.ts
+@@ -6,6 +6,7 @@
+ import * as path from 'path';
+ import * as net from 'net';
+ import * as os from 'os';
++import { AsyncLocalStorage } from 'node:async_hooks';
+ 
+ import { readLocalFile, writeLocalFile, mkdirpLocal, isLocalFile, renameLocal, readLocalDir, isLocalFolder } from '../spec-utils/pfs';
+ import { URI } from 'vscode-uri';
+@@ -54,7 +55,30 @@ export enum FileTypeBitmask {
+ 	SymbolicLink = 64
+ }
+ 
++// Artizo patch: run the CLI against an injected (remote) CLIHost. Uses
++// AsyncLocalStorage so concurrent local/remote workflows don't clobber each
++// other. Vendored files are tracked in this repo; see
++// patches/devcontainers-cli-clihost.patch. If this seam disappears after a
++// vendor update, test/unit/vendorCliHostPatch.test.ts fails.
++const injectedCLIHost = new AsyncLocalStorage<CLIHost>();
++
++export function runWithCLIHost<T>(cliHost: CLIHost, fn: () => T): T {
++	return injectedCLIHost.run(cliHost, fn);
++}
++
++// Artizo: diagnostic sink for which host the CLI ends up with.
++let cliHostLog: ((msg: string) => void) | undefined;
++export function setCLIHostLog(fn: ((msg: string) => void) | undefined) {
++	cliHostLog = fn;
++}
++
+ export async function getCLIHost(localCwd: string, loadNativeModule: <T>(moduleName: string) => Promise<T | undefined>, allowInheritTTY: boolean): Promise<CLIHost> {
++	const injected = injectedCLIHost.getStore();
++	if (injected) {
++		cliHostLog?.(`getCLIHost: injected type=${injected.type} platform=${injected.platform} cwd=${localCwd}`);
++		return injected;
++	}
++	cliHostLog?.(`getCLIHost: LOCAL host (no injection) cwd=${localCwd}`);
+ 	const exec = plainExec(localCwd);
+ 	const ptyExec = await plainPtyExec(localCwd, loadNativeModule, allowInheritTTY);
+ 	return createLocalCLIHostFromExecFunctions(localCwd, exec, ptyExec, connectLocal);

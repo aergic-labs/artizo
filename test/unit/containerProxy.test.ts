@@ -3,10 +3,11 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { createHash } from "node:crypto";
 
 // Mock vscode (required by the logger import chain)
 vi.mock("vscode", () => ({
@@ -19,21 +20,96 @@ vi.mock("vscode", () => ({
   },
 }));
 
-vi.mock("node:child_process", () => ({
-  spawn: vi.fn(() => ({
-    pid: 12345,
-    unref: vi.fn(),
-    on: vi.fn(),
-  })),
-}));
-
-import { spawn } from "node:child_process";
 import {
   decodeSshAuthority,
+  stableMetaPath,
+  stablePidPath,
   startRelayDaemon,
+  type StableWorkspaceIdentity,
 } from "../../src/remote/containerProxy";
+import type { ExecServer } from "../../src/remote/execServerBridge";
 
-const mockSpawn = vi.mocked(spawn);
+/** A stateful fake ExecServer backed by an in-memory file map. */
+interface FakeExecServer extends ExecServer {
+  files: Map<string, string>;
+  spawnCalls: Array<{ cmd: string; args: string[] }>;
+}
+
+function makeFakeExecServer(opts: {
+  live?: boolean;
+  onSpawn?: (cmd: string, args: string[], files: Map<string, string>) => void;
+} = {}): FakeExecServer {
+  const files = new Map<string, string>();
+  const spawnCalls: Array<{ cmd: string; args: string[] }> = [];
+  const server: FakeExecServer = {
+    files,
+    spawnCalls,
+    tcpConnect: vi.fn(async () => {
+      if (opts.live) {
+        return {
+          stream: {
+            write: vi.fn(),
+            end: vi.fn(),
+            onDidReceiveMessage: vi.fn(),
+          },
+          done: Promise.resolve(),
+        };
+      }
+      throw new Error("ECONNREFUSED");
+    }),
+    env: vi.fn(async () => ({
+      env: { HOME: "/home/dev" },
+      osPlatform: "linux",
+    })),
+    fs: {
+      mkdirp: vi.fn(async () => {}),
+      write: vi.fn(async (p: string) => {
+        let content = "";
+        return {
+          stream: {
+            write: (d: Uint8Array) => {
+              content += Buffer.from(d).toString("utf-8");
+            },
+            end: () => {
+              files.set(p, content);
+            },
+          },
+          done: Promise.resolve(),
+        };
+      }),
+      read: vi.fn(async (p: string) => {
+        if (!files.has(p)) throw new Error(`ENOENT: ${p}`);
+        const content = files.get(p)!;
+        return {
+          onDidReceiveMessage: (cb: (d: Uint8Array) => void) => {
+            cb(new Uint8Array(Buffer.from(content)));
+          },
+          onEnd: Promise.resolve(),
+        };
+      }),
+      stat: vi.fn(async (p: string) => {
+        if (!files.has(p)) throw new Error(`ENOENT: ${p}`);
+        return { type: 1, size: 0, mtime: 0, ctime: 0 };
+      }),
+      rm: vi.fn(async (p: string) => {
+        files.delete(p);
+      }),
+      rename: vi.fn(async () => {}),
+      readdir: vi.fn(async () => []),
+    },
+    spawn: vi.fn(async (cmd: string, args: string[]) => {
+      spawnCalls.push({ cmd, args });
+      opts.onSpawn?.(cmd, args, files);
+      return {
+        stdin: { write: vi.fn(), end: vi.fn() },
+        stdout: { onDidReceiveMessage: vi.fn(), onEnd: Promise.resolve() },
+        stderr: { onDidReceiveMessage: vi.fn(), onEnd: Promise.resolve() },
+        onExit: new Promise<{ status: number }>(() => {}),
+      };
+    }),
+  };
+  return server;
+}
 
 /** Build a valid ssh-remote+<hex> authority from a hostName/user object. */
 function makeSshAuthority(hostName: string, user: string): string {
@@ -43,10 +119,6 @@ function makeSshAuthority(hostName: string, user: string): string {
 }
 
 describe("containerProxy", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   describe("decodeSshAuthority", () => {
     it("decodes a valid ssh-remote authority", () => {
       const authority = makeSshAuthority("34.136.190.14", "dev");
@@ -167,7 +239,11 @@ describe("containerProxy", () => {
     });
 
     it("decodes a port from hex-JSON authority", () => {
-      const json = JSON.stringify({ hostName: "1.2.3.4", user: "dev", port: 2222 });
+      const json = JSON.stringify({
+        hostName: "1.2.3.4",
+        user: "dev",
+        port: 2222,
+      });
       const hex = Buffer.from(json, "utf-8").toString("hex");
       expect(decodeSshAuthority(`ssh-remote+${hex}`)).toEqual({
         sshHost: "1.2.3.4",
@@ -183,204 +259,180 @@ describe("containerProxy", () => {
     });
 
     it("ignores a non-numeric port in hex-JSON", () => {
-      const json = JSON.stringify({ hostName: "1.2.3.4", user: "dev", port: "bogus" });
+      const json = JSON.stringify({
+        hostName: "1.2.3.4",
+        user: "dev",
+        port: "bogus",
+      });
       const hex = Buffer.from(json, "utf-8").toString("hex");
       expect(decodeSshAuthority(`ssh-remote+${hex}`)?.sshPort).toBe(22);
     });
   });
 
   describe("startRelayDaemon", () => {
-    afterEach(() => {
-      // Clean up any temp files created
-      const tmp = os.tmpdir();
-      for (const f of fs.readdirSync(tmp)) {
-        if (f.startsWith("artizo-relay") || f === "artizo-relay.mjs") {
-          try {
-            fs.unlinkSync(path.join(tmp, f));
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-    });
+    const daemonSource = "// relay daemon test source";
+    let daemonPath: string;
+    let targetPath: string;
 
-    it("spawns a detached node process and returns the port from meta file", async () => {
-      const containerId = "abc123";
-      const metaFile = path.join(
-        os.tmpdir(),
-        `artizo-relay-${containerId}.meta.json`,
-      );
+    const daemonHash = createHash("sha256")
+      .update(daemonSource)
+      .digest("hex")
+      .slice(0, 16);
 
-      // The mocked spawn writes the meta file shortly after it's called,
-      // so waitForMetaFile picks it up.
-      mockSpawn.mockImplementation(() => {
-        // Simulate the daemon writing the meta file (JSON {port, nodePath}).
-        setTimeout(() => {
-          fs.writeFileSync(
-            metaFile,
-            JSON.stringify({ port: 54321, nodePath: process.execPath }),
-          );
-        }, 50);
-        return {
-          pid: 12345,
-          unref: vi.fn(),
-          on: vi.fn(),
-        } as any;
-      });
+    function makeIdentity(workspacePath: string): StableWorkspaceIdentity {
+      return {
+        sshHost: "34.136.190.14",
+        sshUser: "dev",
+        sshPort: 22,
+        hostWorkspacePath: "/home/dev/app",
+        workspacePath,
+      };
+    }
 
-      const result = await startRelayDaemon({
-        containerId,
+    function start(
+      execServer: ExecServer,
+      identity: StableWorkspaceIdentity,
+      extra: Partial<Parameters<typeof startRelayDaemon>[0]> = {},
+    ) {
+      return startRelayDaemon({
+        execServer,
+        hostNodePath: "/home/dev/.kiro-server/bin/abc/node",
+        logFile: "/home/dev/.artizo/logs/relay.log",
+        containerId: "abc123",
         containerPort: 38517,
-        nodePath: "/tmp/.trae-server/node",
+        nodePath: "/tmp/.artizo-server/abc/node",
         dockerPath: "docker",
+        identity,
+        relayScriptPath: daemonPath,
+        relayScriptTargetPath: targetPath,
+        ...extra,
       });
+    }
 
-      expect(result.relayPort).toBe(54321);
-      expect(result.pid).toBe(12345);
-      expect(result.pidFile).toContain(`artizo-relay-${containerId}.pid`);
-
-      // Verify spawn was called with detached: true
-      const spawnCall = mockSpawn.mock.calls[0];
-      expect(spawnCall[0]).toBe(process.execPath);
-      expect(spawnCall[2]).toMatchObject({
-        detached: true,
-        stdio: "ignore",
-      });
+    beforeEach(() => {
+      daemonPath = path.join(os.tmpdir(), "relay-daemon-src.cjs");
+      targetPath = path.join(os.tmpdir(), "relay-daemon-target.cjs");
+      fs.writeFileSync(daemonPath, daemonSource);
     });
 
-    it("throws if daemon does not report a port within timeout", async () => {
-      const containerId = "timeout-test";
+    it("spawns the relay through the ExecServer and returns the port", async () => {
+      const identity = makeIdentity("/workspaces/abc123");
+      const metaFile = stableMetaPath(identity);
+      const execServer = makeFakeExecServer({
+        onSpawn: (_cmd, _args, files) => {
+          files.set(metaFile, JSON.stringify({ port: 12345, daemonHash }));
+        },
+      });
 
-      mockSpawn.mockImplementation(
-        () =>
-          ({
-            pid: 99999,
-            unref: vi.fn(),
-            on: vi.fn(),
-          }) as any,
+      const result = await start(execServer, identity);
+
+      expect(result.port).toBe(12345);
+      expect(result.metaFile).toBe(metaFile);
+      expect(result.pidFile).toBe(stablePidPath(identity));
+      expect(execServer.spawnCalls).toHaveLength(1);
+      expect(execServer.spawnCalls[0].cmd).toBe(
+        "/home/dev/.kiro-server/bin/abc/node",
       );
+      expect(execServer.spawnCalls[0].args[0]).toBe(targetPath);
+    });
 
-      // Don't write the port file - should time out. Use a short timeout
-      // so the test doesn't take 10s.
+    it("throws if the relay never reports a port", async () => {
+      const identity = makeIdentity("/workspaces/timeout-test");
+      const execServer = makeFakeExecServer();
+
       await expect(
-        startRelayDaemon({
-          containerId,
-          containerPort: 38517,
-          nodePath: "/tmp/.trae-server/node",
-          dockerPath: "docker",
-          metaFileTimeoutMs: 200,
-        }),
-      ).rejects.toThrow("did not report a port");
+        start(execServer, identity, { timeoutMs: 200 }),
+      ).rejects.toThrow("did not write a port");
     }, 5000);
 
-    it("throws if spawn returns no PID", async () => {
-      mockSpawn.mockImplementation(
-        () =>
-          ({
-            pid: undefined,
-            unref: vi.fn(),
-            on: vi.fn(),
-          }) as any,
-      );
-
-      await expect(
-        startRelayDaemon({
-          containerId: "nopid-test",
-          containerPort: 38517,
-          nodePath: "/tmp/.trae-server/node",
-          dockerPath: "docker",
-        }),
-      ).rejects.toThrow("no PID");
-    });
-
-    it("writes a relay script with correct container info", async () => {
-      const containerId = "script-test";
-      const metaFile = path.join(
-        os.tmpdir(),
-        `artizo-relay-${containerId}.meta.json`,
-      );
-
-      mockSpawn.mockImplementation(() => {
-        setTimeout(() => {
-          fs.writeFileSync(
-            metaFile,
-            JSON.stringify({ port: 11111, nodePath: process.execPath }),
-          );
-        }, 10);
-        return {
-          pid: 22222,
-          unref: vi.fn(),
-          on: vi.fn(),
-        } as any;
+    it("writes the bundled daemon and passes the config as argv", async () => {
+      const identity = makeIdentity("/workspaces/script-test");
+      const metaFile = stableMetaPath(identity);
+      const execServer = makeFakeExecServer({
+        onSpawn: (_cmd, _args, files) => {
+          files.set(metaFile, JSON.stringify({ port: 22222, daemonHash }));
+        },
       });
 
-      await startRelayDaemon({
-        containerId,
+      await start(execServer, identity, { dockerPath: "/usr/bin/docker" });
+
+      expect(execServer.files.get(targetPath)).toBe(daemonSource);
+      const config = JSON.parse(execServer.spawnCalls[0].args[1] as string);
+      expect(config).toMatchObject({
+        containerId: "abc123",
         containerPort: 38517,
-        nodePath: "/tmp/.trae-server/node",
+        nodePath: "/tmp/.artizo-server/abc/node",
         dockerPath: "/usr/bin/docker",
+        port: 0,
+        hostNodePath: "/home/dev/.kiro-server/bin/abc/node",
       });
-
-      const scriptPath = path.join(os.tmpdir(), "artizo-relay.mjs");
-      const script = fs.readFileSync(scriptPath, "utf-8");
-
-      // The script should embed the container ID, node path, docker path,
-      // and relay script (which connects to the container port).
-      expect(script).toContain(containerId);
-      expect(script).toContain("/tmp/.trae-server/node");
-      expect(script).toContain("/usr/bin/docker");
-      expect(script).toContain("38517"); // container port in the relay script
-      expect(script).toContain("IDLE_TIMEOUT_MS");
-      expect(script).toContain("MAX_FAILURES");
-      expect(script).toContain("artizo-remote-ssh-helper"); // process title
-      // The script must embed the host node path (process.execPath) so the
-      // apex-side heal can re-spawn using the same binary. The path is embedded
-      // via JSON.stringify, so on Windows it has escaped backslashes.
-      expect(script).toContain(JSON.stringify(process.execPath));
-      expect(script).toContain("META_FILE");
-      expect(script).toContain("HOST_NODE_PATH");
-      expect(script).not.toContain("PORT_FILE");
     });
 
-    it("cleans up stale PID/meta files before starting", async () => {
-      const containerId = "cleanup-test";
-      const pidFile = path.join(os.tmpdir(), `artizo-relay-${containerId}.pid`);
-      const metaFile = path.join(
-        os.tmpdir(),
-        `artizo-relay-${containerId}.meta.json`,
-      );
+    it("cleans up stale meta and pid files before starting", async () => {
+      const identity = makeIdentity("/workspaces/cleanup-test");
+      const metaFile = stableMetaPath(identity);
+      const pidFile = stablePidPath(identity);
+      let metaExistedAtSpawn = true;
+      let pidExistedAtSpawn = true;
+      const execServer = makeFakeExecServer({
+        onSpawn: (_cmd, _args, files) => {
+          metaExistedAtSpawn = files.has(metaFile);
+          pidExistedAtSpawn = files.has(pidFile);
+          files.set(metaFile, JSON.stringify({ port: 44444, daemonHash }));
+        },
+      });
+      execServer.files.set(metaFile, JSON.stringify({ nodePath: "/old/node" }));
+      execServer.files.set(pidFile, "999999996");
 
-      // Write stale files
-      fs.writeFileSync(pidFile, "999999996");
-      fs.writeFileSync(
+      const result = await start(execServer, identity);
+
+      expect(metaExistedAtSpawn).toBe(false);
+      expect(pidExistedAtSpawn).toBe(false);
+      expect(result.port).toBe(44444);
+    });
+
+    it("reuses a live relay when the daemon hash matches", async () => {
+      const identity = makeIdentity("/workspaces/live");
+      const metaFile = stableMetaPath(identity);
+      const execServer = makeFakeExecServer({ live: true });
+      execServer.files.set(
         metaFile,
-        JSON.stringify({ port: 99999, nodePath: "/old/node" }),
+        JSON.stringify({ daemonHash, port: 5555 }),
       );
 
-      mockSpawn.mockImplementation(() => {
-        setTimeout(() => {
-          fs.writeFileSync(
-            metaFile,
-            JSON.stringify({ port: 33333, nodePath: process.execPath }),
-          );
-        }, 10);
-        return {
-          pid: 44444,
-          unref: vi.fn(),
-          on: vi.fn(),
-        } as any;
-      });
+      const result = await start(execServer, identity);
 
-      const result = await startRelayDaemon({
-        containerId,
-        containerPort: 38517,
-        nodePath: "/tmp/.trae-server/node",
-        dockerPath: "docker",
-      });
+      expect(execServer.spawn).not.toHaveBeenCalled();
+      expect(result.port).toBe(5555);
+    });
 
-      // The stale meta file should have been deleted, and the new port
-      // (written by the mock) should be returned.
-      expect(result.relayPort).toBe(33333);
+    it("replaces a live relay when the daemon hash differs", async () => {
+      const identity = makeIdentity("/workspaces/stale");
+      const metaFile = stableMetaPath(identity);
+      const execServer = makeFakeExecServer({
+        live: true,
+        onSpawn: (_cmd, _args, files) => {
+          files.set(metaFile, JSON.stringify({ port: 6666, daemonHash }));
+        },
+      });
+      execServer.files.set(
+        metaFile,
+        JSON.stringify({ daemonHash: "old", port: 5555 }),
+      );
+
+      const result = await start(execServer, identity);
+
+      expect(execServer.spawn).toHaveBeenCalled();
+      expect(result.port).toBe(6666);
+    });
+
+    it("throws when the ExecServer lacks fs or spawn", async () => {
+      const identity = makeIdentity("/workspaces/no-fs");
+      const execServer = { tcpConnect: vi.fn() } as unknown as ExecServer;
+
+      await expect(start(execServer, identity)).rejects.toThrow(
+        "missing fs or spawn",
+      );
     });
   });
 });

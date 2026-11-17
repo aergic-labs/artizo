@@ -30,25 +30,21 @@ const buildOptions = {
 };
 
 /**
- * Build options for the standalone remote argv.json patch script. Bundled
- * to a single self-contained CJS file (jsonc-parser inlined) that the apex
- * pushes over ssh stdin to `node -` on the SSH remote. Minified + no legal
- * comments to keep the pushed payload small (~17KB).
+ * Build options for the standalone relay daemon. Bundled to a single
+ * self-contained CJS file that the workspace-side extension copies to the
+ * SSH host and runs detached with a JSON config argument.
  */
 /** @type {esbuild.BuildOptions} */
-const remotePatchOptions = {
-  entryPoints: ["src/remote/argvPatchRemoteMain.ts"],
+const relayDaemonOptions = {
+  entryPoints: ["src/remote/relayDaemon.ts"],
   bundle: true,
-  outfile: "dist/argv-patch-remote.cjs",
+  outfile: "dist/relay-daemon.cjs",
   format: "cjs",
   platform: "node",
   target: "node18",
   minify: true,
   legalComments: "none",
   treeShaking: true,
-  // Prefer jsonc-parser's ESM build; the UMD build uses dynamic relative
-  // requires that esbuild can't statically bundle.
-  mainFields: ["module", "main"],
   banner: {
     js: `/*
  * Copyright (c) 2026 Aergic Labs, LLC
@@ -76,13 +72,13 @@ function copyDirSync(src, dest) {
 async function main() {
   if (isWatch) {
     const ctx = await esbuild.context(buildOptions);
-    const remoteCtx = await esbuild.context(remotePatchOptions);
+    const relayCtx = await esbuild.context(relayDaemonOptions);
     await ctx.watch();
-    await remoteCtx.watch();
+    await relayCtx.watch();
     console.log("Watching for changes...");
   } else {
     const result = await esbuild.build(buildOptions);
-    await esbuild.build(remotePatchOptions);
+    await esbuild.build(relayDaemonOptions);
 
     // Report bundle size
     if (result.metafile) {

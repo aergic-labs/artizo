@@ -29,8 +29,7 @@ import type { WorkflowDependencies } from "../workflows/types";
 import { GitConfigCopier } from "../credentials/gitConfigCopier";
 import { ExtensionInstaller } from "../extensions/extensionInstaller";
 import { getPlatformAdapter } from "../platform";
-import { isInDevContainerWindow, getTier } from "./state";
-import { ExecutionTier } from "./state";
+import { isInDevContainerWindow } from "./state";
 import { patchArgvContent } from "./argvPatch";
 import type { Host } from "./host";
 
@@ -248,17 +247,6 @@ export function createBuildLogTerminal(context: vscode.ExtensionContext): {
 export async function ensureResolversAvailable(): Promise<boolean> {
   const logger = getLogger();
 
-  // If we're the workspace-side extension on an SSH remote, the apex-side
-  // sideload already patched argv.json (or tried to). Don't pop the modal
-  // here - it would trap the user in a restart loop on the remote box.
-  const tier = getTier();
-  if (tier.tier === ExecutionTier.RemoteSSH && tier.owner === "workspace") {
-    logger.info(
-      "ensureResolversAvailable: workspace-side on SSH remote, skipping modal",
-    );
-    return false;
-  }
-
   const argvPatched = await ensureArgvProposedApi(
     {} as vscode.ExtensionContext,
   );
@@ -309,7 +297,6 @@ export function registerResolverEarly(
   context: vscode.ExtensionContext,
 ): RemoteAuthorityResolver {
   const resolver = new RemoteAuthorityResolver({
-    extensionPath: context.extensionPath,
     context,
   });
   registerAuthorityResolver(context, resolver);
@@ -419,6 +406,7 @@ export function createServices(
     extensionInstaller,
     folderHistory,
   };
+
 
   // Register tree views, sidebar, and config watcher (local only)
   const sidebarProvider = new SidebarProvider(

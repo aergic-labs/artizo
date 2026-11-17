@@ -139,17 +139,33 @@ export function normalizeFsPath(uri: { fsPath: string }): string {
  * Resolve the workspace folder path on the host machine.
  *
  * When inside a managed container, the authority encodes the original host
- * path - decode it. Otherwise returns the raw fsPath.
+ * path - decode it. Otherwise returns the host's own path:
  *
- * Do NOT normalize path separators here. The
- * `artizo.local_folder` / `devcontainer.local_folder` Docker labels are set
- * by us from the raw fsPath (backslashes on Windows). The resolver and
- * label filters must match that exact string. Normalizing to forward slashes
- * breaks the match and the new window fails to resolve with
- * "No dev container found for workspace".
+ * - **Remote windows** (`vscode-remote`): the host is the SSH machine, whose
+ *   paths are POSIX. `uri.fsPath` uses the apex's separators (backslashes on
+ *   Windows), which is wrong for that machine, so use `uri.path`.
+ * - **Local windows**: `uri.fsPath`, kept verbatim. The
+ *   `artizo.local_folder` / `devcontainer.local_folder` labels are written
+ *   from this value and the resolver matches them exactly, so normalizing a
+ *   local Windows path would break the match.
  */
 import * as vscode from "vscode";
 import { getLogger } from "./logger";
+/**
+ * Path of `uri` as the machine that owns it sees it.
+ *
+ * `uri.fsPath` uses the apex's separators, so on Windows a remote URI comes
+ * back as `\home\ubuntu\foo`. Anything that goes to the SSH host, to docker,
+ * or into a label must use this instead.
+ */
+export function hostPathOf(uri: {
+  scheme: string;
+  path: string;
+  fsPath: string;
+}): string {
+  return uri.scheme === "vscode-remote" ? uri.path : uri.fsPath;
+}
+
 export function getHostWorkspaceFolder(): string | undefined {
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
   if (!folder) {
@@ -172,21 +188,39 @@ export function getHostWorkspaceFolder(): string | undefined {
         const payload = JSON.parse(decoded) as Record<string, unknown>;
         if (
           payload.proxy === true &&
-          typeof payload.sshAuthority === "string" &&
+          typeof payload.sshHost === "string" &&
           typeof payload.hostWorkspacePath === "string" &&
-          payload.sshAuthority &&
+          payload.sshHost &&
           payload.hostWorkspacePath
         ) {
+          // Older payloads carried the full authority; newer ones carry the
+          // SSH endpoint only, so rebuild it.
+          const sshAuthority =
+            typeof payload.sshAuthority === "string" && payload.sshAuthority
+              ? payload.sshAuthority
+              : `ssh-remote+${Buffer.from(
+                  JSON.stringify({
+                    hostName: payload.sshHost,
+                    user:
+                      typeof payload.sshUser === "string"
+                        ? payload.sshUser
+                        : undefined,
+                    port:
+                      typeof payload.sshPort === "number"
+                        ? payload.sshPort
+                        : 22,
+                  }),
+                ).toString("hex")}`;
           const hostPath = payload.hostWorkspacePath as string;
           const uriPath = hostPath.startsWith("/") ? hostPath : "/" + hostPath;
-          const uri = `vscode-remote://${payload.sshAuthority}${uriPath}`;
+          const uri = `vscode-remote://${sshAuthority}${uriPath}`;
           getLogger().info(
             `getHostWorkspaceFolder: proxy payload -> reopening SSH remote "${uri}"`,
           );
           return uri;
         }
         getLogger().info(
-          "getHostWorkspaceFolder: proxy payload missing sshAuthority/hostWorkspacePath",
+          "getHostWorkspaceFolder: proxy payload missing sshHost/hostWorkspacePath",
         );
       } catch {
         getLogger().info(
@@ -206,6 +240,15 @@ export function getHostWorkspaceFolder(): string | undefined {
     }
 
     return decoded;
+  }
+
+  // A remote window's host is the remote machine: POSIX path from the URI,
+  // not fsPath (which would carry the apex's separators on Windows).
+  if (folder.scheme === "vscode-remote") {
+    getLogger().info(
+      `getHostWorkspaceFolder: remote path -> "${folder.path}"`,
+    );
+    return folder.path;
   }
 
   getLogger().info(`getHostWorkspaceFolder: fsPath -> "${folder.fsPath}"`);

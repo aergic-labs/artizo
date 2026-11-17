@@ -819,9 +819,16 @@ describe("ConfigEditService repairConfig", () => {
     ];
     (vscode as any).workspace.textDocuments = [];
     ({ service, configManager } = createService() as any);
-    configManager.getConfigPath.mockResolvedValue({
-      fsPath: "/test/.devcontainer/devcontainer.json",
-    });
+    const configPath = "/test/.devcontainer/devcontainer.json";
+    const configUri = {
+      fsPath: configPath,
+      path: configPath,
+      scheme: "file",
+      with(change: { path?: string }) {
+        return { ...configUri, path: change.path, fsPath: change.path };
+      },
+    };
+    configManager.getConfigPath.mockResolvedValue(configUri);
     (vscode as any).workspace.fs.stat.mockRejectedValue(new Error("ENOENT"));
     (vscode as any).workspace.fs.readFile.mockResolvedValue(
       new TextEncoder().encode('{ "name": "test" }'),

@@ -82,21 +82,6 @@ describe("VSCodiumAdapter", () => {
       expect(new VSCodiumAdapter().getAdditionalDockerRunArgs()).toEqual([]);
     });
 
-    it("getRemoteExtensionsDirCandidates returns vscodium-server and vscode-oss-server", () => {
-      mockProduct("vscodium");
-      expect(new VSCodiumAdapter().getRemoteExtensionsDirCandidates()).toEqual([
-        ".vscodium-server/extensions",
-        ".vscode-oss-server/extensions",
-      ]);
-    });
-
-    it("getApexExtensionsDir joins homedir + dataFolderName + extensions", () => {
-      mockProduct("vscodium");
-      const p = new VSCodiumAdapter().getApexExtensionsDir();
-      expect(p).toContain(".vscode-oss");
-      expect(p).toContain("extensions");
-    });
-
     it("getServerInstallRoot defaults to /tmp", () => {
       mockProduct("vscodium");
       expect(new VSCodiumAdapter().getServerInstallRoot()).toBe("/tmp");

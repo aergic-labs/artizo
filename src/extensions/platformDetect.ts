@@ -161,9 +161,8 @@ export function isPlatformSpecificTarget(
  *   - extension is universal (`perPlatform === false`), OR
  *   - apex platform exactly matches the target platform.
  *
- * Shared by extensionInstaller.ts (devcontainer path) and sideload.ts
- * (SSH mirror path) so a fix to the copy-vs-download judgment lands in
- * one place and applies to both.
+ * Used by extensionInstaller.ts so the copy-vs-download judgment lives in
+ * one place.
  */
 export function canCopyFromApex(
   perPlatform: boolean,

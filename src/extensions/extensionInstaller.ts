@@ -682,14 +682,14 @@ export class ExtensionInstaller {
     const args = ["exec", "-i"];
     if (remoteUser) args.push("-u", remoteUser);
     args.push(containerId, tarBin, "-xC", containerPath);
-    const child = dockerSpawn(this.dockerPathOverride ?? getDockerPath(), args);
+    const child = await dockerSpawn(this.dockerPathOverride ?? getDockerPath(), args);
     const pipes = childPipes(child);
     let stderr = "";
     pipes.stderr.on("data", (c: Buffer) => (stderr += c.toString()));
     pipes.stdin.write(tarBuf);
     pipes.stdin.end();
     const exitCode = await new Promise<number>((resolve) =>
-      child.on("close", resolve),
+      child.on("close", (code) => resolve(code ?? 0)),
     );
     if (exitCode !== 0) {
       throw new Error(
@@ -808,14 +808,14 @@ export class ExtensionInstaller {
     const writeArgs = ["exec", "-i"];
     if (remoteUser) writeArgs.push("-u", remoteUser);
     writeArgs.push(containerId, "sh", "-c", `cat > ${quotedPath}`);
-    const child = dockerSpawn(this.dockerPathOverride ?? getDockerPath(), writeArgs);
+    const child = await dockerSpawn(this.dockerPathOverride ?? getDockerPath(), writeArgs);
     const pipes = childPipes(child);
     let stderr = "";
     pipes.stderr.on("data", (c: Buffer) => (stderr += c.toString()));
     pipes.stdin.write(jsonContent);
     pipes.stdin.end();
     const exitCode = await new Promise<number>((resolve) =>
-      child.on("close", resolve),
+      child.on("close", (code) => resolve(code ?? 0)),
     );
     if (exitCode !== 0) {
       throw new Error(

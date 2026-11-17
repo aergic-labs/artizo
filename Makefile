@@ -37,7 +37,7 @@
 #   OVSX_PAT environment variable (Personal Access Token from open-vsx.org)
 #   Publisher namespace claimed on Open VSX (one-time setup)
 
-.PHONY: setup check lint typecheck test test-all test-coverage coverage build package package-kiro package-vscodium release publish clean distclean sync-shared vscodium-versions
+.PHONY: setup check lint typecheck test test-all test-coverage coverage build package package-kiro package-vscodium release publish clean distclean sync-shared vscodium-versions agent agent-vet
 
 # ── Sentinel files ─────────────────────────────────────────────
 
@@ -60,16 +60,11 @@ SHARED_FROM_ZYGOS := \
   src/remote/vscodiumFeed.ts:src/remote/vscodiumFeed.ts \
   src/remote/download.ts:src/remote/download.ts \
   src/remote/folderHistory.ts:src/remote/folderHistory.ts \
-  src/ssh/askpassCache.ts:src/ssh/askpassCache.ts \
-  src/ssh/askpassServer.ts:src/ssh/askpassServer.ts \
   src/common/temp.ts:src/common/temp.ts \
   src/webviews/serverDownloadPanel.ts:src/webviews/serverDownloadPanel.ts \
   resources/serverDownload/app.js:resources/serverDownload/app.js \
   resources/serverDownload/index.html:resources/serverDownload/index.html \
   resources/serverDownload/styles.css:resources/serverDownload/styles.css \
-  scripts/askpass/askpass.sh:scripts/askpass/askpass.sh \
-  scripts/askpass/askpass.cmd:scripts/askpass/askpass.cmd \
-  scripts/askpass/askpass-main.js:scripts/askpass/askpass-main.js \
   vendor/node-dirty/dirty.d.ts:vendor/node-dirty/dirty.d.ts \
   scripts/download-vscodium-versions.mjs:scripts/download-vscodium-versions.mjs \
   test/unit/checksum.test.ts:test/unit/checksum.test.ts \
@@ -77,8 +72,6 @@ SHARED_FROM_ZYGOS := \
   test/unit/url.test.ts:test/unit/url.test.ts \
   test/unit/folderHistory.test.ts:test/unit/folderHistory.test.ts \
   test/unit/vscodiumFeed.test.ts:test/unit/vscodiumFeed.test.ts \
-  test/unit/askpassCache.test.ts:test/unit/askpassCache.test.ts \
-  test/unit/askpass.test.ts:test/unit/askpass.test.ts \
   test/unit/temp.test.ts:test/unit/temp.test.ts \
   test/unit/temp.retry.test.ts:test/unit/temp.retry.test.ts \
   test/unit/forkTemplates.test.ts:test/unit/forkTemplates.test.ts \
@@ -117,7 +110,7 @@ setup: $(VENDOR_CLI)
 check: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift lint test-all
 	@echo "=== All checks passed ==="
 
-lint:
+lint: agent-vet
 	npm run lint
 
 typecheck:
@@ -145,18 +138,31 @@ coverage:
 
 # ── Build ──────────────────────────────────────────────────────
 
-build: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) typecheck
+# Cross-compile the remote CLI agent (Go). Source in go/artifact-agent/,
+# binaries land in tools/artifact-agent/ (gitignored, shipped in the VSIX).
+agent:
+	mkdir -p tools/artifact-agent
+	cd go/artifact-agent && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../../tools/artifact-agent/agent-linux-x64 .
+	cd go/artifact-agent && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o ../../tools/artifact-agent/agent-linux-arm64 .
+	cd go/artifact-agent && CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o ../../tools/artifact-agent/agent-darwin-x64 .
+	cd go/artifact-agent && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o ../../tools/artifact-agent/agent-darwin-arm64 .
+
+# go vet on the agent source. Runs on `make lint`/`make check`.
+agent-vet:
+	cd go/artifact-agent && go vet ./...
+
+build: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) typecheck agent-vet agent
 	npm run build
 	@echo "Bundle built in dist/. Run 'make package' to create VSIX files."
 
-package: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift
+package: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift agent
 	npm run package:kiro
 	npm run package:vscodium
 
-package-kiro: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift
+package-kiro: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift agent
 	npm run package:kiro
 
-package-vscodium: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift
+package-vscodium: $(NODE_MODULES) $(VENDOR_CLI) $(VENDOR_NM) check-shared-drift agent
 	npm run package:vscodium
 
 # ── Release ────────────────────────────────────────────────────
@@ -239,7 +245,7 @@ vscodium-versions:
 
 clean:
 	rm -f artizo-*.vsix
-	rm -rf dist coverage
+	rm -rf dist coverage tools/artifact-agent
 
 distclean: clean
 	rm -rf node_modules

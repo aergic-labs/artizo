@@ -84,7 +84,7 @@ export class ContainerBootstrap {
         "chmod +x /tmp/.artizo/bin/busybox && " +
         "/tmp/.artizo/bin/busybox --install -s /tmp/.artizo/bin",
     );
-    const child = this.spawner(this.dockerPathOverride ?? getDockerPath(), args);
+    const child = await this.spawner(this.dockerPathOverride ?? getDockerPath(), args);
 
     const pipes = childPipes(child);
     let stderr = "";
@@ -94,7 +94,7 @@ export class ContainerBootstrap {
     pipes.stdin.end();
 
     const exitCode = await new Promise<number>((resolve) => {
-      child.on("close", resolve);
+      child.on("close", (code) => resolve(code ?? 0));
     });
 
     if (exitCode !== 0) {
@@ -122,7 +122,7 @@ export class ContainerBootstrap {
     const args = ["exec", "-i"];
     if (user) args.push("-u", user);
     args.push(containerId, "/tmp/.artizo/bin/tar", "-xC", ARTIZO_BIN);
-    const child = this.spawner(this.dockerPathOverride ?? getDockerPath(), args);
+    const child = await this.spawner(this.dockerPathOverride ?? getDockerPath(), args);
 
     const pipes = childPipes(child);
     let stderr = "";
@@ -132,7 +132,7 @@ export class ContainerBootstrap {
     pipes.stdin.end();
 
     const exitCode = await new Promise<number>((resolve) => {
-      child.on("close", resolve);
+      child.on("close", (code) => resolve(code ?? 0));
     });
 
     if (exitCode !== 0) {
@@ -161,7 +161,7 @@ export class ContainerBootstrap {
     args.push(containerId, "/tmp/.artizo/bin/sh", "/tmp/.artizo/bin/setup.sh");
 
     // Spawn first so setup.sh is ready to read from stdin
-    const child = this.spawner(this.dockerPathOverride ?? getDockerPath(), args);
+    const child = await this.spawner(this.dockerPathOverride ?? getDockerPath(), args);
 
     const pipes = childPipes(child);
     let stdout = "";
@@ -170,7 +170,7 @@ export class ContainerBootstrap {
     pipes.stderr.on("data", (c: Buffer) => (stderr += c.toString()));
 
     const exitCodePromise = new Promise<number>((resolve) => {
-      child.on("close", resolve);
+      child.on("close", (code) => resolve(code ?? 0));
     });
 
     // Use pre-downloaded buffer if provided, otherwise download here.

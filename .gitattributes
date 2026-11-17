@@ -1,2 +1,5 @@
-*.sh text
-tools/*.js text
+# Shipped executable text must stay LF regardless of core.autocrlf: these run
+# with /bin/sh on a Linux apex/container, and a CRLF shebang breaks them.
+*.sh text eol=lf
+tools/*.js text eol=lf
+*.patch text eol=lf

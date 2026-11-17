@@ -136,15 +136,6 @@ describe("Devin fork (via VSCodiumAdapter)", () => {
     });
   });
 
-  describe("getApexExtensionsDir", () => {
-    it("uses hostDataFolderName (.devin)", () => {
-      const p = new VSCodiumAdapter().getApexExtensionsDir();
-      expect(p).toContain(".devin");
-      expect(p).not.toContain(".devin-server");
-      expect(p).toContain("extensions");
-    });
-  });
-
   describe("getChecksumConfig", () => {
     it("returns manifest sha256 with windsurf manifest URL", () => {
       expect(new VSCodiumAdapter().getChecksumConfig()).toEqual({

@@ -93,17 +93,6 @@ vi.mock("../../src/utils/dockerUtils", () => ({
   execFilePromise: vi.fn(),
 }));
 
-// Stub fs/promises so readFile/writeFile/stat/readdir don't touch disk.
-// Using vi.mock (not vi.spyOn) because ESM namespace exports are
-// non-configurable and can't be spied on directly.
-const fsMocks = {
-  readFile: vi.fn(),
-  writeFile: vi.fn(),
-  stat: vi.fn(),
-  readdir: vi.fn(),
-};
-vi.mock("node:fs/promises", () => fsMocks);
-
 import { Host } from "../../src/host/host";
 import { isInDevContainer } from "../../src/host/state";
 import { execFilePromise } from "../../src/utils/dockerUtils";
@@ -125,15 +114,7 @@ describe("Host", () => {
       const host = Host.create({ dockerPath: "docker" });
       expect(host.kind).toBe("local");
       expect(host.isManaged).toBe(false);
-      expect(host.platform).toBe(process.platform);
       expect(host.workspace).toBeUndefined();
-    });
-
-    it("uses posix path on non-win32 platforms", () => {
-      if (process.platform !== "win32") {
-        const host = Host.create({ dockerPath: "docker" });
-        expect(host.path.sep).toBe("/");
-      }
     });
 
     it("sets workspace from the first workspace folder fsPath", () => {
@@ -164,7 +145,6 @@ describe("Host", () => {
       const host = Host.create({ dockerPath: "docker" });
       expect(host.kind).toBe("managed");
       expect(host.isManaged).toBe(true);
-      expect(host.platform).toBe("linux");
       expect(host.workspace).toBe(id);
     });
 
@@ -175,14 +155,6 @@ describe("Host", () => {
       const host = Host.create({ dockerPath: "docker" });
       expect(host.kind).toBe("managed");
       expect(host.workspace).toBeUndefined();
-    });
-  });
-
-  describe("homedir", () => {
-    it("returns the OS homedir", async () => {
-      const host = Host.create({ dockerPath: "docker" });
-      const os = await import("node:os");
-      expect(await host.homedir()).toBe(os.homedir());
     });
   });
 
@@ -249,78 +221,4 @@ describe("Host", () => {
     });
   });
 
-  describe("readFile", () => {
-    it("delegates to fs/promises readFile", async () => {
-      fsMocks.readFile.mockResolvedValue("content");
-      const host = Host.create({ dockerPath: "docker" });
-
-      const result = await host.readFile("/some/file");
-      expect(fsMocks.readFile).toHaveBeenCalledWith("/some/file", "utf-8");
-      expect(result).toBe("content");
-    });
-
-    it("passes base64 encoding through", async () => {
-      fsMocks.readFile.mockResolvedValue("b64");
-      const host = Host.create({ dockerPath: "docker" });
-
-      await host.readFile("/some/file", "base64");
-      expect(fsMocks.readFile).toHaveBeenCalledWith("/some/file", "base64");
-    });
-  });
-
-  describe("writeFile", () => {
-    it("delegates to fs/promises writeFile with utf-8", async () => {
-      fsMocks.writeFile.mockResolvedValue(undefined);
-      const host = Host.create({ dockerPath: "docker" });
-
-      await host.writeFile("/some/file", "hello");
-      expect(fsMocks.writeFile).toHaveBeenCalledWith(
-        "/some/file",
-        "hello",
-        "utf-8",
-      );
-    });
-  });
-
-  describe("stat", () => {
-    it("maps fs stat to the simplified shape", async () => {
-      const fakeStats = {
-        size: 42,
-        mode: 0o755,
-        mtimeMs: 1234567890,
-        isDirectory: () => true,
-        isFile: () => false,
-      };
-      fsMocks.stat.mockResolvedValue(fakeStats);
-      const host = Host.create({ dockerPath: "docker" });
-
-      const result = await host.stat("/some/dir");
-      expect(fsMocks.stat).toHaveBeenCalledWith("/some/dir");
-      expect(result).toEqual({
-        size: 42,
-        mode: 0o755,
-        mtime: 1234567890,
-        isDirectory: true,
-        isFile: false,
-      });
-    });
-  });
-
-  describe("readdir", () => {
-    it("returns entry names from fs.readdir", async () => {
-      const entries = [
-        { name: "a.txt" },
-        { name: "b.txt" },
-        { name: "subdir" },
-      ];
-      fsMocks.readdir.mockResolvedValue(entries);
-      const host = Host.create({ dockerPath: "docker" });
-
-      const result = await host.readdir("/some/dir");
-      expect(fsMocks.readdir).toHaveBeenCalledWith("/some/dir", {
-        withFileTypes: true,
-      });
-      expect(result).toEqual(["a.txt", "b.txt", "subdir"]);
-    });
-  });
 });

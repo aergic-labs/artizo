@@ -11,4 +11,8 @@ nul
 package.json.bak
 plans/
 vendor/devcontainers-cli/package-lock.json
+
+# Built Go agent binaries (run: make agent)
+tools/artifact-agent/
+/go/artifact-agent/artifact-agent*
 test-project/.devcontainer/devcontainer-lock.json

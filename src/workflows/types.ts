@@ -17,6 +17,18 @@ import type { ExtensionInstaller } from "../extensions/extensionInstaller";
 import type { FolderHistoryManager } from "../remote/folderHistory";
 
 /**
+ * Result of a launch sequence that produced a ready container.
+ */
+export interface LaunchOutcome {
+  containerId: string;
+  remoteUser: string;
+  remoteWorkspaceFolder: string;
+  containerPort: number;
+  installPath: string;
+  connectionToken: string | undefined;
+}
+
+/**
  * Result of a container build/provision step.
  */
 export interface BuildResult {

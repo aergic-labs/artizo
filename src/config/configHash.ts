@@ -24,8 +24,9 @@
 
 import { createHash } from "node:crypto";
 import * as path from "node:path";
-import * as fs from "node:fs/promises";
 import * as yaml from "js-yaml";
+import { type ReadFileFn, readConfigFileBuffer } from "./configFileIO";
+import { getActiveExecServer } from "../remote/execServerCache";
 import {
   resolveDockerfilePath,
   resolveComposeFilePaths,
@@ -90,9 +91,13 @@ function hashContent(content: string | Buffer): string {
 }
 
 /** Relative path from configDir, posix-style for cross-platform stability. */
-function relKey(absPath: string, configDir: string): string {
-  const rel = path.relative(configDir, absPath);
-  return rel.split(path.sep).join("/");
+function relKey(
+  absPath: string,
+  configDir: string,
+  pathModule: typeof path.posix,
+): string {
+  const rel = pathModule.relative(configDir, absPath);
+  return rel.split(pathModule.sep).join("/");
 }
 
 /**
@@ -126,21 +131,27 @@ export async function computeConfigHashes(
   config: Record<string, unknown>,
   configDir: string,
   configFilePath: string,
+  readFile: ReadFileFn = readConfigFileBuffer,
 ): Promise<ConfigHashes> {
   const hashes: ConfigHashes = {};
+  // Remote targets are POSIX; node:path.resolve on a Windows apex would
+  // produce C:\... and miss the file.
+  const pathModule: typeof path.posix = getActiveExecServer()
+    ? path.posix
+    : path;
 
   // devcontainer.json itself, normalized.
-  hashes[relKey(configFilePath, configDir)] = hashContent(
+  hashes[relKey(configFilePath, configDir, pathModule)] = hashContent(
     normalizeDevContainerJson(config),
   );
 
-  const composePaths = resolveComposeFilePaths(config, configDir);
+  const composePaths = resolveComposeFilePaths(config, configDir, pathModule);
   if (composePaths.length > 0) {
     // Hash every compose file.
     for (const composePath of composePaths) {
       try {
-        const content = await fs.readFile(composePath);
-        hashes[relKey(composePath, configDir)] = hashContent(content);
+        const content = await readFile(composePath);
+        hashes[relKey(composePath, configDir, pathModule)] = hashContent(content);
       } catch {
         // Missing compose file: skip. The build would have failed too.
       }
@@ -150,11 +161,14 @@ export async function computeConfigHashes(
     const serviceDockerfile = await resolveComposeServiceDockerfile(
       config,
       composePaths,
+      readFile,
+      pathModule,
     );
     if (serviceDockerfile) {
       try {
-        const content = await fs.readFile(serviceDockerfile);
-        hashes[relKey(serviceDockerfile, configDir)] = hashContent(content);
+        const content = await readFile(serviceDockerfile);
+        hashes[relKey(serviceDockerfile, configDir, pathModule)] =
+          hashContent(content);
       } catch {
         // Missing Dockerfile: skip.
       }
@@ -163,11 +177,11 @@ export async function computeConfigHashes(
   }
 
   // Non-compose: hash the referenced Dockerfile (if any).
-  const referencedPath = resolveDockerfilePath(config, configDir);
+  const referencedPath = resolveDockerfilePath(config, configDir, pathModule);
   if (referencedPath) {
     try {
-      const content = await fs.readFile(referencedPath);
-      hashes[relKey(referencedPath, configDir)] = hashContent(content);
+      const content = await readFile(referencedPath);
+      hashes[relKey(referencedPath, configDir, pathModule)] = hashContent(content);
     } catch {
       // Missing referenced file: skip. The build would have failed too.
     }
@@ -190,6 +204,8 @@ export async function computeConfigHashes(
 async function resolveComposeServiceDockerfile(
   config: Record<string, unknown>,
   composePaths: string[],
+  readFile: ReadFileFn,
+  pathModule: typeof path.posix,
 ): Promise<string | undefined> {
   const serviceName =
     typeof config.service === "string" ? config.service : undefined;
@@ -200,7 +216,7 @@ async function resolveComposeServiceDockerfile(
   for (const composePath of composePaths) {
     let composeConfig: unknown;
     try {
-      const content = await fs.readFile(composePath, "utf-8");
+      const content = (await readFile(composePath)).toString("utf-8");
       composeConfig = yaml.load(content);
     } catch {
       continue; // unreadable or invalid YAML: try the next file
@@ -224,14 +240,14 @@ async function resolveComposeServiceDockerfile(
     const composeBuild = service.build;
     let dockerfileRel: string;
     let contextDir: string;
-    const composeDir = path.dirname(composePath);
+    const composeDir = pathModule.dirname(composePath);
     if (typeof composeBuild === "string") {
       dockerfileRel = "Dockerfile";
       // build: <string> means the string is the context, relative to the
       // compose file's dir (matching docker compose's resolution).
-      contextDir = path.isAbsolute(composeBuild)
+      contextDir = pathModule.isAbsolute(composeBuild)
         ? composeBuild
-        : path.resolve(composeDir, composeBuild);
+        : pathModule.resolve(composeDir, composeBuild);
     } else {
       dockerfileRel =
         (typeof composeBuild.dockerfile === "string" && composeBuild.dockerfile) ||
@@ -242,16 +258,16 @@ async function resolveComposeServiceDockerfile(
       // No context: default to the first compose file's dir, matching
       // getBuildInfoForService's `cliHostPath.dirname(localComposeFiles[0])`.
       contextDir = contextRaw
-        ? path.isAbsolute(contextRaw)
+        ? pathModule.isAbsolute(contextRaw)
           ? contextRaw
-          : path.resolve(composeDir, contextRaw)
-        : path.dirname(composePaths[0]);
+          : pathModule.resolve(composeDir, contextRaw)
+        : pathModule.dirname(composePaths[0]);
     }
 
     // Resolve relative to context dir, matching the vendored CLI.
-    return path.isAbsolute(dockerfileRel)
+    return pathModule.isAbsolute(dockerfileRel)
       ? dockerfileRel
-      : path.resolve(contextDir, dockerfileRel);
+      : pathModule.resolve(contextDir, dockerfileRel);
   }
 
   return undefined;

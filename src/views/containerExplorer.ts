@@ -22,6 +22,7 @@ import { buildRemoteAuthority, decodeAuthority } from "../utils/uriUtils";
 import {
   SCHEME_ATTACHED_CONTAINER,
 } from "../remote/authorityResolver";
+import { getTier, ExecutionTier } from "../host/state";
 import {
   FolderDescriptor,
   type FolderHistoryManager,
@@ -318,6 +319,24 @@ async function connectToTarget(
   provider: ContainerExplorerProvider,
 ): Promise<void> {
   if (target.type === "running-container" && target.containerId) {
+    const tier = getTier();
+    const isRemoteSsh =
+      tier.tier === ExecutionTier.RemoteSSH && tier.owner === "ui";
+
+    if (isRemoteSsh) {
+      // A bare `attached-container+<id>` would resolve in this window and leave
+      // its port forward here, so the container window dies with the SSH
+      // window. The attach workflow starts the relay on the SSH host and
+      // chains the authority instead.
+      await vscode.commands.executeCommand(
+        "artizo.attachToRunningContainer",
+        target.containerId,
+        newWindow,
+      );
+      provider.refresh();
+      return;
+    }
+
     const authority = buildRemoteAuthority(
       SCHEME_ATTACHED_CONTAINER,
       target.containerId,
@@ -411,7 +430,7 @@ async function showContainerLogs(target: ContainerTarget): Promise<void> {
   const docker = getDockerPath();
   const channel = vscode.window.createOutputChannel(`logs: ${target.label}`);
   channel.show(true);
-  const child = dockerSpawn(docker, ["logs", "-f", containerId], {
+  const child = await dockerSpawn(docker, ["logs", "-f", containerId], {
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout?.on("data", (d: Buffer) => channel.append(d.toString()));

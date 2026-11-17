@@ -13,15 +13,11 @@ vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
 }));
 
-// Mock sshTunnel so the proxy path tests don't spawn real ssh processes or
-// touch the network. Deterministic ports + fake child process.
-const { mockStartManagedSshTunnel, mockTunnelStop } = vi.hoisted(() => ({
-  mockStartManagedSshTunnel: vi.fn(),
-  mockTunnelStop: vi.fn(),
-}));
-vi.mock("../../src/remote/sshTunnel", () => ({
-  startManagedSshTunnel: mockStartManagedSshTunnel,
-  pickFreePort: vi.fn(),
+// Docker path resolution reads vscode config; keep it static in tests.
+vi.mock("../../src/docker/execPolicy.js", () => ({
+  getDockerPath: () => "docker",
+  configureDockerPath: vi.fn(),
+  dockerExecPolicy: vi.fn(),
 }));
 
 // Mock execServerBridge so proxy path tests don't create real servers.
@@ -31,6 +27,38 @@ const { mockStartExecServerBridge } = vi.hoisted(() => ({
 vi.mock("../../src/remote/execServerBridge", () => ({
   startExecServerBridge: mockStartExecServerBridge,
 }));
+
+// Mock relayHeal so the heal path doesn't spawn anything.
+const { mockHealRelay } = vi.hoisted(() => ({ mockHealRelay: vi.fn() }));
+vi.mock("../../src/remote/relayHeal", () => ({
+  healRelay: mockHealRelay,
+  probeRelaySocket: vi.fn(),
+}));
+
+// Mock the launch sequence so the resolver test doesn't build containers.
+const { mockReopenCore, mockRebuildCore, mockStartRelayForContainer } =
+  vi.hoisted(() => ({
+    mockReopenCore: vi.fn(),
+    mockRebuildCore: vi.fn(),
+    mockStartRelayForContainer: vi.fn(),
+  }));
+vi.mock("../../src/workflows/reopenInContainer", () => ({
+  reopenInContainerCore: mockReopenCore,
+  isRemoteSshTier: vi.fn(),
+}));
+vi.mock("../../src/workflows/rebuildContainer", () => ({
+  rebuildContainerCore: mockRebuildCore,
+}));
+vi.mock("../../src/remote/state4Authority", () => ({
+  startRelayForContainer: mockStartRelayForContainer,
+}));
+vi.mock("../../src/remote/productInfo", () => ({
+  getProductInfo: vi.fn().mockResolvedValue({
+    serverDataFolderName: ".kiro-server",
+    commit: "abc",
+  }),
+}));
+
 import { execFile } from "node:child_process";
 import * as vscode from "vscode";
 import {
@@ -39,7 +67,8 @@ import {
   SCHEME_DEV_CONTAINER,
   SCHEME_ATTACHED_CONTAINER,
 } from "../../src/remote/authorityResolver";
-import { encodeAuthority } from "../../src/utils/uriUtils";
+import { decodeAuthority, encodeAuthority } from "../../src/utils/uriUtils";
+import type { ExecServer } from "../../src/remote/execServerBridge";
 
 const mockExecFile = vi.mocked(execFile);
 
@@ -286,15 +315,117 @@ describe("RemoteAuthorityResolver", () => {
       const result = await resolver.findContainerByLabel("/some/path");
       expect(result).toBe("first123");
     });
+
+    it("looks up clone-in-volume containers by volume name", async () => {
+      const filters: string[] = [];
+      mockExecFile.mockImplementation(
+        (_cmd: any, args: any, ...rest: any[]) => {
+          const callback = typeof rest[0] === "function" ? rest[0] : rest[1];
+          const argv = args as string[];
+          const filterIndex = argv.indexOf("--filter");
+          if (filterIndex !== -1) filters.push(argv[filterIndex + 1]);
+          const isVolume = argv[filterIndex + 1]?.includes("volume_name=");
+          callback(null, isVolume ? "volumeContainer1\n" : "", "");
+          return {} as any;
+        },
+      );
+
+      const result = await resolver.findContainerByLabel("artizo-repo-abc123");
+
+      expect(filters).toContain(
+        "label=artizo.volume_name=artizo-repo-abc123",
+      );
+      expect(filters).toContain(
+        "label=devcontainer.volume_name=artizo-repo-abc123",
+      );
+      // Folder labels are still queried; the volume match wins here.
+      expect(result).toBe("volumeContainer1");
+    });
   });
 
   describe("getCanonicalURI", () => {
-    it("returns the URI unchanged", () => {
-      const uri = {
-        scheme: "vscode-remote",
-        authority: "dev-container+abc123",
-      } as any;
+    it("passes through non-State-4 authorities unchanged", () => {
+      const uri = vscode.Uri.parse("vscode-remote://dev-container+abc123/work");
       expect(resolver.getCanonicalURI(uri)).toBe(uri);
+    });
+
+    it("returns a stable canonical authority for State 4 (dev-container)", () => {
+      const inputPayload = {
+        proxy: true,
+        sshHost: "34.136.190.14",
+        sshUser: "dev",
+        sshPort: 22,
+        relayPort: 9888,
+        connectionToken: "token-abc",
+        workspacePath: "/workspaces",
+        hostWorkspacePath: "/home/dev/workspace",
+        containerId: "cid-volatile",
+        containerPort: 4242,
+        installPath: "/install-volatile",
+        sshAuthority: "ssh-remote+test",
+      };
+      const authority = encodeAuthority(
+        SCHEME_DEV_CONTAINER,
+        JSON.stringify(inputPayload),
+      );
+      const uri = vscode.Uri.parse(`vscode-remote://${authority}/workspaces`);
+
+      const stablePayload = {
+        sshHost: "34.136.190.14",
+        sshUser: "dev",
+        sshPort: 22,
+        hostWorkspacePath: "/home/dev/workspace",
+        workspacePath: "/workspaces",
+      };
+      const expected = encodeAuthority(
+        SCHEME_DEV_CONTAINER,
+        JSON.stringify(stablePayload),
+      );
+
+      const canonical = resolver.getCanonicalURI(uri);
+      expect(canonical.authority).toBe(expected);
+      const parsed = JSON.parse(decodeAuthority(canonical.authority).id);
+      expect(Object.keys(parsed).sort()).toEqual(
+        Object.keys(stablePayload).sort(),
+      );
+    });
+
+    it("returns a stable canonical authority for State 4 (attached-container)", () => {
+      const inputPayload = {
+        proxy: true,
+        sshHost: "1.2.3.4",
+        sshUser: "u",
+        sshPort: 2222,
+        relayPort: 1,
+        connectionToken: "t",
+        workspacePath: "/w",
+        hostWorkspacePath: "/host/w",
+        containerId: "cid2",
+      };
+      const authority = encodeAuthority(
+        SCHEME_ATTACHED_CONTAINER,
+        JSON.stringify(inputPayload),
+      );
+      const uri = vscode.Uri.parse(`vscode-remote://${authority}/w`);
+
+      const stablePayload = {
+        sshHost: "1.2.3.4",
+        sshUser: "u",
+        sshPort: 2222,
+        hostWorkspacePath: "/host/w",
+        workspacePath: "/w",
+      };
+      const expected = encodeAuthority(
+        SCHEME_ATTACHED_CONTAINER,
+        JSON.stringify(stablePayload),
+      );
+
+      const canonical = resolver.getCanonicalURI(uri);
+      expect(canonical.authority).toBe(expected);
+      const parsed = JSON.parse(decodeAuthority(canonical.authority).id);
+      expect(Object.keys(parsed).sort()).toEqual(
+        Object.keys(stablePayload).sort(),
+      );
     });
   });
 
@@ -644,24 +775,22 @@ describe("registerAuthorityResolver", () => {
   });
 });
 
-describe("RemoteAuthorityResolver - State 4 proxy path", () => {
+describe("RemoteAuthorityResolver - devcontainer-over-SSH proxy path", () => {
   let resolver: RemoteAuthorityResolver;
 
   beforeEach(() => {
     vi.clearAllMocks();
     resolver = new RemoteAuthorityResolver();
-    mockStartManagedSshTunnel.mockResolvedValue({
-      localPort: 54321,
-      isAlive: () => true,
-      stop: mockTunnelStop,
-    });
     // Reset the global vscode mock's getRemoteExecServer to return undefined.
-    (vscode.workspace as any).getRemoteExecServer = vi.fn().mockResolvedValue(undefined);
+    (vscode.workspace as any).getRemoteExecServer = vi
+      .fn()
+      .mockResolvedValue(undefined);
     mockStartExecServerBridge.mockResolvedValue({
       localPort: 54321,
       isAlive: () => true,
       stop: vi.fn(),
     });
+    mockHealRelay.mockResolvedValue({ kind: "ok" });
   });
 
   /** Encode a JSON payload as a bare `artizo-container+<hex>` authority. */
@@ -669,15 +798,91 @@ describe("RemoteAuthorityResolver - State 4 proxy path", () => {
     return encodeAuthority(SCHEME_DEV_CONTAINER, JSON.stringify(payload));
   }
 
-  it("resolves a proxy payload by starting an ssh -L tunnel", async () => {
+  const TOKEN = "test-token";
+  function relayMeta(port: number): string {
+    return JSON.stringify({
+      port,
+      containerId: "abc123",
+      nodePath: "/tmp/.trae-server/node",
+    });
+  }
+
+  interface ProxyExecServer extends ExecServer {
+    state: { meta?: string; live: boolean };
+  }
+
+  function makeProxyExecServer(initial: {
+    meta?: string;
+    live?: boolean;
+  }): ProxyExecServer {
+    const state = { meta: initial.meta, live: initial.live ?? false };
+    const server = {
+      state,
+      tcpConnect: vi.fn(async () => {
+        if (state.live) {
+          return {
+            stream: {
+              write: vi.fn(),
+              end: vi.fn(),
+              onDidReceiveMessage: vi.fn(),
+            },
+            done: Promise.resolve(),
+          };
+        }
+        throw new Error("ECONNREFUSED");
+      }),
+      spawn: vi.fn(async () => ({
+        stdin: { write: vi.fn(), end: vi.fn() },
+        stdout: {
+          onDidReceiveMessage: (cb: (d: Uint8Array) => void) => {
+            cb(new Uint8Array(Buffer.from(`${TOKEN}\n`)));
+          },
+          onEnd: Promise.resolve(),
+        },
+        stderr: { onDidReceiveMessage: vi.fn(), onEnd: Promise.resolve() },
+        onExit: Promise.resolve({ status: 0 }),
+      })),
+      fs: {
+        mkdirp: vi.fn(async () => {}),
+        write: vi.fn(async () => ({
+          stream: { write: vi.fn(), end: vi.fn() },
+          done: Promise.resolve(),
+        })),
+        read: vi.fn(async () => {
+          if (state.meta === undefined) throw new Error("ENOENT");
+          return {
+            onDidReceiveMessage: (cb: (d: Uint8Array) => void) => {
+              cb(new Uint8Array(Buffer.from(state.meta!)));
+            },
+            onEnd: Promise.resolve(),
+          };
+        }),
+        stat: vi.fn(async () => ({
+          type: 1,
+          size: 0,
+          mtime: 0,
+          ctime: 0,
+        })),
+        rm: vi.fn(async () => {}),
+      },
+    } as unknown as ProxyExecServer;
+    return server;
+  }
+
+  it("bridges to the relay port from the meta file", async () => {
+    const execServer = makeProxyExecServer({
+      meta: relayMeta(4444),
+      live: true,
+    });
+    (vscode.workspace as any).getRemoteExecServer = vi
+      .fn()
+      .mockResolvedValue(execServer);
     const authority = proxyAuthority({
       proxy: true,
       sshHost: "34.136.190.14",
       sshUser: "dev",
-      relayPort: 9888,
-      connectionToken: "token-abc",
+      hostWorkspacePath: "/home/dev/proj",
       workspacePath: "/workspaces",
-      sshAuthority: "ssh-remote+test",
     });
 
     const result = await resolver.resolve(authority);
@@ -686,29 +891,31 @@ describe("RemoteAuthorityResolver - State 4 proxy path", () => {
     if (result.type !== "success") return;
     expect(result.authority.host).toBe("127.0.0.1");
     expect(result.authority.port).toBe(54321);
-    expect(result.authority.connectionToken).toBe("token-abc");
-
-    // Tunnel was started with the relay port and SSH target from the payload.
-    expect(mockStartManagedSshTunnel).toHaveBeenCalledWith({
-      sshHost: "34.136.190.14",
-      sshUser: "dev",
-      sshPort: 22,
-      remotePort: 9888,
-      askpass: undefined,
-    });
+    // The relay is a dumb pipe, so the apex passes the container token.
+    expect(result.authority.connectionToken).toBe(TOKEN);
+    expect(mockStartExecServerBridge).toHaveBeenCalledWith(
+      execServer,
+      "127.0.0.1",
+      4444,
+    );
   });
 
   it("works with attached-container scheme too", async () => {
+    const execServer = makeProxyExecServer({
+      meta: relayMeta(4444),
+      live: true,
+    });
+    (vscode.workspace as any).getRemoteExecServer = vi
+      .fn()
+      .mockResolvedValue(execServer);
     const authority = encodeAuthority(
       SCHEME_ATTACHED_CONTAINER,
       JSON.stringify({
         proxy: true,
         sshHost: "1.2.3.4",
         sshUser: "u",
-        relayPort: 1,
-        connectionToken: "t",
+        hostWorkspacePath: "/h",
         workspacePath: "/w",
-        sshAuthority: "ssh-remote+test2",
       }),
     );
 
@@ -716,59 +923,100 @@ describe("RemoteAuthorityResolver - State 4 proxy path", () => {
     expect(result.type).toBe("success");
   });
 
-  it("returns error when the ssh tunnel fails to start", async () => {
-    mockStartManagedSshTunnel.mockRejectedValue(
-      new Error("connection refused"),
-    );
+  it("returns error when no ExecServer is available", async () => {
     const authority = proxyAuthority({
       proxy: true,
       sshHost: "h",
       sshUser: "u",
-      relayPort: 9,
-      connectionToken: "t",
+      hostWorkspacePath: "/h",
       workspacePath: "/w",
-      sshAuthority: "ssh-remote+errortest",
     });
 
     const result = await resolver.resolve(authority);
     expect(result.type).toBe("error");
     if (result.type === "error") {
-      expect(result.message).toContain("Artizo SSH tunnel failed");
+      expect(result.message).toContain("ExecServer");
+    }
+  });
+
+  it("returns error when the bridge fails to start", async () => {
+    mockStartExecServerBridge.mockRejectedValue(
+      new Error("connection refused"),
+    );
+    const execServer = makeProxyExecServer({
+      meta: relayMeta(4444),
+      live: true,
+    });
+    (vscode.workspace as any).getRemoteExecServer = vi
+      .fn()
+      .mockResolvedValue(execServer);
+    const authority = proxyAuthority({
+      proxy: true,
+      sshHost: "h",
+      sshUser: "u",
+      hostWorkspacePath: "/h",
+      workspacePath: "/w",
+    });
+
+    const result = await resolver.resolve(authority);
+    expect(result.type).toBe("error");
+    if (result.type === "error") {
+      expect(result.message).toContain("execServer bridge failed");
       expect(result.message).toContain("connection refused");
     }
   });
 
-  it("uses ExecServer bridge when getRemoteExecServer returns an execServer", async () => {
-    const mockExecServer = { tcpConnect: vi.fn() };
-    (vscode.workspace as any).getRemoteExecServer = vi.fn().mockResolvedValue(mockExecServer);
-    mockStartExecServerBridge.mockResolvedValueOnce({
-      localPort: 99999,
-      isAlive: () => true,
-      stop: vi.fn(),
+  it("heals the relay when nothing is listening", async () => {
+    const execServer = makeProxyExecServer({
+      meta: relayMeta(4444),
+      live: false,
+    });
+    (vscode.workspace as any).getRemoteExecServer = vi
+      .fn()
+      .mockResolvedValue(execServer);
+    mockHealRelay.mockImplementation(async () => {
+      execServer.state.meta = relayMeta(5555);
+      execServer.state.live = true;
+      return { kind: "ok" };
     });
     const authority = proxyAuthority({
       proxy: true,
       sshHost: "h",
       sshUser: "u",
-      relayPort: 42,
-      connectionToken: "tok",
+      hostWorkspacePath: "/h",
       workspacePath: "/w",
-      sshAuthority: "ssh-remote+exec-test",
     });
 
     const result = await resolver.resolve(authority);
 
     expect(result.type).toBe("success");
-    if (result.type !== "success") return;
-    expect(result.authority.port).toBe(99999);
-    expect((vscode.workspace as any).getRemoteExecServer).toHaveBeenCalledWith("ssh-remote+exec-test");
+    expect(mockHealRelay).toHaveBeenCalled();
     expect(mockStartExecServerBridge).toHaveBeenCalledWith(
-      mockExecServer,
+      execServer,
       "127.0.0.1",
-      42,
+      5555,
     );
-    // ssh tunnel should NOT have been used.
-    expect(mockStartManagedSshTunnel).not.toHaveBeenCalled();
+  });
+
+  it("returns error when the relay cannot be healed", async () => {
+    const execServer = makeProxyExecServer({ live: false });
+    (vscode.workspace as any).getRemoteExecServer = vi
+      .fn()
+      .mockResolvedValue(execServer);
+    mockHealRelay.mockResolvedValue({ kind: "no-heal-info" });
+    const authority = proxyAuthority({
+      proxy: true,
+      sshHost: "h",
+      sshUser: "u",
+      hostWorkspacePath: "/h",
+      workspacePath: "/w",
+    });
+
+    const result = await resolver.resolve(authority);
+    expect(result.type).toBe("error");
+    if (result.type === "error") {
+      expect(result.message).toContain("relay is not running");
+    }
   });
 
   it("falls through to Docker lookup when proxy field is absent", async () => {
@@ -790,7 +1038,7 @@ describe("RemoteAuthorityResolver - State 4 proxy path", () => {
 
     const result = await resolver.resolve(authority);
     expect(result.type).toBe("error");
-    expect(mockStartManagedSshTunnel).not.toHaveBeenCalled();
+    expect(mockStartExecServerBridge).not.toHaveBeenCalled();
   });
 
   it("falls through when payload is not JSON", async () => {
@@ -804,20 +1052,32 @@ describe("RemoteAuthorityResolver - State 4 proxy path", () => {
 
     const result = await resolver.resolve(authority);
     expect(result.type).toBe("error");
-    expect(mockStartManagedSshTunnel).not.toHaveBeenCalled();
+    expect(mockStartExecServerBridge).not.toHaveBeenCalled();
   });
 
-  it("dispose() tears down all spawned tunnels", async () => {
+  it("dispose() tears down all spawned bridges", async () => {
+    const stop = vi.fn();
+    mockStartExecServerBridge.mockResolvedValue({
+      localPort: 54321,
+      isAlive: () => true,
+      stop,
+    });
+    const execServer = makeProxyExecServer({
+      meta: relayMeta(4444),
+      live: true,
+    });
+    (vscode.workspace as any).getRemoteExecServer = vi
+      .fn()
+      .mockResolvedValue(execServer);
     const authority = proxyAuthority({
       proxy: true,
       sshHost: "h",
       sshUser: "u",
-      relayPort: 9,
-      connectionToken: "t",
+      hostWorkspacePath: "/h",
       workspacePath: "/w",
     });
     await resolver.resolve(authority);
     resolver.dispose();
-    expect(mockTunnelStop).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 });

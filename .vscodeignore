@@ -12,6 +12,7 @@ test-project/**
 docs/**
 tools/**
 !tools/busybox/**
+!tools/artifact-agent/**
 !tools/relay.js
 !tools/setup.sh
 !tools/vscodium/versions.json
@@ -35,9 +36,10 @@ node_modules/**
 
 # Build-only (not for distribution)
 vendor/**
+go/**
 plans/**
+patches/**
 scripts/**
-!scripts/askpass/**
 !scripts/updateUID.Dockerfile
 Makefile
 package.json.bak

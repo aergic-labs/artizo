@@ -11,6 +11,7 @@
  */
 
 import * as vscode from "vscode";
+import { hostPathOf } from "../utils/uriUtils";
 import { ConfigManager, type ConfigParseError } from "./configManager";
 import type { ValidationError, ValidationWarning } from "./schemaValidator";
 
@@ -139,7 +140,7 @@ export class ConfigWatcher implements vscode.Disposable {
     // Parse the JSONC content and collect parse errors
     const parseResult = this.configManager.parseContent(
       content,
-      document.uri.fsPath,
+      hostPathOf(document.uri),
     );
 
     // Add parse error diagnostics

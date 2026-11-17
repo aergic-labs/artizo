@@ -15,6 +15,7 @@
 
 import * as vscode from "vscode";
 import { getLogger } from "../utils/logger";
+import { hostPathOf } from "../utils/uriUtils";
 import { parse, ParseError, printParseErrorCode } from "jsonc-parser";
 import { SchemaValidator, type ValidationResult } from "./schemaValidator.js";
 
@@ -89,7 +90,7 @@ export class ConfigManager implements IConfigManager {
       try {
         await vscode.workspace.fs.stat(candidate);
         getLogger().info(
-          `ConfigManager.getConfigPath: found ${candidate.fsPath}`,
+          `ConfigManager.getConfigPath: found ${hostPathOf(candidate)}`,
         );
         return candidate;
       } catch (err: unknown) {
@@ -102,7 +103,7 @@ export class ConfigManager implements IConfigManager {
           (err as { name?: string })?.name;
         if (code !== "FileNotFound" && code !== "EntryNotFound") {
           getLogger().info(
-            `ConfigManager.getConfigPath: stat error for ${candidate.fsPath}: ${err instanceof Error ? err.message : String(err)}`,
+            `ConfigManager.getConfigPath: stat error for ${hostPathOf(candidate)}: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
         // Common case - most workspaces have no devcontainer config.
@@ -124,7 +125,7 @@ export class ConfigManager implements IConfigManager {
 
     const bytes = await vscode.workspace.fs.readFile(configUri);
     const content = new TextDecoder().decode(bytes);
-    return this.parseContent(content, configUri.fsPath);
+    return this.parseContent(content, hostPathOf(configUri));
   }
 
   /** Parse JSONC content with error recovery. */

@@ -30,6 +30,9 @@ function makeChild() {
   return c;
 }
 
+/** Let async methods attach their listeners before the test emits events. */
+const flush = () => new Promise((r) => setImmediate(r));
+
 describe("parseHome", () => {
   it("extracts HOME", () => expect(parseHome("HOME=/x\n")).toBe("/x"));
   it("defaults to /root", () => expect(parseHome("")).toBe("/root"));
@@ -65,6 +68,7 @@ describe("ContainerBootstrap methods", () => {
       c = makeChild();
     s.mockReturnValue(c);
     const p = boot(s).bootstrapBusybox("c1", "x64");
+    await flush();
     c.emit("close", 0);
     await p;
     expect(s).toHaveBeenCalledWith(
@@ -80,6 +84,7 @@ describe("ContainerBootstrap methods", () => {
       c = makeChild();
     s.mockReturnValue(c);
     const p = boot(s).deployTools("c1");
+    await flush();
     c.emit("close", 0);
     await p;
     expect(s).toHaveBeenCalledWith("docker", [
@@ -106,6 +111,7 @@ describe("ContainerBootstrap methods", () => {
       return { on: vi.fn() };
     });
     const p = boot(s, f).runSetup("c1", "https://x", "/tmp/.kiro");
+    await flush();
     c.stdout.emit("data", Buffer.from("HOME=/app\n"));
     c.emit("close", 0);
     expect((await p).home).toBe("/app");
@@ -125,6 +131,7 @@ describe("ContainerBootstrap methods", () => {
       return { on: vi.fn() };
     });
     const p = boot(s, f).runSetup("c1", "https://x", "/tmp/.trae");
+    await flush();
     c.emit("close", 0);
     expect((await p).home).toBe("/root");
   });
@@ -148,6 +155,7 @@ describe("ContainerBootstrap methods", () => {
       "/tmp/.kiro",
       [{ path: ".aws/sso/cache/k.json", content: "secret-token" }],
     );
+    await flush();
     c.emit("close", 0);
     await p;
 
@@ -179,6 +187,7 @@ describe("ContainerBootstrap methods", () => {
       return { on: vi.fn() };
     });
     const p = boot(s, f).runSetup("c1", "https://x", "/tmp/.kiro");
+    await flush();
     c.emit("close", 1);
     await expect(p).rejects.toThrow("Setup script failed");
   });
@@ -208,6 +217,7 @@ describe("ContainerBootstrap methods", () => {
     });
 
     const p = boot(s, f).runSetup("c1", "https://x", "/tmp/.kiro");
+    await flush();
     c.stdout.emit("data", Buffer.from("HOME=/app\n"));
     c.emit("close", 0);
 

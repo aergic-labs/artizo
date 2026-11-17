@@ -4,7 +4,7 @@
  */
 
 import * as vscode from "vscode";
-import { URI } from "vscode-uri";
+import { cliFileUri } from "../devcontainer/cliUri";
 import { BRAND, BRAND_PREFIX } from "../utils/constants";
 import type { BuildResult, WorkflowDependencies, WorkflowUI } from "./types";
 import {
@@ -19,6 +19,7 @@ import {
   buildIdentityLabels,
   finishBackgroundTasks,
   buildAuthorityAndOpen,
+  containerWorkspacePath,
   throwIfCancelled,
   CancelledError,
 } from "./postLaunch";
@@ -26,6 +27,8 @@ import { resolveConfigVars } from "../devcontainer/readResolvedConfig";
 import { warnWslcUnsupportedConfig } from "../devcontainer/wslcDiagnostics";
 import { assertForwardPortsValid } from "../devcontainer/forwardPortsValidation";
 import type { ReadConfigResult } from "../config/configManager";
+import { getTier, ExecutionTier } from "../host/state";
+import { normalizeFsPath, hostPathOf } from "../utils/uriUtils";
 
 export interface OpenFolderUI extends WorkflowUI {
   pickFolder(): Promise<string | undefined>;
@@ -50,18 +53,43 @@ export async function openFolderInContainer(
   let perContainerDisable: boolean;
 
   try {
-    const folder = params.folder ?? (await ui.pickFolder());
+    const tier = getTier();
+    const isRemoteSsh =
+      tier.tier === ExecutionTier.RemoteSSH && tier.owner === "ui";
+
+    // Remote SSH (UI-only): the native folder dialog browses the apex, so using
+    // it here would hand an apex path to a build that runs on the SSH host.
+    // Use the folder the command was given (the SSH window's workspace).
+    let folder: string | undefined;
+    if (params.folder) {
+      folder = params.folder;
+    } else if (isRemoteSsh) {
+      if (!params.folderUri) {
+        throw new Error(
+          "Open the folder over SSH first, then open it in a container.",
+        );
+      }
+      folder = normalizeFsPath(params.folderUri);
+    } else {
+      folder = await ui.pickFolder();
+    }
     if (!folder) {
       return;
     }
-    const folderUri = params.folderUri ?? vscode.Uri.file(folder);
+    const folderUri =
+      params.folderUri ??
+      (isRemoteSsh && tier.remoteAuthority
+        ? vscode.Uri.parse(
+            `vscode-remote://${tier.remoteAuthority}${folder.startsWith("/") ? "" : "/"}${folder}`,
+          )
+        : vscode.Uri.file(folder));
 
     // Resolve config file before the build phase (UI dependency).
     let configFile = params.configFile;
     if (!configFile) {
       const existingConfigPath = await configManager.getConfigPath(folderUri);
       if (existingConfigPath) {
-        configFile = existingConfigPath.fsPath;
+        configFile = hostPathOf(existingConfigPath);
       } else {
         const shouldCreate = await ui.promptCreateConfig();
         if (!shouldCreate) {
@@ -71,7 +99,7 @@ export async function openFolderInContainer(
         if (!newConfigPath) {
           return;
         }
-        configFile = newConfigPath.fsPath;
+        configFile = hostPathOf(newConfigPath);
       }
     }
 
@@ -130,7 +158,7 @@ export async function openFolderInContainer(
         const options = withDefaults({
           ...dotfilesFromConfig(vscode.workspace.getConfiguration()),
           workspaceFolder: folder,
-          configFile: configFile ? URI.file(configFile) : undefined,
+          configFile: configFile ? cliFileUri(configFile) : undefined,
           additionalLabels: idLabels,
           log: (text: string) => ui.showBuildLog(text),
         });
@@ -170,6 +198,15 @@ export async function openFolderInContainer(
       `${BRAND_PREFIX} Container ready. Opening workspace in a new window.`,
     );
 
+    // The container-side workspace folder, not the host path. `folder` is a
+    // path on whichever machine owns Docker; the window URI must use the
+    // container's path.
+    const remotePath =
+      buildResult.remoteWorkspaceFolder || containerWorkspacePath(
+        configResult.config as Record<string, unknown> | undefined,
+        folder,
+      );
+
     await buildAuthorityAndOpen({
       deps,
       ui,
@@ -180,10 +217,8 @@ export async function openFolderInContainer(
       installPath: connectInfo.installPath,
       connectionToken: connectInfo.connectionToken,
       workspaceFolder: folder,
-      workspacePath: folder,
-      uriPath: folder.startsWith("/")
-        ? folder
-        : "/" + folder.replace(/\\/g, "/"),
+      workspacePath: remotePath,
+      uriPath: remotePath.startsWith("/") ? remotePath : "/" + remotePath,
       windowOptions: params.forceNewWindow
         ? { forceNewWindow: true }
         : { forceReuseWindow: true },

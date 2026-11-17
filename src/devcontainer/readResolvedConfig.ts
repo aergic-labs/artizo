@@ -19,7 +19,8 @@
  * already exists.
  */
 
-import { URI } from "vscode-uri";
+import { cliFileUri } from "./cliUri";
+import { withRemoteCliHost } from "../remote/cliHostInjection";
 
 /**
  * Result of reading a devcontainer.json with variables substituted.
@@ -102,28 +103,31 @@ export async function readResolvedConfig(
   workspaceFolder: string,
   configPath: string,
 ): Promise<ResolvedDevContainerConfig> {
-  const v = vendorConfigReader();
-  const cliHost = await v.getCLIHost(
-    workspaceFolder,
-    v.loadNativeModule,
-    false,
-  );
-  const workspace = v.workspaceFromPath(cliHost.path, workspaceFolder);
-  const configs = await v.readDevContainerConfigFile(
-    cliHost,
-    workspace,
-    URI.file(configPath),
-    /* mountWorkspaceGitRoot */ false,
-    /* mountGitWorktreeCommonDir */ false,
-    v.nullLog,
-  );
-  if (!configs) {
-    throw new Error(`Dev container config not found: ${configPath}`);
-  }
-  return {
-    config: configs.config.config as Record<string, unknown>,
-    workspaceFolder: configs.workspaceConfig.workspaceFolder as string,
-  };
+  // Remote tier: resolve against the SSH host via the injected CLIHost.
+  return withRemoteCliHost(workspaceFolder, async () => {
+    const v = vendorConfigReader();
+    const cliHost = await v.getCLIHost(
+      workspaceFolder,
+      v.loadNativeModule,
+      false,
+    );
+    const workspace = v.workspaceFromPath(cliHost.path, workspaceFolder);
+    const configs = await v.readDevContainerConfigFile(
+      cliHost,
+      workspace,
+      cliFileUri(configPath),
+      /* mountWorkspaceGitRoot */ false,
+      /* mountGitWorktreeCommonDir */ false,
+      v.nullLog,
+    );
+    if (!configs) {
+      throw new Error(`Dev container config not found: ${configPath}`);
+    }
+    return {
+      config: configs.config.config as Record<string, unknown>,
+      workspaceFolder: configs.workspaceConfig.workspaceFolder as string,
+    };
+  });
 }
 
 /**

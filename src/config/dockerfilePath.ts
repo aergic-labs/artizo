@@ -5,6 +5,9 @@
 
 import * as path from "node:path";
 
+/** posix for remote targets, native for local. */
+type PathModule = typeof path.posix;
+
 /**
  * Resolve all docker-compose file paths referenced by a devcontainer.json,
  * relative to the config file's directory. Returns absolute paths.
@@ -18,15 +21,16 @@ import * as path from "node:path";
 export function resolveComposeFilePaths(
   config: Record<string, unknown>,
   configDir: string,
+  pathModule: PathModule = path,
 ): string[] {
   const compose = config.dockerComposeFile;
   if (typeof compose === "string") {
-    return [path.resolve(configDir, compose)];
+    return [pathModule.resolve(configDir, compose)];
   }
   if (Array.isArray(compose)) {
     return compose
       .filter((f): f is string => typeof f === "string")
-      .map((f) => path.resolve(configDir, f));
+      .map((f) => pathModule.resolve(configDir, f));
   }
   return [];
 }
@@ -45,6 +49,7 @@ export function resolveComposeFilePaths(
 export function resolveDockerfilePath(
   config: Record<string, unknown>,
   configDir: string,
+  pathModule: PathModule = path,
 ): string | undefined {
   const build = config.build as Record<string, unknown> | undefined;
   const dockerfile =
@@ -53,9 +58,9 @@ export function resolveDockerfilePath(
     (typeof config.dockerFile === "string" && config.dockerFile) ||
     undefined;
   if (dockerfile) {
-    return path.resolve(configDir, dockerfile);
+    return pathModule.resolve(configDir, dockerfile);
   }
 
-  const composePaths = resolveComposeFilePaths(config, configDir);
+  const composePaths = resolveComposeFilePaths(config, configDir, pathModule);
   return composePaths.length > 0 ? composePaths[0] : undefined;
 }

@@ -174,12 +174,12 @@ export function detectTier(
 
   // Tier 3: SSH-class remote (ssh-remote and variants across forks).
   // Workspace-side (on the remote host) owns lifecycle.
-  // UI-side here means VS Code didn't start the workspace extension - broken,
-  // the UI host can't reach Docker. Owner is "none" to signal this.
+  // UI-side owns lifecycle too: it reaches Docker on the SSH host through the
+  // ExecServer.
   return {
     tier: ExecutionTier.RemoteSSH,
     owner:
-      extensionKind === vscode.ExtensionKind.Workspace ? "workspace" : "none",
+      extensionKind === vscode.ExtensionKind.Workspace ? "workspace" : "ui",
     remoteName,
     remoteAuthority,
     extensionKind,

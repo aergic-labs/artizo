@@ -24,7 +24,15 @@ vi.mock("vscode", () => {
         .mockReturnValue({ show: vi.fn(), dispose: vi.fn() }),
       withProgress: vi.fn(),
     },
-    workspace: { getConfiguration },
+    workspace: {
+      getConfiguration,
+      getRemoteExecServer: vi.fn().mockResolvedValue({
+        env: vi.fn().mockResolvedValue({
+          env: { HOME: "/home/dev" },
+          osPlatform: "linux",
+        }),
+      }),
+    },
     commands: {
       executeCommand: vi.fn(),
     },
@@ -113,6 +121,15 @@ vi.mock("../../src/remote/containerProxy", () => ({
   decodeSshAuthority: mockDecodeSshAuthority,
 }));
 
+// Mock productInfo so the SSH host's node path is deterministic.
+vi.mock("../../src/remote/productInfo", () => ({
+  getProductInfo: vi.fn().mockResolvedValue({
+    commit: "abc",
+    serverDataFolderName: ".trae-server",
+    serverApplicationName: "trae-server",
+  }),
+}));
+
 import { launch } from "../../src/devcontainer/api";
 import { reopenInContainer } from "../../src/workflows/reopenInContainer";
 import { initTier } from "../../src/host/state";
@@ -189,6 +206,7 @@ function createMockGitConfigCopier(): IGitConfigCopier {
   return { copyGitConfig: vi.fn().mockResolvedValue(undefined) };
 }
 
+
 describe("reopenInContainer", () => {
   let deps: WorkflowDependencies;
   let ui: WorkflowUI;
@@ -224,6 +242,7 @@ describe("reopenInContainer", () => {
         installFromConfig: vi.fn().mockResolvedValue([]),
         installExtensions: vi.fn().mockResolvedValue([]),
       } as any,
+
     };
     ui = createMockUI();
   });
@@ -460,12 +479,11 @@ describe("reopenInContainer", () => {
     );
   });
 
-  it("State 4: starts relay daemon and encodes proxy payload in authority", async () => {
-    // Force the State 4 tier: workspace-side on an SSH remote.
+  it("Remote SSH: builds here, then opens a chained proxy-payload window", async () => {
     (vscode.env as any).remoteName = "ssh-remote";
-    initTier(vscode.ExtensionKind.Workspace);
+    (vscode.env as any).remoteAuthority = "ssh-remote+abc";
+    initTier(vscode.ExtensionKind.UI);
 
-    // Server returns a port + token + installPath (for nodePath).
     deps.serverManager = createMockServerManager({
       start: vi.fn().mockResolvedValue({
         commit: "abc",
@@ -478,74 +496,43 @@ describe("reopenInContainer", () => {
     mockDecodeSshAuthority.mockReturnValue({
       sshHost: "34.136.190.14",
       sshUser: "dev",
+      sshPort: 22,
     });
-    mockStartRelayDaemon.mockResolvedValue({
-      relayPort: 9888,
-      pidFile: "/tmp/artizo-relay.pid",
-      pid: 12345,
-    });
+    mockStartRelayDaemon.mockResolvedValue({ port: 4444 });
 
     try {
-      await reopenInContainer(deps, ui, { workspaceFolder: "/workspace", workspaceUri: vscode.Uri.file("/workspace") });
-
-      // Relay daemon was started with container + port + node path.
-      expect(mockStartRelayDaemon).toHaveBeenCalledWith({
-        containerId: "abc123",
-        containerPort: 38517,
-        nodePath: "/tmp/.trae-server/node",
-        dockerPath: "docker",
+      await reopenInContainer(deps, ui, {
+        workspaceFolder: "/workspace",
+        workspaceUri: vscode.Uri.file("/workspace"),
       });
 
-      // openWindow was called with a proxy-payload authority.
+      // The build and server start happen in this window, before any window
+      // opens.
+      expect(launch).toHaveBeenCalled();
+      expect(deps.serverManager.start).toHaveBeenCalled();
+      expect(mockStartRelayDaemon).toHaveBeenCalled();
+
       expect(ui.openWindow).toHaveBeenCalledTimes(1);
       const url = (ui.openWindow as ReturnType<typeof vi.fn>).mock
         .calls[0][0] as string;
-      expect(url).toContain("artizo-container+");
-      // Decode the hex payload and confirm it carries proxy + SSH info.
-      const hex = url.split("artizo-container+")[1].split("/")[0];
+      const hex = url.split("artizo-container+")[1].split("@")[0];
       const json = JSON.parse(
         Buffer.from(hex, "hex").toString("utf-8"),
       ) as Record<string, unknown>;
-      expect(json.proxy).toBe(true);
-      expect(json.sshHost).toBe("34.136.190.14");
-      expect(json.sshUser).toBe("dev");
-      expect(json.relayPort).toBe(9888);
-      expect(json.connectionToken).toBe("token-xyz");
-      expect(json.workspacePath).toBe("/workspaces/test-project");
-      // State 4 payload carries container identity so the apex can re-spawn
-      // the relay if the cached port is unreachable on reload.
-      expect(json.containerId).toBe("abc123");
-      expect(json.containerPort).toBe(38517);
-      expect(json.installPath).toBe("/tmp/.trae-server");
-    } finally {
-      // Reset tier back to local for subsequent tests.
-      (vscode.env as any).remoteName = undefined;
-      initTier(vscode.ExtensionKind.Workspace);
-    }
-  });
-
-  it("State 4: throws when SSH authority can't be decoded", async () => {
-    (vscode.env as any).remoteName = "ssh-remote";
-    initTier(vscode.ExtensionKind.Workspace);
-
-    deps.serverManager = createMockServerManager({
-      start: vi.fn().mockResolvedValue({
-        commit: "abc",
-        arch: "x64",
-        installPath: "/tmp/.trae-server",
-        port: 38517,
-        connectionToken: "token-xyz",
-      }),
-    });
-    mockDecodeSshAuthority.mockReturnValue(undefined);
-
-    try {
-      await expect(
-        reopenInContainer(deps, ui, { workspaceFolder: "/workspace", workspaceUri: vscode.Uri.file("/workspace") }),
-      ).rejects.toThrow("could not decode SSH authority");
-      expect(mockStartRelayDaemon).not.toHaveBeenCalled();
+      // Stable fields only: volatile ones would change the workspace ID on
+      // every reopen.
+      expect(json).toEqual({
+        proxy: true,
+        sshHost: "34.136.190.14",
+        sshUser: "dev",
+        sshPort: 22,
+        hostWorkspacePath: "/workspace",
+        workspacePath: "/workspaces/test-project",
+      });
+      expect(url.endsWith("/workspaces/test-project")).toBe(true);
     } finally {
       (vscode.env as any).remoteName = undefined;
+      (vscode.env as any).remoteAuthority = undefined;
       initTier(vscode.ExtensionKind.Workspace);
     }
   });

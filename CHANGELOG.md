@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.6
+
+### Fixed
+
+- Reopening a devcontainer no longer asks for trust again, and the window layout is restored.
+- Devcontainers on an SSH host now connect reliably; the relay handles the client's WebSocket framing and plain HTTP requests.
+
 ## 0.11.5
 
 ### Added

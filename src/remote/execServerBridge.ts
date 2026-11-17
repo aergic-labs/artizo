@@ -24,8 +24,48 @@ export interface ExecServer {
     stream: ExecServerStream;
     done: Promise<void>;
   }>;
-  spawn?: (cmd: string, args: string[], opts?: Record<string, unknown>) => Promise<unknown>;
-  fs?: unknown;
+  spawn?: (
+    cmd: string,
+    args: string[],
+    opts?: Record<string, unknown>,
+  ) => Promise<SpawnedCommand>;
+  env?: () => Promise<{
+    env: Record<string, string>;
+    osPlatform: string;
+    osRelease?: string;
+  }>;
+  fs?: RemoteFs;
+}
+
+/** Process handle from `ExecServer.spawn`. */
+export interface SpawnedCommand {
+  stdin: { write(data: Uint8Array): void; end(): void };
+  stdout: {
+    onDidReceiveMessage(cb: (d: Uint8Array) => void): void;
+    onEnd: Promise<void>;
+  };
+  stderr: {
+    onDidReceiveMessage(cb: (d: Uint8Array) => void): void;
+    onEnd: Promise<void>;
+  };
+  onExit: Promise<{ status: number; message?: string }>;
+}
+
+/** Remote file system from `ExecServer.fs`. */
+export interface RemoteFs {
+  mkdirp(path: string): Promise<void>;
+  write(path: string): Promise<{
+    stream: { write(data: Uint8Array): void; end(): void };
+    done: Promise<void>;
+  }>;
+  read(path: string): Promise<{
+    onDidReceiveMessage(cb: (d: Uint8Array) => void): void;
+    onEnd: Promise<void>;
+  }>;
+  stat(path: string): Promise<{ type: number; size: number; mtime: number; ctime: number }>;
+  rm(path: string): Promise<void>;
+  rename(fromPath: string, toPath: string): Promise<void>;
+  readdir(path: string): Promise<Array<{ name: string; type: number }>>;
 }
 
 /** File-based logger for the bridge. */
@@ -43,15 +83,23 @@ function log(msg: string): void {
  * execServer.tcpConnect(host, port). Each accepted connection gets a
  * new tcpConnect stream; data is piped bidirectionally.
  *
- * This replaces ssh -L when an ExecServer is available. The resolver
- * already authenticated, so no password prompt appears.
+ * The resolver already authenticated, so no password prompt appears.
  */
 export async function startExecServerBridge(
   execServer: ExecServer,
   remoteHost: string,
   remotePort: number,
 ): Promise<TunnelController> {
-  log(`starting bridge to ${remoteHost}:${remotePort}`);
+  return startBridge(`tcp:${remoteHost}:${remotePort}`, () =>
+    execServer.tcpConnect(remoteHost, remotePort),
+  );
+}
+
+async function startBridge(
+  label: string,
+  connect: () => Promise<{ stream: ExecServerStream; done: Promise<void> }>,
+): Promise<TunnelController> {
+  log(`starting bridge to ${label}`);
   const localPort = await pickFreePort();
   const connections = new Set<net.Socket>();
   let connId = 0;
@@ -61,35 +109,23 @@ export async function startExecServerBridge(
   }, (localSocket) => {
     const id = ++connId;
     connections.add(localSocket);
-    log(`conn ${id}: accepted from ${localSocket.remoteAddress}:${localSocket.remotePort}`);
 
-    execServer
-      .tcpConnect(remoteHost, remotePort)
+    connect()
       .then(({ stream, done }: { stream: ExecServerStream; done: Promise<void> }) => {
-        log(`conn ${id}: tcpConnect succeeded`);
-        let bytesIn = 0;
-        let bytesOut = 0;
-
         // local -> remote
         localSocket.on("data", (chunk: Buffer) => {
-          bytesOut += chunk.length;
-          log(`conn ${id}: local->remote ${chunk.length}B (total out=${bytesOut})`);
           stream.write(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
         });
         // remote -> local
         stream.onDidReceiveMessage((data: Uint8Array) => {
-          bytesIn += data.byteLength;
-          log(`conn ${id}: remote->local ${data.byteLength}B (total in=${bytesIn})`);
           localSocket.write(Buffer.from(data.buffer, data.byteOffset, data.byteLength));
         });
         // cleanup
         localSocket.on("close", () => {
-          log(`conn ${id}: local closed (in=${bytesIn} out=${bytesOut})`);
           try { stream.end(); } catch { /* best effort */ }
           connections.delete(localSocket);
         });
-        localSocket.on("error", (err: Error) => {
-          log(`conn ${id}: local error: ${err.message}`);
+        localSocket.on("error", () => {
           try { stream.end(); } catch { /* best effort */ }
           connections.delete(localSocket);
         });
@@ -97,9 +133,7 @@ export async function startExecServerBridge(
         // socket was paused since accept. Resuming before the "data" listener
         // exists would discard any data the client already sent.
         localSocket.resume();
-        log(`conn ${id}: resumed local socket`);
         done.then(() => {
-          log(`conn ${id}: remote stream ended (in=${bytesIn} out=${bytesOut})`);
           localSocket.destroy();
           connections.delete(localSocket);
         }).catch((err: unknown) => {
@@ -109,7 +143,7 @@ export async function startExecServerBridge(
         });
       })
       .catch((err: unknown) => {
-        log(`conn ${id}: tcpConnect failed: ${err instanceof Error ? err.message : String(err)}`);
+        log(`conn ${id}: connect failed: ${err instanceof Error ? err.message : String(err)}`);
         localSocket.destroy();
         connections.delete(localSocket);
       });

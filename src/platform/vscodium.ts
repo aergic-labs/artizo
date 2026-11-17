@@ -424,24 +424,6 @@ export class VSCodiumAdapter implements IPlatformAdapter {
     return this.fork.additionalDockerRunArgs;
   }
 
-  getRemoteExtensionsDirCandidates(): string[] {
-    // Derive from product.json serverDataFolderName if available (Bob
-    // ships it); otherwise use the fork's configured server dir.
-    const serverFolder = this.readProductField("serverDataFolderName");
-    if (serverFolder) {
-      return [`${serverFolder}/extensions`];
-    }
-    return this.fork.remoteExtensionsDirs;
-  }
-
-  getApexExtensionsDir(): string {
-    return path.join(
-      os.homedir(),
-      this.fork.hostDataFolderName ?? this.fork.dataFolderName,
-      "extensions",
-    );
-  }
-
   getServerInstallRoot(): string {
     return this.fork.serverInstallRoot;
   }

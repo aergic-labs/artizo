@@ -25,11 +25,12 @@ import {
   autoDetectDevcontainer,
 } from "./host/services";
 import { registerCoreCommands, type CommandContext } from "./host/commands";
-import { bootstrapRemoteSideLoad } from "./remote/sideload";
-import { clearAllCached, initCache, disposeCache } from "./ssh/askpassCache";
 import { initVscodiumFeed } from "./remote/vscodiumFeed";
 import { initVscodiumBundledVersion } from "./platform/vscodiumBundledVersion";
 import { configureDownloadCache, maybePruneCache } from "./remote/download";
+import { setActiveExecServer } from "./remote/execServerCache";
+import { setAgentExtensionPath } from "./remote/agentClient";
+import type { ExecServer } from "./remote/execServerBridge";
 import { registerServerDownloadPanel } from "./webviews/serverDownloadPanel";
 import { FORK_TEMPLATES } from "./platform/forkTemplates";
 
@@ -89,6 +90,9 @@ export async function activate(
   getLogger().info(`${BRAND} activating...`);
   getLogger().info(`Extension path: ${context.extensionPath}`);
   getLogger().info(`Log file: ${path.join(context.logPath, "artizo.log")}`);
+
+  // Locate the remote CLI agent (tools/artifact-agent) when a workflow needs it.
+  setAgentExtensionPath(context.extensionPath);
 
   // Initialize the VSCodium release feed used by the code-oss fork
   // (nearest-version lookup for VSCodium REH tarballs). The bundled
@@ -167,76 +171,8 @@ export async function activate(
     return;
   }
 
-  // Bootstrap branch: UI-side on the apex in an SSH-remote window. The
-  // vendor SSH extension didn't install us onto the remote, so we
-  // side-load ourselves there (tar stream via ssh + extensions.json
-  // mutation + reloadWindow). After reload, we activate workspace-side
-  // on the SSH host with `owner === "workspace"` and skip this branch.
-  // See plans/remaining-work.md (State 4 side-load).
-  if (detected.tier === ExecutionTier.RemoteSSH && detected.owner === "none") {
-    const status = vscode.window.createStatusBarItem(
-      vscode.StatusBarAlignment.Right,
-      0,
-    );
-    status.text = "$(loading~spin) Artizo: setting up on remote host...";
-    status.tooltip =
-      "Artizo is installing itself onto the SSH remote host. " +
-      "The window will reload when done.";
-    status.show();
-    context.subscriptions.push(status);
-
-    // Focus our own log so the user sees the bootstrap progress instead of
-    // whatever channel was last active (zygos's, usually).
-    getLogger().show();
-    getLogger().info(
-      "Artizo is bootstrapping onto the SSH remote host. The window will reload when done.",
-    );
-
-    const progress = vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: "Artizo: setting up on remote host",
-        cancellable: false,
-      },
-      (p) =>
-        bootstrapRemoteSideLoad(context, detected, status, p).catch(async (err) => {
-          const msg = err instanceof Error ? err.message : String(err);
-          try {
-            getLogger().error(
-              `Remote side-load failed: ${msg}`,
-              err instanceof Error ? err : new Error(msg),
-            );
-          } catch {
-            // Logger is initialized; this only fails if activate threw
-            // before initLogger, which can't happen now.
-          }
-          // Also write to the diag log so we see the failure even when the
-          // logger isn't up yet.
-          try {
-            fs.appendFileSync(
-              path.join(os.tmpdir(), "artizo-sideload.log"),
-              `[${new Date().toISOString()}] CATCH in activate: ${msg}\n`,
-            );
-          } catch {
-            // Ignore
-          }
-          status.text = "$(error) Artizo: setup failed - see log";
-          status.tooltip = msg;
-          const action = await vscode.window.showErrorMessage(
-            "Artizo remote setup failed. Check the log for details.",
-            "Retry",
-          );
-          if (action === "Retry") {
-            await vscode.commands.executeCommand(
-              "workbench.action.reloadWindow",
-            );
-          }
-          throw err;
-        }),
-    );
-    context.subscriptions.push({ dispose: () => void progress });
-    return;
-  }
+  // Cache the remote ExecServer so apex-side Docker ops run on the SSH host.
+  await cacheExecServer(detected);
 
   // 1. Set context key for package.json when clauses (host vs managed).
   // Deferred to activateInternal after reading productInfo.
@@ -267,6 +203,56 @@ export async function activate(
   }
 }
 
+/**
+ * Platform of the machine that runs Docker. The apex for local windows; the
+ * SSH host for SSH-class tiers (Linux-class, so wslc never applies there).
+ */
+function dockerHostPlatform(detected: DetectedTier): NodeJS.Platform {
+  return detected.tier === ExecutionTier.RemoteSSH ||
+    detected.tier === ExecutionTier.RemoteSSHDevContainer
+    ? "linux"
+    : process.platform;
+}
+
+/**
+ * Cache the remote ExecServer for UI-side SSH-class windows so Docker ops run
+ * on the SSH host. For a chained container window, resolve the parent SSH
+ * authority. No-op for local windows.
+ */
+async function cacheExecServer(detected: DetectedTier): Promise<void> {
+  const isSshTier =
+    detected.tier === ExecutionTier.RemoteSSH ||
+    detected.tier === ExecutionTier.RemoteSSHDevContainer;
+  if (!isSshTier) return;
+
+  let authority = detected.remoteAuthority;
+  if (!authority) return;
+  const at = authority.indexOf("@");
+  if (at !== -1) authority = authority.substring(at + 1);
+  if (!authority.startsWith("ssh-remote")) return;
+
+  const get = (
+    vscode.workspace as unknown as {
+      getRemoteExecServer?: (a: string) => Promise<ExecServer | undefined>;
+    }
+  ).getRemoteExecServer;
+  if (typeof get !== "function") {
+    getLogger().info("[execServer] getRemoteExecServer unavailable");
+    return;
+  }
+  try {
+    const execServer = await get.call(vscode.workspace, authority);
+    setActiveExecServer(execServer);
+    getLogger().info(
+      `[execServer] cached for ${authority}: ${execServer ? "yes" : "no"}`,
+    );
+  } catch (err: unknown) {
+    getLogger().warn(
+      `[execServer] getRemoteExecServer failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 async function activateInternal(
   context: vscode.ExtensionContext,
   buildLogPty: LogOutputTerminal,
@@ -276,7 +262,7 @@ async function activateInternal(
   // 2. Read settings, resolve the Docker runtime (docker or wslc), create Host.
   const rawSettings = readSettings();
   const runtime = await resolveRuntime({
-    platform: process.platform,
+    platform: dockerHostPlatform(detected),
     dockerPath: rawSettings.dockerPath,
     wslcPath: rawSettings.wslcPath,
     useWslc: rawSettings.useWslcIfInstalled,
@@ -288,7 +274,7 @@ async function activateInternal(
   // Opted in but wslc didn't win on Windows: wslc not installed / not on PATH.
   if (
     rawSettings.useWslcIfInstalled &&
-    process.platform === "win32" &&
+    dockerHostPlatform(detected) === "win32" &&
     runtime.kind === "docker"
   ) {
     void vscode.window
@@ -316,7 +302,7 @@ async function activateInternal(
       void (async () => {
         const s = readSettings();
         const r = await resolveRuntime({
-          platform: process.platform,
+          platform: dockerHostPlatform(detected),
           dockerPath: s.dockerPath,
           wslcPath: s.wslcPath,
           useWslc: s.useWslcIfInstalled,
@@ -336,33 +322,15 @@ async function activateInternal(
   // 3. Read product.json for commit and platform info (used by ServerManager)
   const productInfo = await loadProductInfo();
 
-  // Initialize the persistent askpass cache before any resolve attempt.
-  // Only on the UI-side (apex) - the workspace-side host doesn't run askpass
-  // and doesn't download REH tarballs.
+  // Initialize on-disk caches. UI-side only: the workspace-side host doesn't
+  // download REH tarballs.
   if (detected.extensionKind !== vscode.ExtensionKind.Workspace) {
     const storageDir = context.globalStorageUri.fsPath;
     try {
       fs.mkdirSync(storageDir, { recursive: true });
-      const ttlHours = vscode.workspace
-        .getConfiguration("artizo")
-        .get<number>("askpassCacheTtl", 8);
-      const rotationDays = vscode.workspace
-        .getConfiguration("artizo")
-        .get<number>("askpassKeyRotationDays", 7);
-      getLogger().info(
-        `[activate] askpass cache TTL: ${ttlHours}h, key rotation: ${rotationDays}d`,
-      );
-      await initCache(
-        context.secrets,
-        path.join(storageDir, "askpass.db"),
-        getLogger(),
-        "artizo.askpass.masterkey",
-        ttlHours,
-        rotationDays,
-      );
     } catch (err) {
       getLogger().warn(
-        `[activate] askpass cache init failed: ${err instanceof Error ? err.message : String(err)}`,
+        `[activate] storage dir init failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
 
@@ -407,15 +375,12 @@ async function activateInternal(
     isAttachedContainerWindow(),
   );
 
-  // artizo.onRemote: true when this extension host is the workspace side
-  // on an SSH-class remote (post-side-load, or a future auto-install).
-  // Drives activity-bar visibility in package.json so the sidebar only
-  // appears on the remote where it belongs, not on the UI-side Windows
-  // host during the pre-reload bootstrap window.
+  // artizo.onRemote: true when this extension host is attached to an
+  // SSH-class remote (the SSH window or a container window chained to it).
+  // Drives activity-bar visibility in package.json.
   const onRemote =
-    detected.extensionKind === vscode.ExtensionKind.Workspace &&
-    (detected.tier === ExecutionTier.RemoteSSH ||
-      detected.tier === ExecutionTier.RemoteSSHDevContainer);
+    detected.tier === ExecutionTier.RemoteSSH ||
+    detected.tier === ExecutionTier.RemoteSSHDevContainer;
   vscode.commands.executeCommand("setContext", "artizo.onRemote", onRemote);
 
   // 4. Ensure resolvers available (may prompt restart)
@@ -474,12 +439,5 @@ export async function deactivate(): Promise<void> {
     getLogger().info(`${BRAND} deactivating...`);
   } catch {
     // Logger may not be initialized if activation failed
-  }
-  // Clear cached SSH passwords/passphrases and close the askpass db.
-  try {
-    await clearAllCached();
-    await disposeCache();
-  } catch {
-    // ignore
   }
 }

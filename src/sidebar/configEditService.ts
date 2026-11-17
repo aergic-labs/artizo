@@ -22,6 +22,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { printParseErrorCode } from "jsonc-parser";
 import { getLogger } from "../utils/logger";
+import { getActiveExecServer } from "../remote/execServerCache";
 import type { HostMessage, MountEntry, ConfigParseError } from "./messages";
 import {
   extractToggles,
@@ -356,15 +357,23 @@ export class ConfigEditService {
     enabled: boolean,
     mountPath?: string,
   ): Promise<void> {
-    // Compute host home path for mountHome feature
-    let homePath = os.homedir();
-    const isWin = os.platform() === "win32";
-    if (isWin) {
-      homePath = homePath.replace(/\\/g, "/");
-      homePath = homePath.replace(/,/g, "\\,");
-      homePath = homePath.replace(/ /g, "\\ ");
+    // Compute the host home path for the mountHome feature. In an SSH window
+    // the "host" is the SSH host, so use its HOME and POSIX escaping; using
+    // the apex home would mount the wrong directory.
+    let homePath: string;
+    const execServer = getActiveExecServer();
+    const remoteEnv = execServer?.env ? await execServer.env() : undefined;
+    if (remoteEnv?.env.HOME) {
+      homePath = remoteEnv.env.HOME.replace(/,/g, "\\,");
     } else {
-      homePath = homePath.replace(/,/g, "\\,");
+      homePath = os.homedir();
+      if (os.platform() === "win32") {
+        homePath = homePath.replace(/\\/g, "/");
+        homePath = homePath.replace(/,/g, "\\,");
+        homePath = homePath.replace(/ /g, "\\ ");
+      } else {
+        homePath = homePath.replace(/,/g, "\\,");
+      }
     }
 
     getLogger().debug(
@@ -564,15 +573,16 @@ export class ConfigEditService {
     const configPath = configUri.fsPath;
 
     // Save backup: devcontainer.json.bak1, .bak2, ...
+    // Use the config URI's scheme so this stays on the remote in an SSH window.
     let bakPath: string;
+    let bakUri: vscode.Uri;
     let n = 1;
     for (;;) {
       bakPath = configPath + ".bak" + n;
+      bakUri = configUri.with({ path: configUri.path + ".bak" + n });
       n++;
       try {
-        await vscode.workspace.fs.stat(
-          vscode.Uri.from({ scheme: "file", path: bakPath }),
-        );
+        await vscode.workspace.fs.stat(bakUri);
       } catch {
         break;
       }
@@ -585,15 +595,11 @@ export class ConfigEditService {
     const doc = await this.getEditorDoc();
     const content = doc
       ? doc.getText()
-      : new TextDecoder().decode(
-          await vscode.workspace.fs.readFile(
-            vscode.Uri.from({ scheme: "file", path: configPath }),
-          ),
-        );
+      : new TextDecoder().decode(await vscode.workspace.fs.readFile(configUri));
 
     // Always save backup before attempting repair
     await vscode.workspace.fs.writeFile(
-      vscode.Uri.from({ scheme: "file", path: bakPath }),
+      bakUri,
       Buffer.from(content, "utf-8"),
     );
     getLogger().info(`repairConfig: saved backup to ${path.basename(bakPath)}`);
@@ -621,7 +627,7 @@ export class ConfigEditService {
         }
       } else {
         await vscode.workspace.fs.writeFile(
-          vscode.Uri.from({ scheme: "file", path: configPath }),
+          configUri,
           Buffer.from(repaired, "utf-8"),
         );
       }

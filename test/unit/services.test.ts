@@ -159,6 +159,7 @@ vi.mock("../../src/remote/authorityResolver", () => ({
   registerAuthorityResolver: vi.fn(),
   RemoteAuthorityResolver: class {
     setServerManager = vi.fn();
+    setLaunchServices = vi.fn();
     constructor(opts: any) {}
   },
 }));
@@ -305,7 +306,7 @@ describe("services", () => {
 
   describe("createServices", () => {
     function makeResolver(): RemoteAuthorityResolver {
-      return { setServerManager: vi.fn() } as any;
+      return { setServerManager: vi.fn(), setLaunchServices: vi.fn() } as any;
     }
 
     it("constructs all service objects", () => {
@@ -512,18 +513,6 @@ describe("services", () => {
     afterEach(() => {
       (vscode.env as any).remoteName = undefined;
       initTier(undefined);
-    });
-
-    it("returns false immediately when workspace-side on SSH remote", async () => {
-      (vscode.env as any).remoteName = "ssh-remote";
-      initTier(vscode.ExtensionKind.Workspace);
-
-      const result = await ensureResolversAvailable();
-
-      expect(result).toBe(false);
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        "ensureResolversAvailable: workspace-side on SSH remote, skipping modal",
-      );
     });
 
     it("returns true and quits when argv.json was just patched", async () => {

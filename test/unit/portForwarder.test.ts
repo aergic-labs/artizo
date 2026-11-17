@@ -31,6 +31,9 @@ import { PortForwarder, type ForwardedPort } from '../../src/ports/portForwarder
 const mockSpawn = vi.mocked(spawn);
 const mockCreateServer = vi.mocked(createServer);
 
+/** Let the async connection handler attach listeners before assertions. */
+const flush = () => new Promise((r) => setImmediate(r));
+
 /** Creates a mock net.Server. */
 function createMockServer(): {
   server: Server;
@@ -226,7 +229,7 @@ describe('PortForwarder', () => {
       // Reset for the next forwardPort call.
       const mockServer2 = createMockServer();
       mockCreateServer.mockImplementation(() => mockServer2.server);
-      (mockServer2.server.listen as any).mockImplementation((_p, _h, cb) => { setImmediate(cb); return mockServer2.server; });
+      (mockServer2.server.listen as any).mockImplementation((_p: number, _h: string, cb: () => void) => { setImmediate(cb); return mockServer2.server; });
 
       const userPort = await forwarder.forwardPort(4000, 4000, undefined, 'user');
       expect(userPort.source).toBe('user');
@@ -270,6 +273,7 @@ describe('PortForwarder', () => {
 
       const socket = createMockSocket();
       mockServer.connectionHandler!(socket);
+      await flush();
 
       expect(mockSpawn).toHaveBeenCalledWith(
         '/usr/local/bin/docker',
@@ -356,6 +360,7 @@ describe('PortForwarder', () => {
 
       const socket = createMockSocket();
       mockServer.connectionHandler!(socket);
+      await flush();
 
       // Now unforward - should kill the relay process
       await forwarder.unforwardPort(3000);
@@ -403,6 +408,7 @@ describe('PortForwarder', () => {
 
       const socket = createMockSocket();
       mockServer.connectionHandler!(socket);
+      await flush();
 
       expect(mockSpawn).toHaveBeenCalledWith(
         'docker',
@@ -419,6 +425,7 @@ describe('PortForwarder', () => {
 
       const socket = createMockSocket();
       mockServer.connectionHandler!(socket);
+      await flush();
 
       expect(socket.pipe).toHaveBeenCalledWith(mockChild.stdin);
     });
@@ -431,6 +438,7 @@ describe('PortForwarder', () => {
 
       const socket = createMockSocket();
       mockServer.connectionHandler!(socket);
+      await flush();
 
       expect(mockChild.stdout.pipe).toHaveBeenCalledWith(socket);
     });
@@ -443,6 +451,7 @@ describe('PortForwarder', () => {
 
       const socket = createMockSocket();
       mockServer.connectionHandler!(socket);
+      await flush();
 
       // Simulate socket close
       (socket as any).emit('close');
@@ -458,6 +467,7 @@ describe('PortForwarder', () => {
 
       const socket = createMockSocket();
       mockServer.connectionHandler!(socket);
+      await flush();
 
       // Simulate process exit
       mockChild.emitter.emit('exit', 0, null);
@@ -473,6 +483,7 @@ describe('PortForwarder', () => {
 
       const socket = createMockSocket();
       mockServer.connectionHandler!(socket);
+      await flush();
 
       // Simulate socket error
       (socket as any).emit('error', new Error('ECONNRESET'));
@@ -488,6 +499,7 @@ describe('PortForwarder', () => {
 
       const socket = createMockSocket();
       mockServer.connectionHandler!(socket);
+      await flush();
 
       // Simulate process error
       mockChild.emitter.emit('error', new Error('spawn failed'));
@@ -506,6 +518,7 @@ describe('PortForwarder', () => {
 
       const socket = createMockSocket();
       mockServer.connectionHandler!(socket);
+      await flush();
 
       forwarder.dispose();
 

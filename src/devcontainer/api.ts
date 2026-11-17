@@ -13,6 +13,8 @@
  */
 
 import { ProvisionFailedError } from "./provisionError";
+import { withRemoteCliHost } from "../remote/cliHostInjection";
+import { getLogger } from "../utils/logger";
 
 let _vendor: any;
 let _vendorError: Error | undefined;
@@ -40,8 +42,19 @@ function vendor(): any {
   return _vendor;
 }
 
-export async function launch(...args: any[]): Promise<any> {
-  return vendor().launch(...args);
+export async function launch(
+  options: ProvisionOptions,
+  providedIdLabels: string[] | undefined,
+  disposables: (() => Promise<unknown> | undefined)[],
+): Promise<any> {
+  // Remote tier: run the CLI against the SSH host via an injected CLIHost.
+  // Local tier: withRemoteCliHost is a passthrough (no ExecServer).
+  getLogger().info(
+    `[launch] cwd=${options.workspaceFolder} configFile=${options.configFile?.toString() ?? "(none)"} override=${options.overrideConfigFile?.toString() ?? "(none)"}`,
+  );
+  return withRemoteCliHost(options.workspaceFolder, () =>
+    vendor().launch(options, providedIdLabels, disposables),
+  );
 }
 
 /**
@@ -139,6 +152,13 @@ const defaults: Record<string, unknown> = {
   omitSyntaxDirective: false,
   includeConfig: false,
   includeMergedConfig: false,
+  // Deliberate divergence from the MS extension, which always passes
+  // `--mount-workspace-git-root`. Mounting the git root drags the whole repo
+  // (and worktrees) into the container and moves the workspace to
+  // `/workspaces/<git-root>/<relative>`; mounting the workspace folder gives
+  // `/workspaces/<basename>` and the same working result.
+  // `containerWorkspacePath` (workflows/postLaunch.ts) relies on this being
+  // false: changing it changes the container workspace path for every build.
   mountWorkspaceGitRoot: false,
   mountGitWorktreeCommonDir: false,
 };

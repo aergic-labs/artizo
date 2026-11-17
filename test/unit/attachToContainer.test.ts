@@ -49,6 +49,7 @@ import type { IConfigManager } from "../../src/config/configManager";
 import type { IServerManager } from "../../src/remote/serverManager";
 import type { IGitConfigCopier } from "../../src/credentials/gitConfigCopier";
 import { BRAND_PREFIX } from "../../src/utils/constants";
+import { setActiveExecServer } from "../../src/remote/execServerCache";
 
 vi.mock("node:fs", () => ({
   readFileSync: vi.fn().mockImplementation(() => {
@@ -177,31 +178,92 @@ describe("attachToContainer", () => {
   });
 
   describe("getAttachConfigDir", () => {
-    it("returns path under ~/.config/artizo/attachConfigs", () => {
-      const dir = getAttachConfigDir();
+    it("returns path under ~/.config/artizo/attachConfigs", async () => {
+      const dir = await getAttachConfigDir();
       expect(dir).toContain(".config");
       expect(dir).toContain("artizo");
       expect(dir).toContain("attachConfigs");
     });
+
+    it("uses the SSH host's HOME when an ExecServer is active", async () => {
+      setActiveExecServer({
+        tcpConnect: vi.fn(),
+        fs: { mkdirp: vi.fn(), write: vi.fn() },
+        env: async () => ({ env: { HOME: "/home/ubuntu" }, osPlatform: "linux" }),
+      } as any);
+
+      try {
+        expect(await getAttachConfigDir()).toBe(
+          "/home/ubuntu/.config/artizo/attachConfigs",
+        );
+        expect(await getAttachConfigPath("my/container:latest")).toBe(
+          "/home/ubuntu/.config/artizo/attachConfigs/my_container_latest.json",
+        );
+      } finally {
+        setActiveExecServer(undefined);
+      }
+    });
   });
 
   describe("getAttachConfigPath", () => {
-    it("returns a JSON file path for the container name", () => {
-      const configPath = getAttachConfigPath("my-container");
+    it("returns a JSON file path for the container name", async () => {
+      const configPath = await getAttachConfigPath("my-container");
       expect(configPath).toContain("my-container.json");
     });
 
-    it("sanitizes special characters in container name", () => {
-      const configPath = getAttachConfigPath("my/container:latest");
+    it("sanitizes special characters in container name", async () => {
+      const configPath = await getAttachConfigPath("my/container:latest");
       expect(configPath).toContain("my_container_latest.json");
       expect(configPath).not.toContain("/container");
     });
   });
 
   describe("loadAttachConfig", () => {
-    it("returns null when config file does not exist", () => {
-      const config = loadAttachConfig("nonexistent");
+    it("returns null when config file does not exist", async () => {
+      const config = await loadAttachConfig("nonexistent");
       expect(config).toBeNull();
+    });
+
+    it("writes through the ExecServer on an SSH host", async () => {
+      const writes: Uint8Array[] = [];
+      const mkdirp = vi.fn(async () => {});
+      setActiveExecServer({
+        tcpConnect: vi.fn(),
+        fs: {
+          mkdirp,
+          write: vi.fn(async () => ({
+            stream: {
+              write: (d: Uint8Array) => writes.push(d),
+              end: vi.fn(),
+            },
+            done: Promise.resolve(),
+          })),
+        },
+        env: async () => ({
+          env: { HOME: "/home/ubuntu" },
+          osPlatform: "linux",
+        }),
+      } as any);
+
+      try {
+        await saveAttachConfig({
+          containerName: "my-container",
+          containerId: "abc",
+          workspaceFolder: "/code",
+        });
+
+        expect(mkdirp).toHaveBeenCalledWith(
+          "/home/ubuntu/.config/artizo/attachConfigs",
+        );
+        const written = Buffer.concat(writes).toString("utf-8");
+        expect(JSON.parse(written)).toEqual({
+          containerName: "my-container",
+          containerId: "abc",
+          workspaceFolder: "/code",
+        });
+      } finally {
+        setActiveExecServer(undefined);
+      }
     });
   });
 

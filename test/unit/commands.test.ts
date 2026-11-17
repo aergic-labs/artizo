@@ -81,6 +81,7 @@ vi.mock("../../src/utils/logger", () => ({
     warn: vi.fn(),
     debug: vi.fn(),
     trace: vi.fn(),
+    show: vi.fn(),
   }),
 }));
 vi.mock("../../src/utils/constants", () => ({
