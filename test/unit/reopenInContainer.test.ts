@@ -509,14 +509,16 @@ describe("reopenInContainer", () => {
       expect(json.proxy).toBe(true);
       expect(json.sshHost).toBe("34.136.190.14");
       expect(json.sshUser).toBe("dev");
-      expect(json.relayPort).toBe(9888);
-      expect(json.connectionToken).toBe("token-xyz");
       expect(json.workspacePath).toBe("/workspaces/test-project");
-      // State 4 payload carries container identity so the apex can re-spawn
-      // the relay if the cached port is unreachable on reload.
-      expect(json.containerId).toBe("abc123");
-      expect(json.containerPort).toBe(38517);
-      expect(json.installPath).toBe("/tmp/.trae-server");
+      expect(json.hostWorkspacePath).toBe("/workspace");
+      expect(json.sshAuthority).toEqual(expect.stringContaining("ssh-remote+"));
+      // Volatile fields are discovered at resolve time, not encoded, so the
+      // workspace URI stays stable across reopens (issue #20).
+      expect(json.relayPort).toBeUndefined();
+      expect(json.connectionToken).toBeUndefined();
+      expect(json.containerId).toBeUndefined();
+      expect(json.containerPort).toBeUndefined();
+      expect(json.installPath).toBeUndefined();
     } finally {
       // Reset tier back to local for subsequent tests.
       (vscode.env as any).remoteName = undefined;

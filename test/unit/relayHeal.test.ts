@@ -16,6 +16,7 @@ vi.mock("vscode", () => ({
 import {
   probeRelayPort,
   healRelay,
+  readRelayMeta,
   type HealParams,
 } from "../../src/remote/relayHeal";
 
@@ -153,6 +154,57 @@ describe("probeRelayPort", () => {
   });
 });
 
+describe("readRelayMeta", () => {
+  it("parses port, nodePath, and containerPort", async () => {
+    const server = makeFakeExecServer({
+      spawnImpl: (cmd) => {
+        if (cmd === "cat") {
+          return {
+            status: 0,
+            out:
+              JSON.stringify({
+                port: 41234,
+                nodePath: "/opt/host-node/bin/node",
+                containerPort: 38517,
+                installPath: "/tmp/.trae-server",
+              }) + "\n",
+          };
+        }
+        return { status: 0, out: "" };
+      },
+    });
+    const meta = await readRelayMeta(server, "abc123fullid", () => {});
+    expect(meta).toEqual({
+      port: 41234,
+      hostNodePath: "/opt/host-node/bin/node",
+      containerPort: 38517,
+      installPath: "/tmp/.trae-server",
+    });
+  });
+
+  it("returns undefined when the meta file is missing", async () => {
+    const server = makeFakeExecServer({
+      spawnImpl: (cmd) =>
+        cmd === "cat"
+          ? { status: 1, out: "", err: "No such file" }
+          : { status: 0, out: "" },
+    });
+    expect(
+      await readRelayMeta(server, "abc123fullid", () => {}),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when the meta file is unparseable", async () => {
+    const server = makeFakeExecServer({
+      spawnImpl: (cmd) =>
+        cmd === "cat" ? { status: 0, out: "not-json{{" } : { status: 0, out: "" },
+    });
+    expect(
+      await readRelayMeta(server, "abc123fullid", () => {}),
+    ).toBeUndefined();
+  });
+});
+
 describe("healRelay", () => {
   it("returns container-missing with friendly name when docker inspect says not running", async () => {
     const server = makeFakeExecServer({
@@ -249,6 +301,125 @@ describe("healRelay", () => {
     expect(wroteScript).toBe(true);
     expect(spawnedRelay).toBe(true);
     expect(didNotUseBareNode).toBe(true);
+  });
+
+  it("derives installPath and containerPort from the meta file when not supplied", async () => {
+    const hostNodePath = "/opt/host-node/bin/node";
+    const meta = JSON.stringify({
+      port: 41234,
+      nodePath: hostNodePath,
+      containerPort: 38517,
+      installPath: "/tmp/.trae-server",
+    });
+    const spawned: { cmd: string; args: string[] }[] = [];
+    const server = makeFakeExecServer({
+      spawnImpl: (cmd, args) => {
+        spawned.push({ cmd, args });
+        if (cmd === "docker" && args[0] === "inspect") {
+          return { status: 0, out: "true\n" };
+        }
+        if (cmd === "cat") {
+          return { status: 0, out: meta + "\n" };
+        }
+        if (cmd === "sh" && args[0] === "-c" && args[1].includes("cat >")) {
+          return { status: 0, out: "" };
+        }
+        if (cmd === "sh" && args[0] === "-c" && args[1].includes("nohup")) {
+          return { status: 0, out: meta + "\n" };
+        }
+        return { status: 0, out: "" };
+      },
+    });
+    const result = await healRelay(
+      server,
+      {
+        containerId: "abc123fullid",
+        hostWorkspacePath: "/home/ubuntu/foo",
+        metaFileTimeoutMs: 200,
+      },
+      () => {},
+    );
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(result.relayPort).toBe(41234);
+    }
+    // Re-spawn uses the host node binary from the meta, not the container path.
+    const spawnedRelay = spawned.some(
+      (s) =>
+        s.cmd === "sh" &&
+        s.args[1].includes("nohup") &&
+        s.args[1].includes(hostNodePath),
+    );
+    expect(spawnedRelay).toBe(true);
+  });
+
+  it("returns error when the meta file has no installPath and the caller omits it", async () => {
+    const server = makeFakeExecServer({
+      spawnImpl: (cmd, args) => {
+        if (cmd === "docker" && args[0] === "inspect") {
+          return { status: 0, out: "true\n" };
+        }
+        if (cmd === "cat") {
+          return {
+            status: 0,
+            out:
+              JSON.stringify({
+                port: 41234,
+                nodePath: "/opt/host-node/bin/node",
+                containerPort: 38517,
+              }) + "\n",
+          };
+        }
+        return { status: 0, out: "" };
+      },
+    });
+    const result = await healRelay(
+      server,
+      {
+        containerId: "abc123fullid",
+        hostWorkspacePath: "/home/ubuntu/foo",
+        metaFileTimeoutMs: 200,
+      },
+      () => {},
+    );
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.message).toContain("no installPath");
+    }
+  });
+
+  it("returns error when neither the caller nor the meta file supplies containerPort", async () => {
+    const server = makeFakeExecServer({
+      spawnImpl: (cmd, args) => {
+        if (cmd === "docker" && args[0] === "inspect") {
+          return { status: 0, out: "true\n" };
+        }
+        if (cmd === "cat") {
+          return {
+            status: 0,
+            out:
+              JSON.stringify({
+                port: 41234,
+                nodePath: "/tmp/.trae-server/node",
+              }) + "\n",
+          };
+        }
+        return { status: 0, out: "" };
+      },
+    });
+    const result = await healRelay(
+      server,
+      {
+        containerId: "abc123fullid",
+        hostWorkspacePath: "/home/ubuntu/foo",
+        metaFileTimeoutMs: 200,
+      },
+      () => {},
+    );
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.message).toContain("no containerPort");
+    }
   });
 
   it("returns error when relay does not report a port in time", async () => {

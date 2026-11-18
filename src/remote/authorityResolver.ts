@@ -22,9 +22,18 @@ import {
 import { getDockerPath } from "../docker/execPolicy.js";
 import type { IServerManager } from "./serverManager";
 import type { ProxyAuthorityInfo } from "./containerProxy";
-import { startManagedSshTunnel, type TunnelController } from "./sshTunnel";
+import {
+  startManagedSshTunnel,
+  resolveSshBinary,
+  type TunnelController,
+} from "./sshTunnel";
 import { startExecServerBridge, type ExecServer as ExecServerLike } from "./execServerBridge";
-import { startAskpass } from "../ssh/askpass";
+import {
+  startAskpass,
+  sshEnvForAskpass,
+  batchModeArgs,
+  type AskpassHandle,
+} from "../ssh/askpass";
 import { checkContainerConfig } from "./configCheck";
 import {
   launchProvision,
@@ -341,15 +350,85 @@ export class RemoteAuthorityResolver {
         };
       }
 
-      // Self-heal: if the relay daemon on the SSH host died (laptop slept
-      // past the 30-min idle timeout, ssh-host reboot, crash), the cached
-      // relayPort points at nothing. Probe it; on failure re-spawn the relay
-      // through the ExecServer. Only possible when the payload carries the
-      // container identity (newer payloads); older payloads skip the heal
-      // and fall through to the bridge attempt (today's behavior).
-      let relayPort = proxy.relayPort;
-      if (proxy.containerId && proxy.containerPort && proxy.installPath) {
-        const { probeRelayPort, healRelay } = await import("./relayHeal.js");
+      const legacy =
+        typeof proxy.relayPort === "number" &&
+        typeof proxy.connectionToken === "string";
+      let relayPort: number;
+      let connectionToken: string;
+
+      if (legacy) {
+        // Legacy payload: the relay port and token are encoded in the
+        // authority. Keep today's behavior, including the heal.
+        relayPort = proxy.relayPort as number;
+        connectionToken = proxy.connectionToken as string;
+        // Self-heal: if the relay daemon on the SSH host died (laptop slept
+        // past the 30-min idle timeout, ssh-host reboot, crash), the cached
+        // relayPort points at nothing. Probe it; on failure re-spawn the relay
+        // through the ExecServer. Only possible when the payload carries the
+        // container identity; older payloads skip the heal and fall through
+        // to the bridge attempt (today's behavior).
+        if (proxy.containerId && proxy.containerPort && proxy.installPath) {
+          const { probeRelayPort, healRelay } = await import("./relayHeal.js");
+          const alive = await probeRelayPort(execServer, relayPort, (m) =>
+            log.debug(m),
+          );
+          if (!alive) {
+            const heal = await healRelay(
+              execServer,
+              {
+                containerId: proxy.containerId,
+                containerPort: proxy.containerPort,
+                installPath: proxy.installPath,
+                hostWorkspacePath: proxy.hostWorkspacePath,
+              },
+              (m) => log.debug(m),
+            );
+            if (heal.kind === "ok") {
+              relayPort = heal.relayPort;
+            } else if (heal.kind === "container-missing") {
+              return { type: "error", message: heal.message };
+            } else if (heal.kind === "error") {
+              log.error(`Relay heal failed: ${heal.message}`);
+              // Fall through to bridge attempt against the original port;
+              // today's behavior is the timeout, no regression.
+            }
+          }
+        }
+      } else {
+        // New payload: discover the container, relay port, and token at
+        // resolve time. Nothing volatile is encoded in the authority.
+        const { remoteFindContainer } = await import("./configCheckRemote.js");
+        const { readRelayMeta, probeRelayPort, healRelay } = await import(
+          "./relayHeal.js"
+        );
+        const containerId = await remoteFindContainer(
+          execServer,
+          proxy.hostWorkspacePath,
+          (m) => log.debug(m),
+        );
+        if (!containerId) {
+          return {
+            type: "error",
+            message: `No container found for ${proxy.hostWorkspacePath} on the SSH host; rebuild the container.`,
+          };
+        }
+        const meta = await readRelayMeta(execServer, containerId, (m) =>
+          log.debug(m),
+        );
+        if (!meta) {
+          return {
+            type: "error",
+            message: `Relay meta file for ${proxy.hostWorkspacePath} is missing on the SSH host; rebuild the container.`,
+          };
+        }
+        relayPort = meta.port;
+        const installPath = meta.installPath;
+        if (!installPath) {
+          return {
+            type: "error",
+            message: `Relay meta file for ${proxy.hostWorkspacePath} has no installPath; rebuild the container.`,
+          };
+        }
         const alive = await probeRelayPort(execServer, relayPort, (m) =>
           log.debug(m),
         );
@@ -357,9 +436,9 @@ export class RemoteAuthorityResolver {
           const heal = await healRelay(
             execServer,
             {
-              containerId: proxy.containerId,
-              containerPort: proxy.containerPort,
-              installPath: proxy.installPath,
+              containerId,
+              containerPort: meta.containerPort,
+              installPath,
               hostWorkspacePath: proxy.hostWorkspacePath,
             },
             (m) => log.debug(m),
@@ -370,10 +449,21 @@ export class RemoteAuthorityResolver {
             return { type: "error", message: heal.message };
           } else if (heal.kind === "error") {
             log.error(`Relay heal failed: ${heal.message}`);
-            // Fall through to bridge attempt against the original port;
-            // today's behavior is the timeout, no regression.
           }
         }
+        const token = await readConnectionTokenViaExecServer(
+          execServer,
+          containerId,
+          installPath,
+          (m) => log.debug(m),
+        );
+        if (!token) {
+          return {
+            type: "error",
+            message: `Could not read the connection token for ${proxy.hostWorkspacePath}; rebuild the container.`,
+          };
+        }
+        connectionToken = token;
       }
 
       try {
@@ -389,7 +479,7 @@ export class RemoteAuthorityResolver {
           authority: {
             host: "127.0.0.1",
             port: localPort,
-            connectionToken: proxy.connectionToken,
+            connectionToken,
           },
         };
       } catch (err: unknown) {
@@ -421,11 +511,69 @@ export class RemoteAuthorityResolver {
           })
         : undefined;
       try {
+        const legacy =
+          typeof proxy.relayPort === "number" &&
+          typeof proxy.connectionToken === "string";
+        let relayPort: number;
+        let connectionToken: string;
+        if (legacy) {
+          relayPort = proxy.relayPort as number;
+          connectionToken = proxy.connectionToken as string;
+        } else {
+          // New payload: discover the container, relay port, and token over
+          // ssh before opening the tunnel.
+          const target: SshTarget = {
+            sshHost: proxy.sshHost,
+            sshUser: proxy.sshUser,
+            sshPort: proxy.sshPort,
+            askpass,
+          };
+          const containerId = await sshFindContainer(
+            target,
+            proxy.hostWorkspacePath,
+            (m) => log.debug(m),
+          );
+          if (!containerId) {
+            return {
+              type: "error",
+              message: `No container found for ${proxy.hostWorkspacePath} on the SSH host; rebuild the container.`,
+            };
+          }
+          const meta = await sshReadRelayMeta(target, containerId, (m) =>
+            log.debug(m),
+          );
+          if (!meta) {
+            return {
+              type: "error",
+              message: `Relay meta file for ${proxy.hostWorkspacePath} is missing on the SSH host; rebuild the container.`,
+            };
+          }
+          relayPort = meta.port;
+          if (!meta.installPath) {
+            return {
+              type: "error",
+              message: `Relay meta file for ${proxy.hostWorkspacePath} has no installPath; rebuild the container.`,
+            };
+          }
+          const token = await sshReadConnectionToken(
+            target,
+            containerId,
+            meta.installPath,
+            (m) => log.debug(m),
+          );
+          if (!token) {
+            return {
+              type: "error",
+              message: `Could not read the connection token for ${proxy.hostWorkspacePath}; rebuild the container.`,
+            };
+          }
+          connectionToken = token;
+        }
         const controller = await startManagedSshTunnel({
           sshHost: proxy.sshHost,
           sshUser: proxy.sshUser,
           sshPort: proxy.sshPort,
-          remotePort: proxy.relayPort,
+          remotePort: relayPort,
           askpass,
         });
         const localPort = controller.localPort;
@@ -448,7 +596,7 @@ export class RemoteAuthorityResolver {
           authority: {
             host: "127.0.0.1",
             port: localPort,
-            connectionToken: proxy.connectionToken,
+            connectionToken,
           },
         };
       } catch (err: unknown) {
@@ -949,15 +1097,195 @@ export class RemoteAuthorityResolver {
 
 // execFilePromise is now imported from ../utils/dockerUtils.js
 
+/** Single-quote a string for safe shell interpolation. */
+function shQuote(s: string): string {
+  return `'${s.replace(/'/g, `'"'"'`)}'`;
+}
+
+interface SshTarget {
+  sshHost: string;
+  sshUser: string;
+  sshPort: number;
+  askpass?: AskpassHandle;
+}
+
+/** Run a command on the SSH host via `ssh`, capturing stdout. */
+async function sshExec(
+  target: SshTarget,
+  command: string,
+  log: (msg: string) => void,
+): Promise<{ stdout: string; status: number; stderr: string }> {
+  const { spawn } = await import("node:child_process");
+  const sshBinary = resolveSshBinary();
+  const args: string[] = [];
+  if (target.sshPort !== 22) args.push("-p", String(target.sshPort));
+  args.push(...batchModeArgs(!!target.askpass));
+  args.push(`${target.sshUser}@${target.sshHost}`, command);
+  const child = spawn(sshBinary, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: sshEnvForAskpass(target.askpass),
+  });
+  const out: Buffer[] = [];
+  const err: Buffer[] = [];
+  child.stdout?.on("data", (d: Buffer) => out.push(d));
+  child.stderr?.on("data", (d: Buffer) => err.push(d));
+  const status = await new Promise<number>((resolve) => {
+    child.on("error", () => resolve(-1));
+    child.on("exit", (code) => resolve(code ?? -1));
+  });
+  const stdout = Buffer.concat(out).toString("utf-8");
+  const stderr = Buffer.concat(err).toString("utf-8").trim();
+  log(
+    `[proxy] ssh exec ${command} -> status=${status} stdout=${stdout.length}b stderr=${stderr.slice(0, 200)}`,
+  );
+  return { stdout, status, stderr };
+}
+
+/** Find a container on the SSH host by workspace-folder label, over ssh. */
+async function sshFindContainer(
+  target: SshTarget,
+  hostWorkspacePath: string,
+  log: (msg: string) => void,
+): Promise<string | undefined> {
+  // Prefer a running container: after a rebuild the stopped predecessor still
+  // carries the same labels, and its relay meta file is stale or gone.
+  for (const all of [false, true]) {
+    const ids = new Set<string>();
+    for (const label of ["artizo.local_folder", "devcontainer.local_folder"]) {
+      const result = await sshExec(
+        target,
+        `docker ps ${all ? "-a " : ""}-q --no-trunc --filter ${shQuote(`label=${label}=${hostWorkspacePath}`)}`,
+        log,
+      );
+      if (result.status !== 0) continue;
+      for (const id of result.stdout.trim().split("\n").filter(Boolean)) {
+        ids.add(id);
+      }
+    }
+    const first = ids.values().next().value;
+    if (first) return first;
+  }
+  return undefined;
+}
+
+/** Read and parse the relay meta file over ssh. */
+async function sshReadRelayMeta(
+  target: SshTarget,
+  containerId: string,
+  log: (msg: string) => void,
+): Promise<
+  | { port: number; hostNodePath: string; containerPort?: number; installPath?: string }
+  | undefined
+> {
+  const metaFile = `/tmp/artizo-relay-${containerId}.meta.json`;
+  const result = await sshExec(target, `cat ${shQuote(metaFile)}`, log);
+  if (result.status !== 0 || !result.stdout.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(result.stdout) as {
+      port?: unknown;
+      nodePath?: unknown;
+      containerPort?: unknown;
+      installPath?: unknown;
+    };
+    if (typeof parsed.nodePath !== "string" || !parsed.nodePath.trim()) {
+      return undefined;
+    }
+    const port = Number(parsed.port);
+    if (!Number.isFinite(port) || port <= 0) return undefined;
+    const containerPort =
+      typeof parsed.containerPort === "number" && parsed.containerPort > 0
+        ? parsed.containerPort
+        : undefined;
+    const installPath =
+      typeof parsed.installPath === "string" && parsed.installPath.trim()
+        ? parsed.installPath.trim()
+        : undefined;
+    return {
+      port,
+      hostNodePath: parsed.nodePath.trim(),
+      containerPort,
+      installPath,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Read the container's connection token over ssh. */
+async function sshReadConnectionToken(
+  target: SshTarget,
+  containerId: string,
+  installPath: string,
+  log: (msg: string) => void,
+): Promise<string | undefined> {
+  const tokenPath = `${installPath}/connection-token`;
+  const result = await sshExec(
+    target,
+    `docker exec ${shQuote(containerId)} cat ${shQuote(tokenPath)}`,
+    log,
+  );
+  if (result.status !== 0) return undefined;
+  const token = result.stdout.trim();
+  return token || undefined;
+}
+
+/** Run a command on the SSH host via the ExecServer; capture stdout. */
+async function execOnServer(
+  execServer: ExecServerLike,
+  command: string,
+  args: string[],
+  log: (msg: string) => void,
+): Promise<{ stdout: string; status: number }> {
+  if (typeof execServer.spawn !== "function") {
+    throw new Error("ExecServer has no spawn");
+  }
+  const spawned = (await execServer.spawn(command, args)) as {
+    stdout: { onDidReceiveMessage(cb: (d: Uint8Array) => void): void };
+    stderr: { onDidReceiveMessage(cb: (d: Uint8Array) => void): void };
+    onExit: Promise<{ status: number; message?: string }>;
+  };
+  const outChunks: Uint8Array[] = [];
+  const errChunks: Uint8Array[] = [];
+  spawned.stdout.onDidReceiveMessage((d) => outChunks.push(d));
+  spawned.stderr.onDidReceiveMessage((d) => errChunks.push(d));
+  const exit = await spawned.onExit;
+  const stdout = Buffer.concat(outChunks).toString("utf-8");
+  const stderr = Buffer.concat(errChunks).toString("utf-8").trim();
+  log(
+    `[proxy] exec ${command} ${args.join(" ")} -> status=${exit.status} stdout=${stdout.length}b stderr=${stderr.slice(0, 200)}`,
+  );
+  return { stdout, status: exit.status };
+}
+
+/** Read the container's connection token via the ExecServer. */
+async function readConnectionTokenViaExecServer(
+  execServer: ExecServerLike,
+  containerId: string,
+  installPath: string,
+  log: (msg: string) => void,
+): Promise<string | undefined> {
+  const tokenPath = `${installPath}/connection-token`;
+  const result = await execOnServer(
+    execServer,
+    "docker",
+    ["exec", containerId, "cat", tokenPath],
+    log,
+  );
+  if (result.status !== 0) return undefined;
+  const token = result.stdout.trim();
+  return token || undefined;
+}
+
 /**
  * Parse the production State 4 proxy payload from an authority id.
  *
  * The id is the hex-decoded JSON object produced by the workspace-side
  * extension (running on the SSH host) when it starts the relay daemon and
  * builds the authority for the new container window. Returns undefined if the
- * id isn't a JSON object with `proxy: true` and the required SSH/relay/token
+ * id isn't a JSON object with `proxy: true` and the required SSH/workspace
  * fields, so the resolver can fall through to the local Docker path for
- * States 1-3.
+ * States 1-3. `relayPort`/`connectionToken` are populated only for legacy
+ * payloads; new payloads omit them.
  *
  * Field names match `ProxyAuthorityInfo` (src/remote/containerProxy.ts) so
  * the workspace-side serialization and apex-side deserialization share one
@@ -974,9 +1302,17 @@ function tryParseProxyPayload(id: string): ProxyAuthorityInfo | undefined {
   if (parsed.proxy !== true) return undefined;
   if (typeof parsed.sshHost !== "string") return undefined;
   if (typeof parsed.sshUser !== "string") return undefined;
-  if (typeof parsed.relayPort !== "number") return undefined;
-  if (typeof parsed.connectionToken !== "string") return undefined;
   if (typeof parsed.workspacePath !== "string") return undefined;
+  // relayPort + connectionToken are legacy-only. New payloads omit them and
+  // the resolver discovers both at resolve time.
+  const relayPort =
+    typeof parsed.relayPort === "number" && parsed.relayPort > 0
+      ? parsed.relayPort
+      : undefined;
+  const connectionToken =
+    typeof parsed.connectionToken === "string"
+      ? parsed.connectionToken
+      : undefined;
   // sshPort defaults to 22 for payloads encoded before this field existed.
   const sshPort =
     typeof parsed.sshPort === "number" && parsed.sshPort > 0
@@ -999,19 +1335,22 @@ function tryParseProxyPayload(id: string): ProxyAuthorityInfo | undefined {
       : undefined;
   const installPath =
     typeof parsed.installPath === "string" ? parsed.installPath : undefined;
+  const configFile =
+    typeof parsed.configFile === "string" ? parsed.configFile : undefined;
   return {
     proxy: true,
     sshHost: parsed.sshHost,
     sshUser: parsed.sshUser,
     sshPort,
-    relayPort: parsed.relayPort,
-    connectionToken: parsed.connectionToken,
+    relayPort,
+    connectionToken,
     workspacePath: parsed.workspacePath,
     hostWorkspacePath,
     sshAuthority,
     containerId,
     containerPort,
     installPath,
+    configFile,
   };
 }
 

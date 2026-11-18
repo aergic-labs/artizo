@@ -340,6 +340,12 @@ describe("containerProxy", () => {
       expect(script).toContain("META_FILE");
       expect(script).toContain("HOST_NODE_PATH");
       expect(script).not.toContain("PORT_FILE");
+      // The meta file records the container port and install path so the
+      // apex can heal the relay without the authority payload carrying them.
+      expect(script).toContain("const CONTAINER_PORT = 38517");
+      expect(script).toContain("containerPort: CONTAINER_PORT");
+      expect(script).toContain('const INSTALL_PATH = "/tmp/.trae-server"');
+      expect(script).toContain("installPath: INSTALL_PATH");
     });
 
     it("cleans up stale PID/meta files before starting", async () => {

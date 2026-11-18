@@ -44,10 +44,18 @@ export interface ProxyAuthorityInfo {
   sshUser: string;
   /** SSH port (default 22 when not specified by the authority). */
   sshPort: number;
-  /** Port the relay daemon is listening on (on the SSH host, 127.0.0.1). */
-  relayPort: number;
-  /** Connection token for the container's server-main.js. */
-  connectionToken: string;
+  /**
+   * Port the relay daemon is listening on (on the SSH host, 127.0.0.1).
+   * Optional: new payloads omit it and the apex discovers the port from the
+   * relay meta file at resolve time. Legacy payloads still carry it.
+   */
+  relayPort?: number;
+  /**
+   * Connection token for the container's server-main.js. Optional: new
+   * payloads omit it and the apex reads it from the container at resolve
+   * time. Legacy payloads still carry it.
+   */
+  connectionToken?: string;
   /** Workspace path inside the container (e.g. /workspaces). */
   workspacePath: string;
   /**
@@ -76,6 +84,11 @@ export interface ProxyAuthorityInfo {
    * `<installPath>/node` to exec into the container. Optional.
    */
   installPath?: string;
+  /**
+   * Path to the devcontainer config file on the SSH host. Optional; used by
+   * the apex to locate the workspace config without re-deriving it.
+   */
+  configFile?: string;
 }
 
 /** Result of starting the relay daemon. */
@@ -342,9 +355,10 @@ async function waitForMetaFile(
  *
  * The script is a standalone ESM node file that:
  * 1. Listens on 127.0.0.1:0 (ephemeral port).
- * 2. Writes JSON `{port, nodePath}` to `metaFile` so the parent (and the
- *    apex-side healRelay after this daemon dies) can read both the port
- *    and the host node binary path. The meta file is NOT cleaned up on
+ * 2. Writes JSON `{port, nodePath, containerPort, installPath}` to `metaFile`
+ *    so the parent (and the apex-side healRelay after this daemon dies) can
+ *    read the port, the host node binary path, the container port, and the
+ *    container install path. The meta file is NOT cleaned up on
  *    exit - it must survive idle timeout, SIGTERM, SIGKILL, and remote
  *    reboot so healRelay can re-spawn the relay with the same node binary.
  * 3. Writes its PID to `pidFile` for stale detection (cleaned up on exit).
@@ -359,7 +373,7 @@ export function buildRelayScript(params: {
   nodePath: string;
   dockerPath: string;
   pidFile: string;
-  /** Path to the JSON meta file the daemon writes {port, nodePath} to. */
+  /** Path to the JSON meta file the daemon writes {port, nodePath, containerPort, installPath} to. */
   metaFile: string;
   /**
    * Full path to the node binary that launched the daemon (process.execPath
@@ -385,6 +399,11 @@ export function buildRelayScript(params: {
   // The tcpRelayScript connects to containerPort inside the container.
   const relayScript = tcpRelayScript(containerPort);
 
+  // Container install path: the directory holding the container's node binary
+  // (`nodePath` is `<installPath>/node`). Recorded in the meta file so the
+  // apex can read the connection token without deriving it from the host node.
+  const installPath = path.posix.dirname(nodePath);
+
   // The relay script is a string - we need to escape it for embedding.
   const relayScriptJson = JSON.stringify(relayScript);
 
@@ -401,7 +420,9 @@ import * as fs from "node:fs";
 import { spawn } from "node:child_process";
 
 const CONTAINER_ID = ${JSON.stringify(containerId)};
+const CONTAINER_PORT = ${containerPort};
 const NODE_PATH = ${JSON.stringify(nodePath)};
+const INSTALL_PATH = ${JSON.stringify(installPath)};
 const DOCKER_PATH = ${JSON.stringify(dockerPath)};
 const RELAY_SCRIPT = ${relayScriptJson};
 const PID_FILE = ${JSON.stringify(pidFile)};
@@ -489,10 +510,19 @@ server.on("error", (e) => {
 
 server.listen(0, "127.0.0.1", () => {
   const port = server.address().port;
-  // Write JSON meta: the apex reads {port, nodePath} on heal. We deliberately
-  // do NOT unlink this on exit - it has to survive SIGTERM/SIGKILL/idle/reboot
-  // so healRelay can re-spawn the relay using HOST_NODE_PATH.
-  fs.writeFileSync(META_FILE, JSON.stringify({ port, nodePath: HOST_NODE_PATH }));
+  // Write JSON meta: the apex reads {port, nodePath, containerPort, installPath}
+  // on heal. We deliberately do NOT unlink this on exit - it has to survive
+  // SIGTERM/SIGKILL/idle/reboot so healRelay can re-spawn the relay using
+  // HOST_NODE_PATH and read the container token from INSTALL_PATH.
+  fs.writeFileSync(
+    META_FILE,
+    JSON.stringify({
+      port,
+      nodePath: HOST_NODE_PATH,
+      containerPort: CONTAINER_PORT,
+      installPath: INSTALL_PATH,
+    }),
+  );
   console.log("[relay] listening on 127.0.0.1:" + port);
   resetIdleTimer();
 });

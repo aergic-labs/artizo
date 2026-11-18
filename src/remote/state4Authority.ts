@@ -49,6 +49,7 @@ import type { WorkflowUI } from "../workflows/types";
  * @param params.workspaceFolder - Host-side workspace folder (for "Reopen in Host")
  * @param params.workspacePath   - Container-side workspace path (e.g. /workspaces)
  * @param params.dockerPath   - Docker binary path on the SSH host
+ * @param params.configFile   - Devcontainer config file path on the SSH host (optional)
  * @param params.ui           - Workflow UI for build log messages
  */
 export async function buildContainerAuthority(params: {
@@ -64,6 +65,7 @@ export async function buildContainerAuthority(params: {
   workspaceFolder: string;
   workspacePath: string;
   dockerPath: string;
+  configFile?: string;
   ui: WorkflowUI;
 }): Promise<string> {
   const {
@@ -79,6 +81,7 @@ export async function buildContainerAuthority(params: {
     workspaceFolder,
     workspacePath,
     dockerPath,
+    configFile,
     ui,
   } = params;
 
@@ -128,25 +131,24 @@ export async function buildContainerAuthority(params: {
     `${BRAND_PREFIX} Relay daemon ready on port ${relay.relayPort}. Opening remote window...`,
   );
 
+  // Stable fields only. relayPort/connectionToken/containerId/containerPort/
+  // installPath change on every reopen, so encoding them would change the
+  // workspace URI and reset trust + per-window state (issue #20). The apex
+  // discovers them at resolve time from the relay meta file and the container.
   const payload: ProxyAuthorityInfo = {
     proxy: true,
     sshHost: ssh.sshHost,
     sshUser: ssh.sshUser,
     sshPort: ssh.sshPort,
-    relayPort: relay.relayPort,
-    connectionToken,
     workspacePath,
     hostWorkspacePath: workspaceFolder,
     sshAuthority:
       remoteAuthority ??
       `ssh-remote+${Buffer.from(JSON.stringify({ hostName: ssh.sshHost, user: ssh.sshUser, port: ssh.sshPort })).toString("hex")}`,
-    // Include container identity so the apex-side resolver can re-spawn
-    // the relay if it has died (e.g. laptop slept past the 30-min idle
-    // timeout). Older payloads omit these; the heal is a no-op for them.
-    containerId,
-    containerPort,
-    installPath,
   };
+  if (configFile) {
+    payload.configFile = configFile;
+  }
 
   // Encode the JSON payload as the authority id. The apex-side resolver's
   // `tryParseProxyPayload` detects the `{` prefix and `proxy: true` field.

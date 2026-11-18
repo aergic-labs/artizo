@@ -46,20 +46,33 @@ export async function remoteFindContainer(
   hostWorkspacePath: string,
   log: LogFn,
 ): Promise<string | undefined> {
-  const ids = new Set<string>();
-  for (const label of ["artizo.local_folder", "devcontainer.local_folder"]) {
-    const result = await remoteExec(
-      execServer,
-      "docker",
-      ["ps", "-a", "-q", "--no-trunc", "--filter", `label=${label}=${hostWorkspacePath}`],
-      log,
-    );
-    if (result.status !== 0) continue;
-    for (const id of result.stdout.trim().split("\n").filter(Boolean)) {
-      ids.add(id);
+  // Prefer a running container: after a rebuild the stopped predecessor still
+  // carries the same labels, and its relay meta file is stale or gone.
+  for (const all of [false, true]) {
+    const ids = new Set<string>();
+    for (const label of ["artizo.local_folder", "devcontainer.local_folder"]) {
+      const result = await remoteExec(
+        execServer,
+        "docker",
+        [
+          "ps",
+          ...(all ? ["-a"] : []),
+          "-q",
+          "--no-trunc",
+          "--filter",
+          `label=${label}=${hostWorkspacePath}`,
+        ],
+        log,
+      );
+      if (result.status !== 0) continue;
+      for (const id of result.stdout.trim().split("\n").filter(Boolean)) {
+        ids.add(id);
+      }
     }
+    const first = ids.values().next().value;
+    if (first) return first;
   }
-  return ids.values().next().value;
+  return undefined;
 }
 
 /** Run a command on the SSH host via ExecServer spawn; capture stdout. */

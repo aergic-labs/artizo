@@ -669,6 +669,75 @@ describe("RemoteAuthorityResolver - State 4 proxy path", () => {
     return encodeAuthority(SCHEME_DEV_CONTAINER, JSON.stringify(payload));
   }
 
+  /** Fake ExecServer that scripts docker ps/inspect, cat, and docker exec. */
+  function makeExecServer(opts: {
+    containerId?: string;
+    meta?: string;
+    token?: string;
+    tcpOk?: boolean;
+  }) {
+    const spawn = vi.fn(async (command: string, args: string[]) => {
+      let out = "";
+      let status = 0;
+      if (command === "docker" && args[0] === "ps") {
+        out = `${opts.containerId ?? ""}\n`;
+      } else if (command === "docker" && args[0] === "inspect") {
+        out = "{}";
+      } else if (command === "cat") {
+        if (opts.meta === undefined) status = 1;
+        else out = opts.meta;
+      } else if (command === "docker" && args[0] === "exec") {
+        if (opts.token === undefined) status = 1;
+        else out = opts.token;
+      }
+      const stdoutCbs: ((d: Uint8Array) => void)[] = [];
+      const stderrCbs: ((d: Uint8Array) => void)[] = [];
+      let exitResolve!: (e: { status: number }) => void;
+      const onExit = new Promise<{ status: number }>((r) => {
+        exitResolve = r;
+      });
+      let emitted = false;
+      const emitLater = () => {
+        if (emitted) return;
+        emitted = true;
+        setTimeout(() => {
+          if (out) {
+            const b = Buffer.from(out, "utf-8");
+            for (const cb of stdoutCbs)
+              cb(new Uint8Array(b.buffer, b.byteOffset, b.byteLength));
+          }
+          exitResolve({ status });
+        }, 0);
+      };
+      return {
+        command,
+        args,
+        stdin: { write: vi.fn(), end: vi.fn() },
+        stdout: {
+          onDidReceiveMessage: (cb: (d: Uint8Array) => void) => {
+            stdoutCbs.push(cb);
+            emitLater();
+          },
+        },
+        stderr: {
+          onDidReceiveMessage: (cb: (d: Uint8Array) => void) => {
+            stderrCbs.push(cb);
+            emitLater();
+          },
+        },
+        onExit,
+      };
+    });
+    const tcpConnect = vi.fn(async () => {
+      if (opts.tcpOk === false) throw new Error("connection refused");
+      return {
+        stream: { write: vi.fn(), end: vi.fn(), onDidReceiveMessage: vi.fn() },
+        done: Promise.resolve(),
+      };
+    });
+    return { spawn, tcpConnect } as any;
+  }
+
   it("resolves a proxy payload by starting an ssh -L tunnel", async () => {
     const authority = proxyAuthority({
       proxy: true,
@@ -769,6 +838,143 @@ describe("RemoteAuthorityResolver - State 4 proxy path", () => {
     );
     // ssh tunnel should NOT have been used.
     expect(mockStartManagedSshTunnel).not.toHaveBeenCalled();
+  });
+
+  it("derives relay port and token from meta + docker exec for a new payload", async () => {
+    const meta = JSON.stringify({
+      port: 45123,
+      nodePath: "/opt/host-node/bin/node",
+      containerPort: 38517,
+      installPath: "/tmp/.trae-server",
+    });
+    const mockExecServer = makeExecServer({
+      containerId: "container-abc",
+      meta,
+      token: "tok-from-container\n",
+      tcpOk: true,
+    });
+    (vscode.workspace as any).getRemoteExecServer = vi
+      .fn()
+      .mockResolvedValue(mockExecServer);
+    mockStartExecServerBridge.mockResolvedValueOnce({
+      localPort: 7777,
+      isAlive: () => true,
+      stop: vi.fn(),
+    });
+
+    const authority = proxyAuthority({
+      proxy: true,
+      sshHost: "h",
+      sshUser: "u",
+      workspacePath: "/w",
+      hostWorkspacePath: "/home/ubuntu/foo",
+      sshAuthority: "ssh-remote+new-test",
+    });
+
+    const result = await resolver.resolve(authority);
+
+    expect(result.type).toBe("success");
+    if (result.type !== "success") return;
+    expect(result.authority.port).toBe(7777);
+    expect(result.authority.connectionToken).toBe("tok-from-container");
+    expect(mockStartExecServerBridge).toHaveBeenCalledWith(
+      mockExecServer,
+      "127.0.0.1",
+      45123,
+    );
+    // Token read from <installPath>/connection-token inside the container.
+    const execCall = mockExecServer.spawn.mock.calls.find(
+      (c: any[]) => c[0] === "docker" && c[1][0] === "exec",
+    );
+    expect(execCall).toBeTruthy();
+    expect(execCall[1]).toEqual([
+      "exec",
+      "container-abc",
+      "cat",
+      "/tmp/.trae-server/connection-token",
+    ]);
+  });
+
+  it("returns an actionable error for a new payload when the container is gone", async () => {
+    const mockExecServer = makeExecServer({ containerId: "", tcpOk: true });
+    (vscode.workspace as any).getRemoteExecServer = vi
+      .fn()
+      .mockResolvedValue(mockExecServer);
+
+    const authority = proxyAuthority({
+      proxy: true,
+      sshHost: "h",
+      sshUser: "u",
+      workspacePath: "/w",
+      hostWorkspacePath: "/home/ubuntu/foo",
+      sshAuthority: "ssh-remote+gone",
+    });
+
+    const result = await resolver.resolve(authority);
+    expect(result.type).toBe("error");
+    if (result.type === "error") {
+      expect(result.message).toContain("No container found");
+      expect(result.message.toLowerCase()).toContain("rebuild");
+    }
+  });
+
+  it("returns an actionable error for a new payload when the meta file is gone", async () => {
+    const mockExecServer = makeExecServer({
+      containerId: "container-abc",
+      tcpOk: true,
+    });
+    (vscode.workspace as any).getRemoteExecServer = vi
+      .fn()
+      .mockResolvedValue(mockExecServer);
+
+    const authority = proxyAuthority({
+      proxy: true,
+      sshHost: "h",
+      sshUser: "u",
+      workspacePath: "/w",
+      hostWorkspacePath: "/home/ubuntu/foo",
+      sshAuthority: "ssh-remote+no-meta",
+    });
+
+    const result = await resolver.resolve(authority);
+    expect(result.type).toBe("error");
+    if (result.type === "error") {
+      expect(result.message).toContain("Relay meta file");
+      expect(result.message.toLowerCase()).toContain("rebuild");
+    }
+  });
+
+  it("returns an actionable error for a new payload when the meta has no installPath", async () => {
+    const meta = JSON.stringify({
+      port: 45123,
+      nodePath: "/opt/host-node/bin/node",
+      containerPort: 38517,
+    });
+    const mockExecServer = makeExecServer({
+      containerId: "container-abc",
+      meta,
+      token: "tok-from-container\n",
+      tcpOk: true,
+    });
+    (vscode.workspace as any).getRemoteExecServer = vi
+      .fn()
+      .mockResolvedValue(mockExecServer);
+
+    const authority = proxyAuthority({
+      proxy: true,
+      sshHost: "h",
+      sshUser: "u",
+      workspacePath: "/w",
+      hostWorkspacePath: "/home/ubuntu/foo",
+      sshAuthority: "ssh-remote+no-install-path",
+    });
+
+    const result = await resolver.resolve(authority);
+    expect(result.type).toBe("error");
+    if (result.type === "error") {
+      expect(result.message).toContain("no installPath");
+      expect(result.message.toLowerCase()).toContain("rebuild");
+    }
   });
 
   it("falls through to Docker lookup when proxy field is absent", async () => {

@@ -6,6 +6,9 @@ export default defineConfig({
     // stop/inspect calls. The 5s vitest default times out the
     // integration lifecycle tests on Windows.
     testTimeout: 15_000,
+    // Hooks do the same Docker cleanup work, and the 10s vitest default
+    // timed out in cleanupLeftovers().
+    hookTimeout: 30_000,
     setupFiles: ["./test/setup.ts"],
     include: [
       "src/**/*.test.ts",

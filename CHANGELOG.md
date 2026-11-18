@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.6
+
+### Fixed
+
+- Reopen in Container over SSH no longer re-prompts for host and folder trust or loses per-window state: the container authority now carries only stable fields, and the volatile ones travel in the relay meta file (#20).
+- Session and askpass sockets use a short POSIX `/tmp` directory instead of `TMPDIR`, which can exceed the `sun_path` limit on macOS.
+- Download progress no longer reports 100% twice.
+- Raised the vitest hook timeout to 30s.
+
 ## 0.11.5
 
 ### Added

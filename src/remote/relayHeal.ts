@@ -34,14 +34,31 @@ export type HealResult =
 export interface HealParams {
   /** SSH host container ID (from the authority payload). */
   containerId: string;
-  /** Port server-main.js listens on inside the container. */
-  containerPort: number;
-  /** Server install path inside the container; `<installPath>/node` is exec'd. */
-  installPath: string;
+  /**
+   * Port server-main.js listens on inside the container. Optional: when
+   * omitted, the value is read from the relay meta file.
+   */
+  containerPort?: number;
+  /**
+   * Server install path inside the container; `<installPath>/node` is exec'd.
+   * Optional: when omitted, it is derived from the meta file's nodePath.
+   */
+  installPath?: string;
   /** Friendly workspace path for error messages (e.g. /home/ubuntu/foo). */
   hostWorkspacePath: string;
   /** Max wait for the relay to write its meta file. Default 10s. */
   metaFileTimeoutMs?: number;
+}
+
+/** Parsed relay meta file contents. */
+export interface RelayMeta {
+  port: number;
+  /** SSH-host node binary that launched the relay (meta's `nodePath`). */
+  hostNodePath: string;
+  /** Port server-main.js listens on inside the container. */
+  containerPort?: number;
+  /** Server install path inside the container. */
+  installPath?: string;
 }
 
 type LogFn = (msg: string) => void;
@@ -74,6 +91,50 @@ async function remoteExec(
     `[relay-heal] exec ${command} ${args.join(" ")} -> status=${exit.status} stdout=${stdout.length}b stderr=${stderr.slice(0, 200)}`,
   );
   return { stdout, status: exit.status, stderr };
+}
+
+/**
+ * Read and parse the relay meta file for a container via the ExecServer.
+ * Returns undefined when the file is missing, unparseable, or lacks a usable
+ * port/nodePath.
+ */
+export async function readRelayMeta(
+  execServer: ExecServer,
+  containerId: string,
+  log: LogFn,
+): Promise<RelayMeta | undefined> {
+  const metaFile = `${REMOTE_TMP}/artizo-relay-${containerId}.meta.json`;
+  const meta = await remoteExec(execServer, "cat", [metaFile], log);
+  if (meta.status !== 0 || !meta.stdout.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(meta.stdout) as {
+      port?: unknown;
+      nodePath?: unknown;
+      containerPort?: unknown;
+      installPath?: unknown;
+    };
+    if (typeof parsed.nodePath !== "string" || !parsed.nodePath.trim()) {
+      return undefined;
+    }
+    const port = Number(parsed.port);
+    if (!Number.isFinite(port) || port <= 0) return undefined;
+    const containerPort =
+      typeof parsed.containerPort === "number" && parsed.containerPort > 0
+        ? parsed.containerPort
+        : undefined;
+    const installPath =
+      typeof parsed.installPath === "string" && parsed.installPath.trim()
+        ? parsed.installPath.trim()
+        : undefined;
+    return {
+      port,
+      hostNodePath: parsed.nodePath.trim(),
+      containerPort,
+      installPath,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -121,8 +182,8 @@ export async function healRelay(
 ): Promise<HealResult> {
   const {
     containerId,
-    containerPort,
-    installPath,
+    containerPort: suppliedContainerPort,
+    installPath: suppliedInstallPath,
     hostWorkspacePath,
     metaFileTimeoutMs = 10_000,
   } = params;
@@ -148,12 +209,12 @@ export async function healRelay(
   }
 
   // 2. Build the relay script content (same generator the workspace side uses).
-  //    We re-use the meta file from the prior daemon: it holds {port, nodePath}
-  //    and nodePath is the exact binary (process.execPath of the prior workspace
-  //    extension host) that can re-spawn the relay. The SSH host's bundled node
-  //    is NOT on PATH, so bare `node` fails. If the meta file is missing or
-  //    unparseable we error clearly instead of guessing - the user said no
-  //    training wheels.
+  //    We re-use the meta file from the prior daemon: its `nodePath` is the
+  //    exact host binary (process.execPath of the prior workspace extension
+  //    host) that can re-spawn the relay, and it also carries the container
+  //    port and install path. The SSH host's bundled node is NOT on PATH, so
+  //    bare `node` fails. If the meta file is missing or unparseable we error
+  //    clearly instead of guessing.
   const scriptPath = `${REMOTE_TMP}/artizo-relay.mjs`;
   const pidFile = `${REMOTE_TMP}/artizo-relay-${containerId}.pid`;
   const metaFile = `${REMOTE_TMP}/artizo-relay-${containerId}.meta.json`;
@@ -161,30 +222,33 @@ export async function healRelay(
   // Read nodePath from the meta file. Required: the SSH host has no `node` on
   // PATH, and `<installPath>/node` is a container path that doesn't exist on
   // the host. No fallback.
-  const meta = await remoteExec(execServer, "cat", [metaFile], log);
-  if (meta.status !== 0 || !meta.stdout.trim()) {
+  const meta = await readRelayMeta(execServer, containerId, log);
+  if (!meta) {
     return {
       kind: "error",
-      message: `Relay meta file missing at ${metaFile}; cannot determine nodePath to re-spawn. Rebuild the container.`,
+      message: `Relay meta file missing, unparseable, or has no nodePath at ${metaFile}; cannot re-spawn. Rebuild the container.`,
     };
   }
-  let nodePath: string;
-  try {
-    const parsed = JSON.parse(meta.stdout) as { nodePath?: unknown; port?: unknown };
-    if (typeof parsed.nodePath !== "string" || !parsed.nodePath.trim()) {
-      return {
-        kind: "error",
-        message: `Relay meta file at ${metaFile} has no nodePath; cannot re-spawn. Rebuild the container.`,
-      };
-    }
-    nodePath = parsed.nodePath.trim();
-  } catch (e) {
+  const hostNodePath = meta.hostNodePath;
+  log(`[relay-heal] using host nodePath from meta: ${hostNodePath}`);
+
+  // New payloads omit containerPort/installPath; take them from the meta
+  // file. installPath is the container path, never derived from the host
+  // node binary.
+  const containerPort = suppliedContainerPort ?? meta.containerPort;
+  const installPath = suppliedInstallPath ?? meta.installPath;
+  if (!containerPort) {
     return {
       kind: "error",
-      message: `Relay meta file at ${metaFile} is unparseable: ${e instanceof Error ? e.message : String(e)}. Rebuild the container.`,
+      message: `Relay meta file at ${metaFile} has no containerPort; cannot re-spawn. Rebuild the container.`,
     };
   }
-  log(`[relay-heal] using nodePath from meta: ${nodePath}`);
+  if (!installPath) {
+    return {
+      kind: "error",
+      message: `Relay meta file at ${metaFile} has no installPath; cannot re-spawn. Rebuild the container.`,
+    };
+  }
 
   const script = buildRelayScript({
     containerId,
@@ -193,7 +257,7 @@ export async function healRelay(
     dockerPath: "docker",
     pidFile,
     metaFile,
-    hostNodePath: nodePath,
+    hostNodePath,
     idleTimeoutMs: IDLE_TIMEOUT_MS,
     maxFailures: MAX_CONSECUTIVE_FAILURES,
   });
@@ -244,7 +308,7 @@ export async function healRelay(
   // works in both bash and dash.
   const spawnCmd = [
     `rm -f ${shQuote(pidFile)}`,
-    `nohup ${shQuote(nodePath)} ${shQuote(scriptPath)} >${shQuote(`${REMOTE_TMP}/artizo-relay.log`)} 2>&1 &`,
+    `nohup ${shQuote(hostNodePath)} ${shQuote(scriptPath)} >${shQuote(`${REMOTE_TMP}/artizo-relay.log`)} 2>&1 &`,
     `: > ${shQuote(marker)}`,
     `for i in $(seq 1 ${pollTicks}); do`,
     `  [ ${shQuote(metaFile)} -nt ${shQuote(marker)} ] && cat ${shQuote(metaFile)} && rm -f ${shQuote(marker)} && exit 0`,
