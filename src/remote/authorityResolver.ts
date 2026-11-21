@@ -92,8 +92,9 @@ export interface AuthorityResolverOptions {
  * For dev-container authorities, the hex-encoded portion is a workspace path.
  * The resolver finds the container by matching Docker labels.
  *
- * For attached-container authorities, the hex-encoded portion is a container ID.
- * The resolver looks up the container directly by ID.
+ * For attached-container authorities, the hex-encoded portion is a container
+ * name (older authorities carry an id). Docker accepts either, so the resolver
+ * passes it straight through.
  */
 export class RemoteAuthorityResolver {
   private readonly dockerPathOverride: string | undefined;
@@ -929,7 +930,7 @@ export class RemoteAuthorityResolver {
       if (typeof entry === "number") {
         port = entry;
       } else if (typeof entry === "string") {
-        // "host:port" — extract the port suffix. The host part names the
+        // "host:port": extract the port suffix. The host part names the
         // container interface to bind; Artizo's listener forwards to the
         // container port regardless of host, so only the port is used.
         const match = entry.match(/:(\d+)$/);

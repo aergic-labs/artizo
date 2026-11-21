@@ -214,12 +214,17 @@ export async function attachToContainer(
     // Build the container authority. In State 4 (workspace-side on SSH host),
     // this starts the relay daemon and encodes a proxy payload so the apex
     // host can reach the container through an ssh -L tunnel. In States 1-3
-    // it emits a plain attached-container+<containerId> authority.
+    // it emits a plain attached-container+<name> authority.
+    //
+    // The name, not the id: a replaced container keeps its name and gets a new
+    // id, so re-attaching to the same workspace must find it by name (#22).
+    // Docker accepts either, so existing authorities that carry an id still
+    // resolve.
     await buildAuthorityAndOpen({
       deps,
       ui,
       scheme: "attached-container",
-      id: selectedContainer.id,
+      id: selectedContainer.name || selectedContainer.id,
       containerId: selectedContainer.id,
       containerPort: serverPort,
       installPath: serverInstallPath,

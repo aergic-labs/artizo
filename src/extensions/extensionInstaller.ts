@@ -51,13 +51,6 @@ import {
 import { getDockerPath } from "../docker/execPolicy.js";
 import { tarDirectory } from "../utils/tar";
 
-/**
- * Default path inside the container where extensions are installed.
- * Each platform adapter's server uses a `.<name>-server/extensions`
- * convention; the installer resolves this dynamically from the
- * adapter when not explicitly overridden.
- */
-export const DEFAULT_EXTENSIONS_INSTALL_PATH = "~/.artizo-server/extensions";
 
 /**
  * Result of installing a single extension.

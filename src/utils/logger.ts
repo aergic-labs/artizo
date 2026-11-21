@@ -11,14 +11,14 @@
  * mirrored to a pty terminal separately (see logOutputTerminal.ts).
  *
  * When `artizo.fileLog` is on, every line is also appended to
- * `~/.artizo/artizo.log` so logs survive an SSH window close and from
+ * `<state dir>/artizo.log` so logs survive an SSH window close and from
  * multiple windows appear in one tailable file.
  */
 
 import * as vscode from "vscode";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
+import { stateDir } from "../common/appDirs";
 
 /** Log levels matching the official extension. */
 export enum LogLevel {
@@ -27,10 +27,9 @@ export enum LogLevel {
   Trace = 2,
 }
 
+/** Log path in the platform state directory. Nothing is created here. */
 function sharedLogPath(): string {
-  const dir = path.join(os.homedir(), ".artizo");
-  try { fs.mkdirSync(dir, { recursive: true }); } catch { /* best effort */ }
-  return path.join(dir, "artizo.log");
+  return path.join(stateDir("artizo"), "artizo.log");
 }
 
 export class Logger {
@@ -39,6 +38,7 @@ export class Logger {
   private level: LogLevel = LogLevel.Info;
   private readonly logPath: string;
   private readonly fileLogging: boolean;
+  private logDirReady = false;
 
   constructor(channel: vscode.LogOutputChannel) {
     this.channel = channel;
@@ -58,8 +58,20 @@ export class Logger {
     this.level = level;
   }
 
+  /** Create the log directory on first write, never at construction. */
+  private ensureLogDir(): void {
+    if (this.logDirReady) return;
+    this.logDirReady = true;
+    try {
+      fs.mkdirSync(path.dirname(this.logPath), { recursive: true });
+    } catch {
+      // Best effort; the append below will fail the same way.
+    }
+  }
+
   private toFile(level: string, msg: string): void {
     if (!this.fileLogging) return;
+    this.ensureLogDir();
     const line = `[${new Date().toISOString()}] [${level}] ${msg}\n`;
     try { fs.appendFileSync(this.logPath, line); } catch { /* best effort */ }
   }

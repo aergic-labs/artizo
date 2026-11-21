@@ -27,6 +27,8 @@ import {
 import { registerCoreCommands, type CommandContext } from "./host/commands";
 import { bootstrapRemoteSideLoad } from "./remote/sideload";
 import { clearAllCached, initCache, disposeCache } from "./ssh/askpassCache";
+import { disposeSocketDir } from "./common/temp";
+import { cacheDir } from "./common/appDirs";
 import { initVscodiumFeed } from "./remote/vscodiumFeed";
 import { initVscodiumBundledVersion } from "./platform/vscodiumBundledVersion";
 import { configureDownloadCache, maybePruneCache } from "./remote/download";
@@ -102,7 +104,7 @@ export async function activate(
   );
   initVscodiumFeed({
     bundledPath: bundledVscodiumPath,
-    cachePath: path.join(os.homedir(), ".artizo", "vscodium-versions.json"),
+    cachePath: path.join(cacheDir("artizo"), "vscodium-versions.json"),
   });
   initVscodiumBundledVersion({ bundledPath: bundledVscodiumPath });
 
@@ -482,4 +484,5 @@ export async function deactivate(): Promise<void> {
   } catch {
     // ignore
   }
+  disposeSocketDir();
 }

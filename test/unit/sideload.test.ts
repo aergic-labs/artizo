@@ -507,12 +507,19 @@ describe("commitExtensionsJson", () => {
     expect(parsed[0].identifier.id).toBe("pub.ext");
   });
 
-  it("skips entries already present", async () => {
+  it("replaces an existing entry for the same id (upgrade or downgrade)", async () => {
     const existing = [
       {
         identifier: { id: "pub.ext" },
         version: "1.0.0",
         location: { path: "/x/pub.ext-1.0.0" },
+        relativeLocation: "pub.ext-1.0.0",
+      },
+      {
+        identifier: { id: "other.ext" },
+        version: "1.0.0",
+        location: { path: "/x/other.ext-1.0.0" },
+        relativeLocation: "other.ext-1.0.0",
       },
     ];
     (vscode as any).workspace.fs.readFile.mockResolvedValue(
@@ -525,16 +532,25 @@ describe("commitExtensionsJson", () => {
       dir,
       [
         {
-          folderName: "pub.ext-1.0.0",
+          folderName: "pub.ext-2.0.0",
           extId: "pub.ext",
-          version: "1.0.0",
+          version: "2.0.0",
           publisherDisplayName: "pub",
           targetPlatform: undefined,
         },
       ],
       log,
     );
-    expect((vscode as any).workspace.fs.writeFile).not.toHaveBeenCalled();
+    expect((vscode as any).workspace.fs.writeFile).toHaveBeenCalledTimes(1);
+    const [, content] = (vscode as any).workspace.fs.writeFile.mock.calls[0];
+    const parsed = JSON.parse(new TextDecoder().decode(content));
+    // One entry per id, pointing at the new folder; the other entry survives.
+    expect(parsed).toHaveLength(2);
+    const ours = parsed.filter((e: any) => e.identifier?.id === "pub.ext");
+    expect(ours).toHaveLength(1);
+    expect(ours[0].version).toBe("2.0.0");
+    expect(ours[0].relativeLocation).toBe("pub.ext-2.0.0");
+    expect(parsed.some((e: any) => e.identifier?.id === "other.ext")).toBe(true);
   });
 
   it("overwrites non-array extensions.json", async () => {

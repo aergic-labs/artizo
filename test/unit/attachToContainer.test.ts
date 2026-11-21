@@ -266,6 +266,15 @@ describe("attachToContainer", () => {
       );
     });
 
+    it("encodes the container name, not its id, in the authority", async () => {
+      await attachToContainer(deps, ui, docker, {});
+
+      const authority = (ui.openWindow as ReturnType<typeof vi.fn>).mock
+        .calls[0][0] as string;
+      const hex = authority.split("attached-container+")[1].split("/")[0];
+      expect(Buffer.from(hex, "hex").toString("utf-8")).toBe("my-container");
+    });
+
     it("throws when server installation fails", async () => {
       deps.serverManager = {
         ...createMockServerManager(),

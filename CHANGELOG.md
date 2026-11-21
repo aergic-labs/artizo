@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.7
+
+### Changed
+
+- `artizo.log` and the ssh helper log move to the platform state directory, and the vscodium cache to the platform cache directory; `~/.artizo` is no longer created unless file logging is on.
+- Session and askpass sockets use a per-process random `/tmp` directory instead of a uid-derived one, removed on deactivate.
+- Attached containers are remembered by name instead of id, so re-attaching to the same workspace works after the container is replaced (#22).
+- Docs and comments: removed the remaining em-dashes.
+
 ## 0.11.6
 
 ### Fixed

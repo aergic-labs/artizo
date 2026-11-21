@@ -2,7 +2,7 @@
   "name": "artizo",
   "displayName": "Artizo Dev Containers",
   "description": "Develop inside Docker containers. Define your environment as code with devcontainer.json for isolated, reproducible development.",
-  "version": "0.11.6",
+  "version": "0.11.7",
   "publisher": "aergic",
   "productName": "Artizo",
   "license": "AGPL-3.0-only",
@@ -520,7 +520,7 @@
         "artizo.fileLog": {
           "type": "boolean",
           "default": false,
-          "description": "Append logs to ~/.artizo/artizo.log so logs survive an SSH window close and from multiple windows appear in one tailable file."
+          "description": "Append logs to one file in the platform state directory (for example ~/.local/state/artizo/artizo.log on Linux) so logs survive an SSH window close and appear in one tailable file across windows."
         },
         "artizo.remote.ssh.mirrorExtensions": {
           "type": "boolean",

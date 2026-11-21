@@ -63,6 +63,7 @@ SHARED_FROM_ZYGOS := \
   src/ssh/askpassCache.ts:src/ssh/askpassCache.ts \
   src/ssh/askpassServer.ts:src/ssh/askpassServer.ts \
   src/common/temp.ts:src/common/temp.ts \
+  src/common/appDirs.ts:src/common/appDirs.ts \
   src/webviews/serverDownloadPanel.ts:src/webviews/serverDownloadPanel.ts \
   resources/serverDownload/app.js:resources/serverDownload/app.js \
   resources/serverDownload/index.html:resources/serverDownload/index.html \

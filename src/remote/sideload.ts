@@ -31,12 +31,7 @@ import { execFileSync } from "node:child_process";
 import { getLogger } from "../utils/logger";
 import type { DetectedTier } from "../host/state";
 import { getPlatformAdapter } from "../platform";
-import {
-  buildExtensionEntry,
-  extensionFolderName,
-  isExtensionInEntries,
-  type TargetPlatform,
-} from "../extensions/extensionRegistry";
+import { buildExtensionEntry, extensionFolderName, type TargetPlatform } from "../extensions/extensionRegistry";
 import {
   apexTargetPlatform,
   canCopyFromApex,
@@ -643,6 +638,60 @@ async function findRemoteExtensionsDir(
  * any already present by id or folder name), and write it back once.
  * Single read-modify-write so Trae's scanner sees one atomic change.
  */
+/** Remove older copies of this extension from the remote extensions dir. */
+async function removeStaleFolders(
+  extDir: vscode.Uri,
+  extId: string,
+  keepFolder: string,
+  exec: RemoteExec,
+  log: ReturnType<typeof getLogger>,
+): Promise<void> {
+  const prefix = `${extId.toLowerCase()}-`;
+  let entries: [string, vscode.FileType][];
+  try {
+    entries = await vscode.workspace.fs.readDirectory(extDir);
+  } catch (err) {
+    log.warn(
+      `sideload: could not list ${extDir.toString()}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return;
+  }
+  for (const [name, type] of entries) {
+    if (type !== vscode.FileType.Directory) continue;
+    if (name === keepFolder) continue;
+    if (!name.toLowerCase().startsWith(prefix)) continue;
+    const target = vscode.Uri.joinPath(extDir, name).path.replace(/'/g, "'\\''");
+    try {
+      const result = await exec.run(`rm -rf '${target}'`, { timeout: 30_000 });
+      if (result.code === 0) {
+        log.info(`sideload: removed stale ${name}`);
+      } else {
+        log.warn(`sideload: rm exit=${result.code} for ${name}`);
+      }
+    } catch (err) {
+      log.warn(
+        `sideload: could not remove ${name}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+}
+
+/** True when an index entry is this extension by id, or is this folder. */
+function entryMatches(
+  entry: unknown,
+  extId: string,
+  folderName: string,
+): boolean {
+  if (typeof entry !== "object" || entry === null) return false;
+  const id = (entry as { identifier?: { id?: string } }).identifier?.id;
+  if (typeof id === "string" && id.toLowerCase() === extId.toLowerCase()) {
+    return true;
+  }
+  return (
+    (entry as { relativeLocation?: string }).relativeLocation === folderName
+  );
+}
+
 async function commitExtensionsJson(
   extDir: vscode.Uri,
   newEntries: Array<{
@@ -676,14 +725,8 @@ async function commitExtensionsJson(
     entries = [];
   }
 
-  let added = 0;
+  let changed = 0;
   for (const e of newEntries) {
-    if (isExtensionInEntries(entries, e.extId, e.folderName)) {
-      log.info(
-        `sideload: ${e.extId} already in extensions.json; not re-adding`,
-      );
-      continue;
-    }
     const folderPath = vscode.Uri.joinPath(extDir, e.folderName).path;
     const entry = buildExtensionEntry({
       extId: e.extId,
@@ -692,18 +735,28 @@ async function commitExtensionsJson(
       publisherDisplayName: e.publisherDisplayName,
       targetPlatform: e.targetPlatform as TargetPlatform | undefined,
     });
-    entries.push(entry);
-    added++;
+    // One entry per id: replace in place, so an update (or a downgrade)
+    // follows the apex instead of being skipped while the index keeps the old
+    // version.
+    const at = entries.findIndex((existing) =>
+      entryMatches(existing, e.extId, e.folderName),
+    );
+    if (at >= 0) {
+      entries[at] = entry;
+    } else {
+      entries.push(entry);
+    }
+    changed++;
   }
 
-  if (added === 0) {
-    log.info("sideload: no new entries to add to extensions.json");
+  if (changed === 0) {
+    log.info("sideload: no entries to write to extensions.json");
     return;
   }
 
   const encoded = new TextEncoder().encode(JSON.stringify(entries, null, 2));
   await vscode.workspace.fs.writeFile(jsonUri, encoded);
-  log.info(`sideload: committed ${added} entries to extensions.json`);
+  log.info(`sideload: committed ${changed} entries to extensions.json`);
 }
 
 /** Check whether the side-load marker exists in the target folder. */
@@ -1152,6 +1205,14 @@ export async function bootstrapRemoteSideLoad(
       );
     }
 
+    // Remember where this copy went. A UI-only apex uses it to retire the
+    // sideload without needing an ExecServer. Key shared with
+    // legacySideload.ts on the UI-only branch; keep the literal in step.
+    await context.globalState.update(
+      `artizo.legacySideload.extDir.${authority}`,
+      extDir.toString(),
+    );
+
     // 2. Compute target folder name.
     const extId = context.extension.id;
     const version = context.extension.packageJSON.version;
@@ -1267,6 +1328,10 @@ export async function bootstrapRemoteSideLoad(
       log.info("sideload: mirror disabled, committing self entry only");
       await commitExtensionsJson(extDir, [selfEntry], log);
     }
+
+    // 5b. Remove older copies. Housekeeping: the index is what the server
+    //     loads, and commitExtensionsJson already replaced its entry.
+    await removeStaleFolders(extDir, extId, folderName, exec, log);
 
     // 6. Patch argv.json, then kill the server so it restarts with the
     //    patched argv on reload. Avoids the activation-time patch prompt.

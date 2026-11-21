@@ -72,7 +72,7 @@ function isDevcontainerName(remoteName: string): boolean {
  *
  * State-4 (devcontainer-over-SSH) authorities encode a `{ proxy: true, ... }`
  * JSON payload; a local devcontainer encodes a plain host path (or a container
- * id for attached-container). Presence of the proxy payload means the parent
+ * name for attached-container). Presence of the proxy payload means the parent
  * is an SSH host. No cross-host call is needed - the discriminator is already
  * in the bare authority.
  */

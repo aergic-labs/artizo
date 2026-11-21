@@ -17,10 +17,7 @@ vi.mock("vscode", () => ({
   },
 }));
 
-import {
-  ExtensionInstaller,
-  DEFAULT_EXTENSIONS_INSTALL_PATH,
-} from "../../src/extensions/extensionInstaller";
+import { ExtensionInstaller } from "../../src/extensions/extensionInstaller";
 
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
@@ -198,14 +195,6 @@ function setupExecFileResponses(
 }
 
 describe("extensionInstaller", () => {
-  describe("EXTENSIONS_INSTALL_PATH", () => {
-    it("points to the artizo-server extensions directory", () => {
-      expect(DEFAULT_EXTENSIONS_INSTALL_PATH).toBe(
-        "~/.artizo-server/extensions",
-      );
-    });
-  });
-
   describe("ExtensionInstaller", () => {
     let installer: ExtensionInstaller;
     let mockHttpGet: ReturnType<typeof vi.fn<(url: string) => Promise<string>>>;

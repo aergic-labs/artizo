@@ -38,6 +38,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import * as vscode from "vscode";
 import { getLogger } from "../utils/logger";
+import { stateDir } from "../common/appDirs";
 import { SleepDetector } from "../health/sleepDetector";
 import {
   batchModeArgs,
@@ -155,7 +156,7 @@ export async function startSshTunnel(params: {
   const log = getLogger();
 
   const sshBinary = resolveSshBinary();
-  const logDir = path.join(os.homedir(), ".artizo", "logs");
+  const logDir = path.join(stateDir("artizo"), "logs");
   const logPath = path.join(logDir, "ssh-helper.log");
 
   // Ensure log directory exists.
